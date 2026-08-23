@@ -24,7 +24,9 @@ it, and will still be true three years out.
   reader or agent to err? If not, cut it.
 - Budget: a doc drifting past ~200 lines is compressing badly or
   hoarding facts that belong elsewhere.
-- history.lex is the one sanctioned home for history.
+- No history in the repo. What was tried, what it replaced and when are
+  git log's and a pull request's; a doc carries none of it, and no file
+  is set aside to hold it.
 
 ## Stance
 

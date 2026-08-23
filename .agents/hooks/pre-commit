@@ -1,7 +1,8 @@
 #!/bin/sh
 # Two hard blocks and two warnings.
 #
-# Blocks: an ISO date in a .lex doc, and a link that leaves this repo. A
+# Blocks: an ISO date in any .lex, and a link that leaves this repo. There is
+# no exempt file: no history is carried here, so nothing needs a date. A
 # cross-repo link is never correct: either the fact is part of a contract and
 # is stated here in this repo's own terms, or this doc does not need it.
 #
@@ -71,7 +72,7 @@ for f in $STAGED; do
     case "$f" in *.lex) ;; *) continue ;; esac
     d=$(added_lines "$f" | grep -E '20[0-9][0-9]-[01][0-9]-[0-3][0-9]') || true
     if [ -n "$d" ]; then
-        [ $block -eq 0 ] && echo "── BLOCKED: dates in a design doc (history belongs in README.lex) ──"
+        [ $block -eq 0 ] && echo "── BLOCKED: a date in a design doc; no history is carried here ──"
         block=1; echo "$d" | sed "s|^|  ${f}: |"
     fi
 done
