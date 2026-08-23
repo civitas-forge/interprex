@@ -8,13 +8,14 @@ Data Access
 
 2. The Stores
 
-    Four, and each answers a different set of questions. Every entity names the one it lives on. Two of them are the platform and git; outside those there are exactly two more, and no third is added: an object store — a file store, never a service — and the secret store.
+    Five, and each answers a different set of questions. Every entity names the one it lives on. Two of them are the platform and git; outside those there are exactly three more, and no fourth is added: an object store — a file store, never a service — the secret store, and the host, which holds only what is live.
 
     Stores:
         | Store | Holds | Answers cheaply | Answers by scan, index, or not at all |
         | github | releases and their assets, issues, pull requests, workflow runs, packages | an exact address; one hop down its hierarchy | anything spanning repos; anything off the hierarchy |
         | git | a repo's declarations | the whole set at a ref | nothing else is asked of it |
         | bucket | what is neither code nor platform state: session records, access events, the build cache | a lookup or a prefix listing by path | anything off the path, which is read and computed ([#5]) |
+        | secret | credential configurations, per repo and per tier | the values one configuration holds, opened by that configuration's token | anything across configurations; any read without a token |
         | host | live sessions, workspaces, environments | a lookup by path | anything else |
 
         :: table align=llll header=1 ::
