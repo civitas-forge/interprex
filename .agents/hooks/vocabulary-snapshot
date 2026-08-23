@@ -1,7 +1,8 @@
 #!/bin/sh
 # Regenerates .agents/vocabulary from the corpus. Uppercase identifiers are
 # dropped first: a word appearing only inside one is not prose vocabulary, and
-# licensing it would let EDWARD_FLEET_DIR license the sentence beside it.
+# licensing it would let an environment variable's name license the sentence
+# beside it.
 # Run it when a commit
 # introduces a word deliberately; the diff is the record that it was.
 set -e
