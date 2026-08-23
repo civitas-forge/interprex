@@ -97,5 +97,47 @@ if [ -n "$bad" ]; then
     block=1
 fi
 
+# ── BLOCK: a doc citing itself ────────────────────────────────────────
+# A self-link resolves, so the link check above never sees one. It is
+# always wrong: a section of this doc is cited [#N], never by file name.
+self=""
+for f in $(git ls-files '*.lex'); do
+    for tgt in $(grep -o '\[\.\{1,2\}/[^]]*\.lex\]' "$ROOT/$f" | tr -d '[]'); do
+        [ "$(basename "$tgt")" = "$(basename "$f")" ] && self="${self}  ${f}: cites itself as ${tgt}\n"
+    done
+done
+if [ -n "$self" ]; then
+    echo "── BLOCKED: a doc cites itself ──"; printf "%b" "$self"
+    echo "  Cite a section of this doc as [#N]. A file never names itself."
+    block=1
+fi
+
+# ── BLOCK: a doc losing a section, or shrinking sharply ───────────────
+# An edit that removes prose without meaning to leaves no other trace:
+# the result parses, the links resolve, and the missing paragraphs are
+# missing from nobody's view. ALLOW_SHRINK=1 for a deletion you intend.
+shrink=""
+for f in $STAGED; do
+    case "$f" in *.lex) ;; *) continue ;; esac
+    git cat-file -e "HEAD:$f" 2>/dev/null || continue
+    was=$(git show "HEAD:$f" | wc -w | tr -d ' ')
+    now=$(git show ":$f" | wc -w | tr -d ' ')
+    wsec=$(git show "HEAD:$f" | grep -cE '^[0-9]+\. ')
+    nsec=$(git show ":$f" | grep -cE '^[0-9]+\. ')
+    lost=$((was - now))
+    if [ "$nsec" -lt "$wsec" ]; then
+        shrink="${shrink}  ${f}: ${wsec} sections -> ${nsec}\n"
+    elif [ "$lost" -gt 250 ]; then
+        shrink="${shrink}  ${f}: ${was} -> ${now} words (-${lost})\n"
+    elif [ "$was" -gt 200 ] && [ $((lost * 100 / was)) -gt 30 ]; then
+        shrink="${shrink}  ${f}: ${was} -> ${now} words (-${lost}, over a third)\n"
+    fi
+done
+if [ -n "$shrink" ] && [ -z "$ALLOW_SHRINK" ]; then
+    echo "── BLOCKED: a doc lost a section or a large part of itself ──"; printf "%b" "$shrink"
+    echo "  Intended? ALLOW_SHRINK=1 git commit ..."
+    block=1
+fi
+
 [ $block -eq 1 ] && exit 1
 exit 0
