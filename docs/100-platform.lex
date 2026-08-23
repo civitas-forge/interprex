@@ -57,7 +57,7 @@ The Development Platform
     Each tool declares the backends for the domains it owns in its own config directory, since no tool reads another's.
 
     :: tbd ::
-        Which file carries the declaration. Both homes exist — the repo-committed per-tool directories, and each tool's own fleet-side configuration file — and no documented key in either names a backend.
+        Which file carries the declaration. Both homes exist — the repo-committed per-tool directories, and each tool's own operator-side configuration file — and no documented key in either names a backend.
 
     Github is the default. A backend that cannot express a fact its domain's contract requires refuses rather than approximating ([#1]).
 
