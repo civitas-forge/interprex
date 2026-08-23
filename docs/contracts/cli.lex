@@ -14,7 +14,7 @@ The Command Line
 
 2. Exit Codes
 
-    The exit code is the first contract, read before any parsing. Three outcomes: 0, the operation succeeded; 1, the operation ran and found problems — a lint with findings, a fleet run with failing repos; 2, the invocation itself was wrong. Failure never exits 0.
+    The exit code is the first contract, read before any parsing. Three outcomes: 0, the operation succeeded; 1, the operation ran and found problems — a lint with findings, a mapped run with failing repos; 2, the invocation itself was wrong. Failure never exits 0.
 
 3. Explicit Interactivity
 
