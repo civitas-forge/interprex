@@ -192,6 +192,7 @@ concepts
 concurrency
 config
 configuration
+configurations
 connection
 consequences
 constrains
@@ -220,6 +221,7 @@ crates
 create
 creates
 creation
+credential
 credentials
 cross
 cross-field
@@ -412,6 +414,7 @@ format-preserving
 formats
 found
 four
+fourth
 framework
 from
 full
@@ -460,7 +463,6 @@ hold
 holding
 holds
 home
-homes
 honor
 honoring
 hook
@@ -475,6 +477,7 @@ identically
 identifier
 identifiers
 identity
+ids
 image
 immediately
 immutability
@@ -555,6 +558,7 @@ like
 line
 lines
 linked
+links
 lint
 list
 listing
@@ -618,6 +622,7 @@ modules
 more
 most
 mounted
+mounts
 move
 moves
 moving
@@ -669,6 +674,7 @@ opening
 opens
 operation
 operations
+operator
 operator-side
 opinion
 order
@@ -707,7 +713,7 @@ paths
 payload
 peer
 per
-per-tool
+per-backend
 perform
 performance
 performed
@@ -775,6 +781,7 @@ reached
 reaches
 reaching
 read
+read-only
 reader
 reading
 reads
@@ -812,7 +819,6 @@ reopens
 replaced
 replacing
 repo
-repo-committed
 reported
 reporting
 reports
@@ -1009,6 +1015,7 @@ those
 threads
 three
 through
+tier
 time
 timeout
 together

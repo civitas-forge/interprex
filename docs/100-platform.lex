@@ -54,10 +54,9 @@ The Development Platform
 
     A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so the pr domain's owner reads them there ([#2]) and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. The pr domain's owner reads one contract whatever runs the jobs.
 
-    Each tool declares the backends for the domains it owns in its own config directory, since no tool reads another's.
+    Each tool declares the backends for the domains it owns in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's.
 
-    :: tbd ::
-        Which file carries the declaration. Both homes exist — the repo-committed per-tool directories, and each tool's own operator-side configuration file — and no documented key in either names a backend.
+    Per-backend identity — the app, the installation, the token names — is this repo's own schema, in its own operator-side file in that directory, read by these crates from inside whichever tool links them. It carries names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
 
     Github is the default. A backend that cannot express a fact its domain's contract requires refuses rather than approximating ([#1]).
 
