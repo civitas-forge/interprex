@@ -14,7 +14,7 @@ Data Access
         | Store | Holds | Answers cheaply | Answers by scan, index, or not at all |
         | github | releases and their assets, issues, pull requests, workflow runs, packages | an exact address; one hop down its hierarchy | anything spanning repos; anything off the hierarchy |
         | git | a repo's declarations | the whole set at a ref | nothing else is asked of it |
-        | bucket | what is neither code nor platform state: session records, access events, the build cache ([./110-data-access.lex]) | a lookup or a prefix listing by path | anything off the path, which is read and computed ([#5]) |
+        | bucket | what is neither code nor platform state: session records, access events, the build cache | a lookup or a prefix listing by path | anything off the path, which is read and computed ([#5]) |
         | host | live sessions, workspaces, environments | a lookup by path | anything else |
 
         :: table align=llll header=1 ::
@@ -23,7 +23,7 @@ Data Access
 
     The bucket is a file store and not a service: nothing but a path reaches it. The same discipline the identifiers carry ([#4]) governs it, and the same choice of segment order decides which listing is cheap.
 
-    The host store holds only what is live. Nothing in it is shared, and an environment's container is discarded when it ends, so anything that must outlast it is written to a mounted volume, to the bucket or to the platform ([./110-data-access.lex]).
+    The host store holds only what is live. Nothing in it is shared, and an environment's container is discarded when it ends, so anything that must outlast it is written to a mounted volume, to the bucket or to the platform.
 
 3. The Method
 

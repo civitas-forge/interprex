@@ -54,10 +54,10 @@ The Development Platform
 
     A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so the pr domain's owner reads them there ([#2]) and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. The pr domain's owner reads one contract whatever runs the jobs.
 
-    Each tool declares the backends for the domains it owns in its own config directory, since no tool reads another's ([./110-data-access.lex]).
+    Each tool declares the backends for the domains it owns in its own config directory, since no tool reads another's.
 
     :: tbd ::
-        Which file carries the declaration. Both homes exist — the repo-committed per-tool directories, and each tool's own fleet-side configuration file ([./110-data-access.lex]) — and no documented key in either names a backend.
+        Which file carries the declaration. Both homes exist — the repo-committed per-tool directories, and each tool's own fleet-side configuration file — and no documented key in either names a backend.
 
     Github is the default. A backend that cannot express a fact its domain's contract requires refuses rather than approximating ([#1]).
 
