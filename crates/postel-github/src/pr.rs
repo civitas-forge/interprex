@@ -1,10 +1,10 @@
 //! Pull-request REST and GraphQL operations owned by the pr domain.
 //!
-//! Ordinary pull-request facts and reviewer requests use REST. Review threads,
-//! thread resolution, and the draft-ready transition use hand-written GraphQL
-//! because GitHub exposes no equivalent REST operation. The documents live
-//! here, beside their normalization, so callers never learn node shapes or IDs
-//! other than the opaque IDs needed for a later mutation.
+//! Ordinary pull-request facts use REST. Review threads, thread resolution,
+//! reviewer requests by login, and the draft-ready transition use hand-written
+//! GraphQL because GitHub exposes provider-specific capabilities on those
+//! routes. The documents live here, beside their normalization, so callers
+//! never assemble GitHub requests or distinguish bot logins from user logins.
 
 use async_trait::async_trait;
 use postel_contracts::{PrDomain, ProviderError, Result};
@@ -41,6 +41,22 @@ const MARK_READY: &str = r#"
 mutation MarkReady($pullRequestId: ID!) {
   markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
     pullRequest { id isDraft }
+  }
+}"#;
+
+const REQUEST_REVIEWS_BY_LOGIN: &str = r#"
+mutation RequestReviewsByLogin(
+  $pullRequestId: ID!
+  $userLogins: [String!]
+  $botLogins: [String!]
+) {
+  requestReviewsByLogin(input: {
+    pullRequestId: $pullRequestId
+    userLogins: $userLogins
+    botLogins: $botLogins
+    union: true
+  }) {
+    pullRequest { id }
   }
 }"#;
 
@@ -252,15 +268,21 @@ impl PrDomain for GithubProvider {
         number: PullRequestNumber,
         reviewers: &[String],
     ) -> Result<()> {
+        let pull_request = self.pull_request(repository, number).await?;
+        let (bot_logins, user_logins): (Vec<&str>, Vec<&str>) = reviewers
+            .iter()
+            .map(String::as_str)
+            .partition(|login| login.ends_with("[bot]"));
         let _: serde_json::Value = self
             .user()?
-            .post(
-                format!(
-                    "/repos/{repository}/pulls/{}/requested_reviewers",
-                    number.get()
-                ),
-                Some(&json!({ "reviewers": reviewers })),
-            )
+            .graphql(&json!({
+                "query": REQUEST_REVIEWS_BY_LOGIN,
+                "variables": {
+                    "pullRequestId": pull_request.node_id,
+                    "userLogins": user_logins,
+                    "botLogins": bot_logins,
+                }
+            }))
             .await
             .map_err(|error| external("request pull request reviewers", error))?;
         Ok(())

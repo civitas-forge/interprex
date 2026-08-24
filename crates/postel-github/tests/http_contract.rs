@@ -4,7 +4,7 @@
 //! Postel-owned endpoint choice, parameters, identity, and response
 //! normalization for each domain before a request would reach GitHub.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use postel_contracts::{JobsDomain, PrDomain, ReleasesDomain, RepoDomain, TrackerDomain};
 use postel_github::{GithubConfig, from_config};
@@ -14,6 +14,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
     sync::oneshot,
+    time::timeout,
 };
 
 async fn server(
@@ -106,7 +107,7 @@ async fn rest_pages(
     (base_uri, receiver)
 }
 
-async fn graphql_pages(bodies: Vec<&'static str>) -> (String, oneshot::Receiver<Vec<String>>) {
+async fn json_responses(bodies: Vec<&'static str>) -> (String, oneshot::Receiver<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test server");
@@ -283,28 +284,52 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
 }
 
 #[tokio::test]
-async fn pr_domain_passes_the_exact_reviewer_set() {
-    let (uri, request) = server("201 Created", "application/json", "{}").await;
+async fn pr_domain_requests_copilot_through_the_login_mutation() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json"),
+        r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+    ])
+    .await;
     provider(uri)
         .await
         .request_reviewers(
             &repository(),
             PullRequestNumber::new(5).expect("number"),
-            &["copilot-pull-request-reviewer[bot]".to_owned()],
+            &[
+                "alice".to_owned(),
+                "copilot-pull-request-reviewer[bot]".to_owned(),
+            ],
         )
         .await
         .expect("review request");
-    let request = request.await.expect("captured request");
-    assert_user_request(
-        &request,
-        "POST /repos/faictor/postel-sandbox/pulls/5/requested_reviewers ",
+    let requests = timeout(Duration::from_secs(1), requests)
+        .await
+        .expect("provider sent both requests")
+        .expect("captured requests");
+    assert_user_request(&requests[0], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(&requests[1], "POST /graphql ");
+    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("requestReviewsByLogin")
     );
-    assert!(request.contains("copilot-pull-request-reviewer[bot]"));
+    assert_eq!(body["variables"]["pullRequestId"], "PR_kwDOExample");
+    assert_eq!(
+        body["variables"]["userLogins"],
+        serde_json::json!(["alice"])
+    );
+    assert_eq!(
+        body["variables"]["botLogins"],
+        serde_json::json!(["copilot-pull-request-reviewer[bot]"])
+    );
 }
 
 #[tokio::test]
 async fn pr_domain_returns_review_threads_from_every_graphql_page() {
-    let (uri, requests) = graphql_pages(vec![
+    let (uri, requests) = json_responses(vec![
         r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
         r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
     ])
