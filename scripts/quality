@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+required_tools=(cargo lexd markdownlint prettier)
+
+for tool in "${required_tools[@]}"; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        printf 'E_NO_TOOL: %s is required by scripts/quality\n' "$tool" >&2
+        exit 1
+    fi
+done
+
+printf 'Checking repository formatting\n'
+git ls-files -z -- '*.md' '*.json' '*.yml' '*.yaml' \
+    ':(exclude).agents/skills/**' |
+    xargs -0 -r prettier --check
+
+printf 'Checking Markdown\n'
+git ls-files -z -- '*.md' | xargs -0 -r markdownlint
+
+printf 'Checking Lex documents\n'
+git ls-files -z -- '*.lex' | xargs -0 -r lexd check
+
+printf 'Checking Rust formatting\n'
+cargo fmt --all -- --check
+
+printf 'Checking Rust with Clippy\n'
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+printf 'Running Rust tests\n'
+cargo test --workspace --all-features

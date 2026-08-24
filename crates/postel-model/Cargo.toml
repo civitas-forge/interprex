@@ -1,0 +1,10 @@
+[package]
+name = "postel-model"
+description = "Shared data model for Postel development-platform domains"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
