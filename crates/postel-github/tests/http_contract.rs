@@ -12,7 +12,9 @@ use postel_contracts::{
     AssetStreamError, AssetUpload, JobsDomain, PrDomain, ReleasesDomain, RepoDomain, TrackerDomain,
 };
 use postel_github::{GithubConfig, from_config};
-use postel_model::{DispatchInputs, IssueNumber, PullRequestNumber, Repository};
+use postel_model::{
+    DispatchInputs, IssueNumber, PullRequestNumber, Repository, RepositorySettings, ReviewThreadId,
+};
 use secrecy::SecretString;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -244,6 +246,42 @@ async fn repo_domain_sends_the_canonical_repository_address() {
 }
 
 #[tokio::test]
+async fn repo_domain_maps_settings_into_the_github_request_body() {
+    let (uri, request) = server(
+        "200 OK",
+        "application/json",
+        include_str!("fixtures/repository.json"),
+    )
+    .await;
+    provider(uri)
+        .await
+        .apply_settings(
+            &repository(),
+            &RepositorySettings {
+                allow_squash_merge: false,
+                allow_merge_commit: true,
+                allow_rebase_merge: true,
+                delete_branch_on_merge: false,
+            },
+        )
+        .await
+        .expect("apply settings");
+    let request = request.await.expect("captured request");
+    assert_user_request(&request, "PATCH /repos/faictor/postel-sandbox ");
+    let (_, body) = request.split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "allow_squash_merge": false,
+            "allow_merge_commit": true,
+            "allow_rebase_merge": true,
+            "delete_branch_on_merge": false,
+        })
+    );
+}
+
+#[tokio::test]
 async fn repo_domain_returns_rulesets_from_every_rest_page() {
     let route = "/repos/faictor/postel-sandbox/rulesets";
     let (uri, requests) = rest_pages(
@@ -362,6 +400,50 @@ async fn pr_domain_requests_copilot_through_the_login_mutation() {
         body["variables"]["botLogins"],
         serde_json::json!(["copilot-pull-request-reviewer[bot]"])
     );
+}
+
+#[tokio::test]
+async fn pr_domain_resolves_github_identity_before_marking_ready() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json"),
+        r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"PR_kwDOExample","isDraft":false}}}}"#,
+    ])
+    .await;
+    provider(uri)
+        .await
+        .mark_ready(&repository(), PullRequestNumber::new(5).expect("number"))
+        .await
+        .expect("mark ready");
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(&requests[0], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(&requests[1], "POST /graphql ");
+    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert_eq!(body["variables"]["pullRequestId"], "PR_kwDOExample");
+}
+
+#[tokio::test]
+async fn pr_domain_resolves_a_scoped_review_thread_handle() {
+    let (uri, request) = server(
+        "200 OK",
+        "application/json",
+        r#"{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_kwDOExample","isResolved":true}}}}"#,
+    )
+    .await;
+    provider(uri)
+        .await
+        .resolve_thread(
+            &repository(),
+            PullRequestNumber::new(5).expect("number"),
+            &ReviewThreadId::new("PRRT_kwDOExample").expect("thread id"),
+        )
+        .await
+        .expect("resolve thread");
+    let request = request.await.expect("captured request");
+    assert_user_request(&request, "POST /graphql ");
+    let (_, body) = request.split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert_eq!(body["variables"]["threadId"], "PRRT_kwDOExample");
 }
 
 #[tokio::test]

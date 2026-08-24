@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use postel_contracts::{PrDomain, ProviderError, Result};
 use postel_model::{
     CheckConclusion, CheckOutcome, OpenClosed, PullRequest, PullRequestNumber, Repository,
-    ReviewComment, ReviewThread,
+    ReviewComment, ReviewThread, ReviewThreadId,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -105,7 +105,6 @@ fn normalize_pull_request(value: GithubPullRequest) -> Result<PullRequest> {
             operation: "normalize pull request",
             message: error.to_string(),
         })?,
-        node_id: value.node_id,
         title: value.title,
         state: if value.state == "open" {
             OpenClosed::Open
@@ -200,25 +199,31 @@ fn continuation_cursor(page_info: &PageInfo, collection: &str) -> Result<Option<
         })
 }
 
-fn normalize_threads(nodes: Vec<ThreadNode>) -> Vec<ReviewThread> {
+fn normalize_threads(nodes: Vec<ThreadNode>) -> Result<Vec<ReviewThread>> {
     nodes
         .into_iter()
-        .map(|thread| ReviewThread {
-            id: thread.id,
-            resolved: thread.resolved,
-            path: thread.path,
-            line: thread.line,
-            comments: thread
-                .comments
-                .nodes
-                .into_iter()
-                .map(|comment| ReviewComment {
-                    body: comment.body,
-                    author: comment
-                        .author
-                        .map_or_else(|| "ghost".to_owned(), |user| user.login),
-                })
-                .collect(),
+        .map(|thread| {
+            Ok(ReviewThread {
+                id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+                    provider: "github",
+                    operation: "normalize review thread",
+                    message: error.to_string(),
+                })?,
+                resolved: thread.resolved,
+                path: thread.path,
+                line: thread.line,
+                comments: thread
+                    .comments
+                    .nodes
+                    .into_iter()
+                    .map(|comment| ReviewComment {
+                        body: comment.body,
+                        author: comment
+                            .author
+                            .map_or_else(|| "ghost".to_owned(), |user| user.login),
+                    })
+                    .collect(),
+            })
         })
         .collect()
 }
@@ -235,6 +240,26 @@ fn conclusion(value: &CheckConclusion) -> &'static str {
 }
 
 impl GithubProvider {
+    async fn github_pull_request(
+        &self,
+        repository: &Repository,
+        number: PullRequestNumber,
+    ) -> Result<GithubPullRequest> {
+        self.user()?
+            .get(
+                format!("/repos/{repository}/pulls/{}", number.get()),
+                None::<&()>,
+            )
+            .await
+            .map_err(|error| {
+                crate::api::read_error(
+                    "read pull request",
+                    format!("pull request {} in {repository}", number.get()),
+                    error,
+                )
+            })
+    }
+
     async fn complete_thread_comments(&self, thread: &mut ThreadNode) -> Result<()> {
         while let Some(cursor) = continuation_cursor(&thread.comments.page_info, "review comments")?
         {
@@ -266,20 +291,7 @@ impl PrDomain for GithubProvider {
         repository: &Repository,
         number: PullRequestNumber,
     ) -> Result<PullRequest> {
-        let response: GithubPullRequest = self
-            .user()?
-            .get(
-                format!("/repos/{repository}/pulls/{}", number.get()),
-                None::<&()>,
-            )
-            .await
-            .map_err(|error| {
-                crate::api::read_error(
-                    "read pull request",
-                    format!("pull request {} in {repository}", number.get()),
-                    error,
-                )
-            })?;
+        let response = self.github_pull_request(repository, number).await?;
         normalize_pull_request(response)
     }
 
@@ -310,7 +322,7 @@ impl PrDomain for GithubProvider {
             for thread in &mut page {
                 self.complete_thread_comments(thread).await?;
             }
-            threads.extend(normalize_threads(page));
+            threads.extend(normalize_threads(page)?);
             let Some(next_cursor) = next_cursor else {
                 return Ok(threads);
             };
@@ -318,10 +330,18 @@ impl PrDomain for GithubProvider {
         }
     }
 
-    async fn resolve_thread(&self, thread_id: &str) -> Result<()> {
+    async fn resolve_thread(
+        &self,
+        _repository: &Repository,
+        _number: PullRequestNumber,
+        thread_id: &ReviewThreadId,
+    ) -> Result<()> {
         let _: serde_json::Value = self
             .user()?
-            .graphql(&json!({ "query": RESOLVE_THREAD, "variables": { "threadId": thread_id } }))
+            .graphql(&json!({
+                "query": RESOLVE_THREAD,
+                "variables": { "threadId": thread_id.as_str() }
+            }))
             .await
             .map_err(|error| external("resolve review thread", error))?;
         Ok(())
@@ -333,7 +353,7 @@ impl PrDomain for GithubProvider {
         number: PullRequestNumber,
         reviewers: &[String],
     ) -> Result<()> {
-        let pull_request = self.pull_request(repository, number).await?;
+        let pull_request = self.github_pull_request(repository, number).await?;
         let (bot_logins, user_logins): (Vec<&str>, Vec<&str>) = reviewers
             .iter()
             .map(String::as_str)
@@ -353,12 +373,13 @@ impl PrDomain for GithubProvider {
         Ok(())
     }
 
-    async fn mark_ready(&self, pull_request_node_id: &str) -> Result<()> {
+    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()> {
+        let pull_request = self.github_pull_request(repository, number).await?;
         let _: serde_json::Value = self
             .user()?
             .graphql(&json!({
                 "query": MARK_READY,
-                "variables": { "pullRequestId": pull_request_node_id }
+                "variables": { "pullRequestId": pull_request.node_id }
             }))
             .await
             .map_err(|error| external("mark pull request ready", error))?;
@@ -423,9 +444,10 @@ mod tests {
         let response: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("fixture");
-        let threads = normalize_threads(response.repository.pull_request.review_threads.nodes);
+        let threads = normalize_threads(response.repository.pull_request.review_threads.nodes)
+            .expect("normalize threads");
         assert_eq!(threads.len(), 2);
-        assert_eq!(threads[0].id, "PRRT_kwDOExample");
+        assert_eq!(threads[0].id.as_str(), "PRRT_kwDOExample");
         assert_eq!(threads[0].comments.len(), 2);
         assert_eq!(threads[0].comments[0].author, "reviewer-bot");
         assert_eq!(threads[0].comments[1].author, "author");

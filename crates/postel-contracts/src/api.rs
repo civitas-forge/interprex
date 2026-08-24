@@ -8,7 +8,7 @@ use futures_util::Stream;
 use postel_model::{
     CheckOutcome, DispatchInputs, Issue, IssueNumber, Label, NewRelease, PullRequest,
     PullRequestNumber, Release, ReleaseAsset, Repository, RepositoryFacts, RepositorySettings,
-    ReviewThread, Ruleset, RunId, WorkflowRun,
+    ReviewThread, ReviewThreadId, Ruleset, RunId, WorkflowRun,
 };
 use secrecy::SecretString;
 use thiserror::Error;
@@ -171,14 +171,19 @@ pub trait PrDomain: Send + Sync {
         repository: &Repository,
         number: PullRequestNumber,
     ) -> Result<Vec<ReviewThread>>;
-    async fn resolve_thread(&self, thread_id: &str) -> Result<()>;
+    async fn resolve_thread(
+        &self,
+        repository: &Repository,
+        number: PullRequestNumber,
+        thread_id: &ReviewThreadId,
+    ) -> Result<()>;
     async fn request_reviewers(
         &self,
         repository: &Repository,
         number: PullRequestNumber,
         reviewers: &[String],
     ) -> Result<()>;
-    async fn mark_ready(&self, pull_request_node_id: &str) -> Result<()>;
+    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()>;
     async fn publish_check(
         &self,
         repository: &Repository,

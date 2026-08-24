@@ -39,6 +39,29 @@ struct GithubOwner {
     login: String,
 }
 
+#[derive(Serialize)]
+struct GithubRepositorySettings {
+    #[serde(rename = "allow_squash_merge")]
+    squash_merge: bool,
+    #[serde(rename = "allow_merge_commit")]
+    merge_commit: bool,
+    #[serde(rename = "allow_rebase_merge")]
+    rebase_merge: bool,
+    #[serde(rename = "delete_branch_on_merge")]
+    delete_branch_after_merge: bool,
+}
+
+impl From<&RepositorySettings> for GithubRepositorySettings {
+    fn from(value: &RepositorySettings) -> Self {
+        Self {
+            squash_merge: value.allow_squash_merge,
+            merge_commit: value.allow_merge_commit,
+            rebase_merge: value.allow_rebase_merge,
+            delete_branch_after_merge: value.delete_branch_on_merge,
+        }
+    }
+}
+
 impl TryFrom<GithubRepository> for (RepositoryFacts, RepositorySettings) {
     type Error = ProviderError;
 
@@ -191,9 +214,10 @@ impl RepoDomain for GithubProvider {
         repository: &Repository,
         settings: &RepositorySettings,
     ) -> Result<RepositorySettings> {
+        let body = GithubRepositorySettings::from(settings);
         let response: GithubRepository = self
             .user()?
-            .patch(format!("/repos/{repository}"), Some(settings))
+            .patch(format!("/repos/{repository}"), Some(&body))
             .await
             .map_err(|error| external("apply repository settings", error))?;
         response.try_into().map(|(_, settings)| settings)

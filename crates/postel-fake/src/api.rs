@@ -19,7 +19,7 @@ use postel_contracts::{
 use postel_model::{
     AssetId, CheckOutcome, DispatchInputs, Issue, IssueNumber, Label, NewRelease, PullRequest,
     PullRequestNumber, Release, ReleaseAsset, ReleaseId, Repository, RepositoryFacts,
-    RepositorySettings, ReviewThread, Ruleset, RunId, WorkflowRun,
+    RepositorySettings, ReviewThread, ReviewThreadId, Ruleset, RunId, WorkflowRun,
 };
 use secrecy::SecretString;
 use tokio::sync::RwLock;
@@ -39,7 +39,6 @@ struct State {
     pull_requests: BTreeMap<(Repository, PullRequestNumber), PullRequest>,
     threads: BTreeMap<(Repository, PullRequestNumber), Vec<ReviewThread>>,
     requested_reviewers: BTreeMap<(Repository, PullRequestNumber), Vec<String>>,
-    ready_pull_requests: Vec<String>,
     published_checks: Vec<(Repository, String, CheckOutcome)>,
     dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -284,15 +283,22 @@ impl PrDomain for FakeProvider {
             .unwrap_or_default())
     }
 
-    async fn resolve_thread(&self, thread_id: &str) -> Result<()> {
+    async fn resolve_thread(
+        &self,
+        repository: &Repository,
+        number: PullRequestNumber,
+        thread_id: &ReviewThreadId,
+    ) -> Result<()> {
         let mut state = self.state.write().await;
-        for threads in state.threads.values_mut() {
-            if let Some(thread) = threads.iter_mut().find(|thread| thread.id == thread_id) {
-                thread.resolved = true;
-                return Ok(());
-            }
+        let threads = state
+            .threads
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("review threads for pull request {number:?}")))?;
+        if let Some(thread) = threads.iter_mut().find(|thread| &thread.id == thread_id) {
+            thread.resolved = true;
+            return Ok(());
         }
-        Err(missing(format!("review thread {thread_id}")))
+        Err(missing(format!("review thread {}", thread_id.as_str())))
     }
 
     async fn request_reviewers(
@@ -309,12 +315,13 @@ impl PrDomain for FakeProvider {
         Ok(())
     }
 
-    async fn mark_ready(&self, pull_request_node_id: &str) -> Result<()> {
-        self.state
-            .write()
-            .await
-            .ready_pull_requests
-            .push(pull_request_node_id.to_owned());
+    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()> {
+        let mut state = self.state.write().await;
+        let pull_request = state
+            .pull_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("pull request {number:?} in {repository}")))?;
+        pull_request.draft = false;
         Ok(())
     }
 
@@ -484,7 +491,7 @@ mod tests {
     use postel_contracts::{AssetStreamError, AssetUpload, PrDomain, ReleasesDomain, RepoDomain};
     use postel_model::{
         PullRequestNumber, Release, ReleaseId, Repository, RepositoryFacts, RepositorySettings,
-        ReviewComment, ReviewThread,
+        ReviewComment, ReviewThread, ReviewThreadId,
     };
 
     #[tokio::test]
@@ -532,7 +539,7 @@ mod tests {
         let repository = Repository::new("faictor", "sandbox").expect("repository");
         let number = PullRequestNumber::new(3).expect("number");
         let thread = ReviewThread {
-            id: "thread-1".to_owned(),
+            id: ReviewThreadId::new("thread-1").expect("thread id"),
             resolved: false,
             path: Some("src/lib.rs".to_owned()),
             line: Some(10),
@@ -557,6 +564,21 @@ mod tests {
                 .await
                 .expect("review threads"),
             [thread]
+        );
+        provider
+            .resolve_thread(
+                &repository,
+                number,
+                &ReviewThreadId::new("thread-1").expect("thread id"),
+            )
+            .await
+            .expect("resolve thread");
+        assert!(
+            provider
+                .review_threads(&repository, number)
+                .await
+                .expect("review threads")[0]
+                .resolved
         );
     }
 

@@ -109,6 +109,31 @@ number!(RunId);
 number!(ReleaseId);
 number!(AssetId);
 
+/// Opaque provider identity for a review thread.
+///
+/// Consumers retain this value only to address a thread returned by the same
+/// provider. Its representation has no provider-neutral meaning.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct ReviewThreadId(String);
+
+impl ReviewThreadId {
+    pub fn new(value: impl Into<String>) -> Result<Self, ModelError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(ModelError::Empty {
+                field: "review thread id",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenClosed {
@@ -168,7 +193,6 @@ pub struct Issue {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PullRequest {
     pub number: PullRequestNumber,
-    pub node_id: String,
     pub title: String,
     pub state: OpenClosed,
     pub draft: bool,
@@ -186,7 +210,7 @@ pub struct ReviewComment {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {
-    pub id: String,
+    pub id: ReviewThreadId,
     pub resolved: bool,
     pub path: Option<String>,
     pub line: Option<u64>,
