@@ -1,8 +1,8 @@
 Crate Layout
 
-    How the code is physically structured: one crate per subsystem, and no binary above them — the binary is whichever tool links these crates. Isolation is enforced by cargo, not discipline: a subsystem crate declares no other subsystem, so an attempt to reach into one fails to compile rather than passing review.
+    How the code is physically structured: one crate per subsystem, and no binary above them — the binary is whichever tool links these crates. Subsystem isolation — what a crate may declare, and cargo enforcing it — is the implementation skill's.
 
-    Subsystems meet each other in common data and nowhere else. Each states its functions in its own api.rs, and each declares the model crate carrying the types they speak, and sys, holding all shell, disk and path access in one small injectable set. Neither is shared with another repo: a crate named for a domain carries that domain's vocabulary, and vocabulary is what a repo boundary exists to keep apart.
+    Each subsystem states its functions in its own api.rs. The model crate and sys are this repo's own, shared with no other: a crate named for a domain carries that domain's vocabulary, and vocabulary is what a repo boundary exists to keep apart.
 
 1. Subsystems
 
