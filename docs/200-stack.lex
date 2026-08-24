@@ -23,6 +23,8 @@ Implementation Stack
 
     Copilot reviews are requested by bot login through the request mutation — the one path that also re-requests after a push. The copilot auto-review ruleset rule stays off in derived repo state: platform-side automation would land reviews outside the round count.
 
+    The reviewer-request mutation is verified without a sandbox write. The live suite is read-only ([./verify.lex]), so the loopback transport test asserts the exact `requestReviewsByLogin` document and the `[bot]`-suffix partition into `botLogins`; that document is the same one GitHub's own gh CLI sends for Copilot reviewers, which stands in for a live round trip.
+
 2. The Bucket Client
 
     Google Cloud Storage is the default provider. Callers hold paths and records ([./110-data-access.lex], [./contracts/records.lex]); no vendor type crosses the client.

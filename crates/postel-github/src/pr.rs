@@ -184,7 +184,11 @@ struct ThreadCommentsNode {
     comments: CommentConnection,
 }
 
-fn continuation_cursor(page_info: &PageInfo, collection: &str) -> Result<Option<String>> {
+fn continuation_cursor(
+    page_info: &PageInfo,
+    operation: &'static str,
+    collection: &str,
+) -> Result<Option<String>> {
     if !page_info.has_next_page {
         return Ok(None);
     }
@@ -194,7 +198,7 @@ fn continuation_cursor(page_info: &PageInfo, collection: &str) -> Result<Option<
         .map(Some)
         .ok_or_else(|| ProviderError::External {
             provider: "github",
-            operation: "read review threads",
+            operation,
             message: format!("GitHub reported another {collection} page without an end cursor"),
         })
 }
@@ -261,8 +265,11 @@ impl GithubProvider {
     }
 
     async fn complete_thread_comments(&self, thread: &mut ThreadNode) -> Result<()> {
-        while let Some(cursor) = continuation_cursor(&thread.comments.page_info, "review comments")?
-        {
+        while let Some(cursor) = continuation_cursor(
+            &thread.comments.page_info,
+            "read review thread comments",
+            "review comments",
+        )? {
             let data: ThreadCommentsData = self
                 .user()?
                 .graphql(&json!({
@@ -317,7 +324,11 @@ impl PrDomain for GithubProvider {
                 .await
                 .map_err(|error| external("read review threads", error))?;
             let connection = data.repository.pull_request.review_threads;
-            let next_cursor = continuation_cursor(&connection.page_info, "review threads")?;
+            let next_cursor = continuation_cursor(
+                &connection.page_info,
+                "read review threads",
+                "review threads",
+            )?;
             let mut page = connection.nodes;
             for thread in &mut page {
                 self.complete_thread_comments(thread).await?;
