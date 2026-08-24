@@ -17,7 +17,14 @@ The Development Platform
     releases:
         Draft and live releases, their assets and notes.
 
-    On github, a provider's identity ([./architecture.lex]) is app installation, permissions and tokens. A domain that moves takes its new provider's identity with it, and a provider carries as many identities as a deployment configures. In the pr domain a write names the identity it is performed under: the caller chooses which identity each write uses, and the provider authenticates it.
+    On github, a provider authenticates two kinds of identity
+    ([./architecture.lex]): a user and an app installation. The user token
+    authorizes ordinary platform operations. An app's credentials authorize
+    the client to obtain an installation token for operations available only
+    to that app. A provider carries one user identity and as many named app
+    identities as its configuration declares. An operation that requires a
+    particular app names that identity; the provider authenticates it. A
+    domain that moves takes its new provider's identities with it.
 
     The contract speaks the model's terms — jobs, not workflows; tracker, not an issues api. A provider that cannot express a required fact refuses ([./architecture.lex]).
 

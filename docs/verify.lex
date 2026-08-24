@@ -13,31 +13,48 @@ Verify
       pr, jobs, releases — and depends on no provider ([./architecture.lex]).
     - Each provider crate implements all five domains against its one
       system ([./210-crates.lex]).
-    - The bucket client and the secret-store client are one crate each.
+    - Each provider crate owns its typed configuration and reads its own table
+      from `.postel.toml`.
+    - The bucket client is its own crate; there is no secret-store crate.
     - Every subsystem crate states its functions in api.rs.
     - No crate shells out to gh ([./200-stack.lex]).
 
-2. Environment
+2. Configuration
 
-    - No crate reads a configuration file; every deployment fact arrives as
-      an environment variable ([./architecture.lex]).
-    - A missing variable raises a structured error naming it, at the first
-      call that needs it — never at construction.
+    - A provider is constructed from one source: typed configuration supplied
+      directly or `<project-root>/.postel.toml` ([./interface.lex]).
+    - The consumer supplies the project root; no provider discovers it from
+      the process working directory.
+    - Each provider exposes file and direct construction in its `api.rs`.
+    - The file and direct forms do not merge and produce the same typed
+      provider configuration.
     - One selection variable per domain, declared by the contracts crate;
       unset means github.
       :: tbd :: The five selection variables' names.
-    - Per-provider identity variables carry names and ids only, never a
-      value.
-      :: tbd :: The github provider's identity variable names.
-    - The secret-store client names the one variable carrying its own
-      token.
-      :: tbd :: That variable's name.
+    - Github reads user authentication from `[provider.github].GH_TOKEN`.
+    - Github reads named app authentication from
+      `[provider.github.apps.<identity>]`: `APP_ID`, `INSTALLATION_ID` and
+      `PRIVATE_KEY`.
+    - The direct github configuration carries the same user and named-app
+      fields as the file form.
+    - A missing credential raises a structured error naming its identity and
+      kind at the first operation that needs it.
+    - A missing, unreadable or malformed project configuration raises a
+      structured configuration error when the file form is read.
+    - Credential values appear in no debug output or error and are never
+      persisted by postel.
+    - Provider construction reaches no network.
 
 3. Test Tiers
 
     - Rules that read a contract run against a fake provider: no network, no
       third-party account, nothing left behind in a real repo
       ([./interface.lex]).
+    - Provider tests construct equivalent clients from project and direct
+      configuration.
+    - Github provider tests prove user operations use `GH_TOKEN`, app-only
+      operations use the named app installation, and neither can substitute
+      for the other.
     - Above that, the verification ladder is the implementation skill's;
       postel adds no tier of its own.
 
@@ -60,6 +77,6 @@ Verify
 
     - kent links the contracts crate and drives the pr domain
       ([./architecture.lex]).
-    - edward links the repo and jobs domains and the secret-store client.
+    - edward links the repo and jobs domains and supplies their providers.
     - minsky and sam write records through the bucket client.
     - Postel links no sibling tool.

@@ -1,12 +1,26 @@
-# lexd runs against the whole tree, not staged files only: a staged-only pass
-# can lie about unstaged edits. The docs hook is staged-diff by design — it
-# reports on what the commit adds — except its link check, which is whole-tree.
+# The checks run against every tracked file of each supported type. A commit
+# cannot pass while an unstaged edit leaves the working tree invalid.
 
 pre-commit:
   commands:
-    docs:
+    tools:
       priority: 1
-      run: .agents/hooks/pre-commit
-    lex:
+      run: >-
+        for tool in prettier markdownlint lexd; do command -v "$tool" >/dev/null
+        || { echo "E_NO_TOOL: $tool is required by the pre-commit checks"; exit
+        1; }; done
+    prettier:
       priority: 2
-      run: git ls-files -z '*.lex' | xargs -0 lexd check
+      run: >-
+        git ls-files -z '*.md' '*.json' '*.yml' '*.yaml'
+        ':(exclude).agents/skills/**' | xargs -0 -r prettier --check
+      fail_text: >-
+        Run prettier --write on the listed files and stage the result.
+    markdownlint:
+      priority: 3
+      run: git ls-files -z '*.md' | xargs -0 -r markdownlint
+      fail_text: Fix the reported Markdown errors and stage the result.
+    lex:
+      priority: 4
+      run: git ls-files -z '*.lex' | xargs -0 -r lexd check
+      fail_text: Fix the reported Lex errors and stage the result.

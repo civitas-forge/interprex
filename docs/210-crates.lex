@@ -6,6 +6,6 @@ Crate Layout
 
 1. Subsystems
 
-    The platform is two crates rather than one because a contract is per domain while a provider is per system. The contracts crate holds the five domain traits in the tools' own terms and names no provider; every consumer declares it ([./interface.lex]). One crate per provider holds the client and the five domain modules implementing those traits against its system. The bucket client and the secret-store client are a crate each.
+    The platform is two crates rather than one because a contract is per domain while a provider is per system. The contracts crate holds the five domain traits in the tools' own terms and names no provider; every consumer declares it ([./interface.lex]). One crate per provider holds the client, its typed configuration and project-configuration reader, and the five domain modules implementing those traits against its system. The bucket client is its own crate.
 
     Beside the subsystems sit the model crate and sys, this repo's own and shared with no other.

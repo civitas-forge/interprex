@@ -101,5 +101,4 @@ Good: Asset names derive from the grammar: name, version, platform,
 ## Mechanics
 
 Lex format: load the lex-primer skill. Lint with `lexd check`. The
-pre-commit hook prints word deltas and slop tells — warnings to act
-on, never blocks.
+pre-commit hook also checks the repository's Lex documents.

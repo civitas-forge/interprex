@@ -37,14 +37,11 @@ Architecture
 
 3. Deployment
 
-    Everything a deployment declares to these crates arrives as environment
-    variables. A module names the variables it needs, the way the
-    secret-store client names the one carrying its own token. The operator —
-    whoever runs a tool on a host — sets them; in ci a caller passes them
-    from the repo's secrets. A missing variable is a structured error naming
-    it, at the call that first needs it — the same rule every refusal
-    follows ([#2]). Nothing is discovered: no crate here reads a
-    configuration file.
+    A consumer constructs each provider at its composition root. Provider
+    credentials come from one of the two forms in [./interface.lex]: the
+    project configuration or a typed value supplied directly. How the consumer
+    obtains a directly supplied value is no fact of postel. Postel opens no
+    credential store.
 
     Github is the default in source. A deployment that selects otherwise
     sets the domain's selection variable, one per domain — declared by the
@@ -55,10 +52,12 @@ Architecture
     they are, a module rather than a rewrite. Postel implements every
     domain in each provider it carries.
 
-    Per-provider identity — the app, the installation, the token names — is
-    the variables the provider declares. They carry names and ids
-    only, never a value; values live in the secret store
-    ([./110-data-access.lex]).
+    Authentication belongs to the provider. The github provider holds the
+    configured user token and named app credentials. It uses the user identity
+    for user operations and the required app installation for app-only
+    operations. A missing credential is a structured error naming the identity
+    and credential kind at the first operation that needs it. Construction
+    reaches no network.
 
     A selection reaches the providers and nothing else. Agent acts
     cross no contract ([#4]), so moving a domain never reaches them, and
@@ -80,9 +79,9 @@ Architecture
         platform's own cli, under rules that live with the performer, and no
         client here grows to own them.
     Identity:
-        Not a domain. Each provider authenticates its own way and carries
-        its own credentials, so identity belongs to a provider and is never
-        selected apart from one.
+        Not a domain. Each provider authenticates its own user and app
+        identities and carries their credentials, so identity belongs to a
+        provider and is never selected apart from one.
     Git:
         Not a domain. Refs, tags, branches and pushes are git itself,
         identical under any provider, and no domain models them.
@@ -94,7 +93,7 @@ Architecture
         read and write in a review passes through it.
     edward:
         Links the repo and jobs domains for derived repo state and the ci
-        runtime, and the secret-store client for credentials.
+        runtime, and supplies their providers at its composition root.
     minsky, sam:
         Write their records — sessions, events, access — through the bucket
         client, under the write discipline of [./contracts/records.lex];

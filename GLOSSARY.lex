@@ -24,17 +24,23 @@ Glossary
         The code inside a provider that reaches its system — one client per
         system, holding its authentication, transport and retry, shared by
         every tool that links it.
+    identity:
+        The platform principal under which a provider performs an operation —
+        a user or an app installation on github.
     installation:
         The grant under which an app authenticates on the platform, carrying
         its permissions and its tokens.
+    credentials:
+        The provider-specific values that authenticate an identity. A caller
+        supplies them through the project configuration or directly when it
+        constructs a provider.
     token:
-        A credential opening one identity's access — an installation's on the
-        platform, a configuration-scoped service token on the secret store.
-        A platform token is fetched, cached and refreshed in-client and never
-        persisted; a service token arrives through the environment.
+        A credential opening one identity's access. A user token is supplied
+        as a credential; an app installation token is fetched, cached and
+        refreshed in-client. Neither is persisted by postel.
     store:
-        One of the five places an entity lives: the platform, git, the
-        bucket, the secret store, the host.
+        One of the four places an entity lives: the platform, git, the bucket,
+        the host.
     lookup:
         A read answered by one exact address.
     listing:

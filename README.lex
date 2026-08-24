@@ -47,16 +47,16 @@ Postel
     [./docs/interface.lex]:
         What a consumer links, calls and tests against.
     [./docs/verify.lex]:
-        The checkable assertions: interface, environment, test tiers, build
+        The checkable assertions: interface, configuration, test tiers, build
         outputs, runtime, siblings.
     [./docs/100-platform.lex]:
         The development platform and its five domains.
     [./docs/110-data-access.lex]:
-        The five stores, what each answers, and the method for settling a
+        The four stores, what each answers, and the method for settling a
         model and its access together.
     [./docs/200-stack.lex]:
-        Bought and built: octocrab and the github client, the bucket, the
-        secret store.
+        Bought and built: octocrab and the github client, the bucket, and
+        provider authentication.
     [./docs/210-crates.lex]:
         The crate layout.
     [./docs/contracts/records.lex]:

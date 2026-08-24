@@ -7,7 +7,15 @@ Implementation Stack
     Octocrab is bought; the client over it is built here, one per system ([./architecture.lex]). Callers call the domain contracts ([./100-platform.lex]) and none of them calls octocrab directly. Which crate holds it is [./210-crates.lex]'s.
 
     The wrapper holds what every binary needs and what has to behave
-    identically in every consumer. App auth: installation tokens fetched, cached and refreshed in-client. Secret transport: values seal client-side (crypto_box sealed box) before the put. Asset transport: large release assets upload through a dedicated streaming call, and downloads stream through the client. The retry policy: octocrab's rate-limit-aware one, enabled, because its default is not. And the graphql documents, hand-written rather than generated — the operation count is small and the schema is enormous.
+    identically in every consumer. User authentication: `GH_TOKEN` is used
+    directly. App authentication: installation tokens are fetched, cached and
+    refreshed in-client from the named app's credentials. Repository-secret
+    transport: values seal client-side (crypto_box sealed box) before the put.
+    Asset transport: large release assets upload through a dedicated streaming
+    call, and downloads stream through the client. The retry policy:
+    octocrab's rate-limit-aware one, enabled, because its default is not. And
+    the graphql documents, hand-written rather than generated — the operation
+    count is small and the schema is enormous.
 
     Octocrab types what it types: checks, releases and assets, workflow dispatch and runs, labels, secrets transport, app auth. Where it does not type, the wrapper reaches its raw REST escape hatch — repo settings, rulesets, branch protection — and its graphql method, the only route to review threads and their resolution, the draft-ready flip, and reviewer requests by login. gh is a developer convenience, never a runtime dependency.
 
@@ -16,7 +24,3 @@ Implementation Stack
 2. The Bucket Client
 
     Google Cloud Storage is the default provider. Callers hold paths and records ([./110-data-access.lex], [./contracts/records.lex]); no vendor type crosses the client.
-
-3. The Secret Store Client
-
-    Doppler is the default provider. A credential configuration ([./110-data-access.lex]) is a Doppler config, and the config-scoped token that opens one is a Doppler service token.

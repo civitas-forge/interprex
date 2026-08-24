@@ -8,14 +8,16 @@ Data Access
 
 2. The Stores
 
-    Five, and each answers a different set of questions. Every entity names the one it lives on. Two of them are the platform and git; outside those there are exactly three more, and no fourth is added: an object store — a file store, never a service — the secret store, and the host, which holds only what is live.
+    Four, and each answers a different set of questions. Every entity names the
+    one it lives on. Two of them are the platform and git; outside those there
+    are exactly two more, and no third is added: an object store — a file
+    store, never a service — and the host, which holds only what is live.
 
     Stores:
         | Store | Holds | Answers cheaply | Answers by scan, index, or not at all |
         | github | releases and their assets, issues, pull requests, workflow runs, packages | an exact address; one hop down its hierarchy | anything spanning repos; anything off the hierarchy |
         | git | a repo's declarations | the whole set at a ref | nothing else is asked of it |
         | bucket | what is neither code nor platform state: session records, access events, the build cache | a lookup or a prefix listing by path | anything off the path, which is read and computed ([#5]) |
-        | secret | credential configurations, per repo and per tier | the values one configuration holds, opened by that configuration's token | anything across configurations; any read without a token |
         | host | live sessions, workspaces, environments | a lookup by path | anything else |
 
         :: table align=llll header=1 ::
@@ -23,6 +25,10 @@ Data Access
     Github holds no arbitrary query: no join, no secondary index, no filter on a field its api does not expose. A question off the hierarchy is answered by fetching and filtering locally, by reading records and computing it ([#5]), or not at all — and which of the three is a stated decision, never a discovery at implementation time.
 
     The bucket is a file store and not a service: nothing but a path reaches it, so the identifier discipline ([#4]) is all the query language it has.
+
+    Provider credentials are inputs to a client, not entities in a store that
+    postel accesses. A caller supplies them when it constructs the provider
+    ([./interface.lex]).
 
     The host store holds only what is live. Nothing in it is shared, and an environment's container is discarded when it ends, so anything that must outlast it is written to a mounted volume, to the bucket or to the platform.
 
