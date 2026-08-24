@@ -30,7 +30,6 @@ Verify
       provider configuration.
     - One selection variable per domain, declared by the contracts crate;
       unset means github.
-      :: tbd :: The five selection variables' names.
     - Github reads user authentication from `[provider.github].GH_TOKEN`.
     - Github reads named app authentication from
       `[provider.github.apps.<identity>]`: `APP_ID`, `INSTALLATION_ID` and
