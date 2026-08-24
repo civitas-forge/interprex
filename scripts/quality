@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-required_tools=(cargo lexd markdownlint prettier)
+required_tools=(cargo lexd markdownlint prettier shellcheck)
 
 for tool in "${required_tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -21,6 +21,9 @@ git ls-files -z -- '*.md' | xargs -0 -r markdownlint
 
 printf 'Checking Lex documents\n'
 git ls-files -z -- '*.lex' | xargs -0 -r lexd check
+
+printf 'Checking shell scripts\n'
+shellcheck scripts/install-quality-tools scripts/quality
 
 printf 'Checking Rust formatting\n'
 cargo fmt --all -- --check

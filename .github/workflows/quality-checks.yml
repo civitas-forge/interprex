@@ -1,0 +1,53 @@
+name: Quality checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Format, lint, and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@v2
+
+      - name: Enable shared sccache
+        uses: arthur-debert/release/.github/actions/setup-sccache@v3
+        with:
+          gcs-key: ${{ secrets.SCCACHE_GCS_KEY }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Cache quality tools
+        id: quality-tools
+        uses: actions/cache@v5
+        with:
+          path: .quality-tools
+          key: tools-${{ runner.os }}-${{ hashFiles('scripts/install-*') }}
+
+      - name: Install quality tools
+        if: steps.quality-tools.outputs.cache-hit != 'true'
+        run: scripts/install-quality-tools .quality-tools
+
+      - name: Add quality tools to PATH
+        run: echo "$GITHUB_WORKSPACE/.quality-tools/bin" >> "$GITHUB_PATH"
+
+      - name: Run repository quality checks
+        run: scripts/quality

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly LEFTHOOK_VERSION=2.1.9
+readonly LEXD_VERSION=0.19.10
+readonly MARKDOWNLINT_VERSION=0.49.1
+readonly PRETTIER_VERSION=3.8.5
+readonly SHELLCHECK_VERSION=0.11.0
+
+prefix=${1:-.quality-tools}
+
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64 | Darwin-aarch64)
+        lexd_target=aarch64-apple-darwin
+        shellcheck_target=darwin.aarch64
+        ;;
+    Linux-aarch64 | Linux-arm64)
+        lexd_target=aarch64-unknown-linux-gnu
+        shellcheck_target=linux.aarch64
+        ;;
+    Linux-x86_64)
+        lexd_target=x86_64-unknown-linux-gnu
+        shellcheck_target=linux.x86_64
+        ;;
+    *)
+        printf 'Unsupported quality-tool platform: %s-%s\n' \
+            "$(uname -s)" "$(uname -m)" >&2
+        exit 1
+        ;;
+esac
+
+mkdir -p "$prefix/bin" "$prefix/npm"
+
+work_dir=$(mktemp -d)
+trap 'rm -rf "$work_dir"' EXIT
+
+lexd_archive="lexd-${lexd_target}.tar.gz"
+curl --fail --location --silent --show-error \
+    "https://github.com/lex-fmt/lex/releases/download/v${LEXD_VERSION}/${lexd_archive}" \
+    --output "$work_dir/$lexd_archive"
+tar -xzf "$work_dir/$lexd_archive" -C "$work_dir"
+install -m 755 "$work_dir/lexd-${lexd_target}/lexd" "$prefix/bin/lexd"
+
+shellcheck_archive="shellcheck-v${SHELLCHECK_VERSION}.${shellcheck_target}.tar.gz"
+curl --fail --location --silent --show-error \
+    "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${shellcheck_archive}" \
+    --output "$work_dir/$shellcheck_archive"
+tar -xzf "$work_dir/$shellcheck_archive" -C "$work_dir"
+install -m 755 "$work_dir/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
+    "$prefix/bin/shellcheck"
+
+npm install --no-audit --no-fund --prefix "$prefix/npm" \
+    "lefthook@${LEFTHOOK_VERSION}" \
+    "markdownlint-cli@${MARKDOWNLINT_VERSION}" \
+    "prettier@${PRETTIER_VERSION}"
+
+ln -sfn ../npm/node_modules/.bin/lefthook "$prefix/bin/lefthook"
+ln -sfn ../npm/node_modules/.bin/markdownlint "$prefix/bin/markdownlint"
+ln -sfn ../npm/node_modules/.bin/prettier "$prefix/bin/prettier"
