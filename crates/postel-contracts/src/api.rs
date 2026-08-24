@@ -1,5 +1,7 @@
 //! Stable contract interface and structured provider failures.
 
+use std::fmt;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use postel_model::{
@@ -57,14 +59,32 @@ pub enum ProviderError {
         identity: String,
         kind: &'static str,
     },
-    #[error("cannot read provider configuration at {path}: {reason}")]
-    Configuration { path: String, reason: String },
+    #[error("provider configuration from {origin} failed: {reason}")]
+    Configuration {
+        origin: ConfigurationSource,
+        reason: String,
+    },
     #[error("{provider} {operation} failed: {message}")]
     External {
         provider: &'static str,
         operation: &'static str,
         message: String,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfigurationSource {
+    Direct,
+    File(String),
+}
+
+impl fmt::Display for ConfigurationSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Direct => formatter.write_str("direct construction"),
+            Self::File(path) => write!(formatter, "file {path}"),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, ProviderError>;

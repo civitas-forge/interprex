@@ -1,9 +1,10 @@
 //! Provider construction from typed or project configuration.
 //!
-//! Direct and file construction converge before clients are built. Secrets are
-//! stored in `SecretString`, and the custom debug views report only presence and
-//! identity names. A named app client is installation-scoped immediately, but
-//! Octocrab does not fetch its installation token until the first request.
+//! Direct and file construction converge before clients are built while
+//! retaining their origin for configuration failures. Secrets are stored in
+//! `SecretString`, and the custom debug views report only presence and identity
+//! names. A named app client is installation-scoped immediately, but Octocrab
+//! does not fetch its installation token until the first request.
 
 use std::{collections::BTreeMap, fmt, path::Path, sync::Arc};
 
@@ -12,7 +13,7 @@ use octocrab::{
     DefaultOctocrabBuilderConfig, NoAuth, NoSvc, NotLayerReady, Octocrab, OctocrabBuilder,
     service::middleware::retry::{NoOpRateLimitMetrics, RetryConfig},
 };
-use postel_contracts::{ProviderError, Result};
+use postel_contracts::{ConfigurationSource, ProviderError, Result};
 use postel_sys::{RealSystem, System};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -93,6 +94,13 @@ impl GithubProvider {
 }
 
 pub async fn from_config(config: GithubConfig) -> Result<GithubProvider> {
+    from_config_with_source(config, ConfigurationSource::Direct).await
+}
+
+async fn from_config_with_source(
+    config: GithubConfig,
+    source: ConfigurationSource,
+) -> Result<GithubProvider> {
     let user = config
         .gh_token
         .as_ref()
@@ -104,7 +112,7 @@ pub async fn from_config(config: GithubConfig) -> Result<GithubProvider> {
     for (identity, credentials) in &config.apps {
         let key = EncodingKey::from_rsa_pem(credentials.private_key.expose_secret().as_bytes())
             .map_err(|_| ProviderError::Configuration {
-                path: ".postel.toml".to_owned(),
+                origin: source.clone(),
                 reason: format!("invalid RSA private key for app identity {identity}"),
             })?;
         let client = configured_builder(&config)?
@@ -124,20 +132,21 @@ pub async fn from_project(project_root: &Path) -> Result<GithubProvider> {
 
 async fn from_project_with(system: &dyn System, project_root: &Path) -> Result<GithubProvider> {
     let path = project_root.join(".postel.toml");
+    let source = ConfigurationSource::File(path.display().to_string());
     let contents =
         system
             .read_to_string(&path)
             .await
             .map_err(|error| ProviderError::Configuration {
-                path: path.display().to_string(),
+                origin: source.clone(),
                 reason: error.kind().to_string(),
             })?;
     let file: ProjectFile =
         toml::from_str(&contents).map_err(|error| ProviderError::Configuration {
-            path: path.display().to_string(),
+            origin: source.clone(),
             reason: error.message().to_owned(),
         })?;
-    from_config(file.provider.github.into()).await
+    from_config_with_source(file.provider.github.into(), source).await
 }
 
 fn build_user(token: &SecretString, config: &GithubConfig) -> Result<Octocrab> {
@@ -251,12 +260,27 @@ impl From<GithubTable> for GithubConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{collections::BTreeMap, io, path::Path, sync::Arc, time::Duration};
 
+    use async_trait::async_trait;
     use postel_contracts::ProviderError;
+    use postel_sys::System;
 
-    use super::{GithubConfig, GithubProvider, ProjectFile, from_config};
+    use super::{
+        AppCredentials, GithubConfig, GithubProvider, ProjectFile, from_config, from_project_with,
+    };
     use secrecy::SecretString;
+
+    struct TextSystem(&'static str);
+
+    #[async_trait]
+    impl System for TextSystem {
+        async fn read_to_string(&self, _path: &Path) -> io::Result<String> {
+            Ok(self.0.to_owned())
+        }
+
+        async fn sleep(&self, _duration: Duration) {}
+    }
 
     #[test]
     fn file_and_direct_forms_have_the_same_typed_shape() {
@@ -299,6 +323,51 @@ mod tests {
         let debug = format!("{config:?}");
         assert!(!debug.contains("sensitive-user-token"));
         assert!(debug.contains("REDACTED"));
+    }
+
+    #[tokio::test]
+    async fn invalid_direct_app_key_reports_direct_construction() {
+        let error = from_config(GithubConfig {
+            apps: BTreeMap::from([(
+                "automation".to_owned(),
+                AppCredentials {
+                    app_id: 12,
+                    installation_id: 34,
+                    private_key: SecretString::from("not-an-rsa-key"),
+                },
+            )]),
+            ..GithubConfig::default()
+        })
+        .await
+        .expect_err("invalid key");
+        let message = error.to_string();
+        assert!(message.contains("direct"), "{message}");
+        assert!(!message.contains(".postel.toml"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn invalid_project_app_key_reports_the_file_that_supplied_it() {
+        let error = from_project_with(
+            &TextSystem(
+                r#"
+                    [provider.github]
+
+                    [provider.github.apps.automation]
+                    APP_ID = 12
+                    INSTALLATION_ID = 34
+                    PRIVATE_KEY = "not-an-rsa-key"
+                "#,
+            ),
+            Path::new("/workspace/project"),
+        )
+        .await
+        .expect_err("invalid key");
+        let message = error.to_string();
+        assert!(
+            message.contains("file /workspace/project/.postel.toml"),
+            "{message}"
+        );
+        assert!(!message.contains("direct construction"), "{message}");
     }
 
     #[tokio::test]
