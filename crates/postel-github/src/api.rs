@@ -295,7 +295,7 @@ impl From<GithubTable> for GithubConfig {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, io, path::Path, sync::Arc, time::Duration};
+    use std::{collections::BTreeMap, io, path::Path, sync::Arc};
 
     use async_trait::async_trait;
     use postel_contracts::{ConfigurationSource, ProviderError};
@@ -331,8 +331,6 @@ mod tests {
                 TestRead::Error(kind) => Err(io::Error::from(*kind)),
             }
         }
-
-        async fn sleep(&self, _duration: Duration) {}
     }
 
     #[test]
