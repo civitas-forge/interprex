@@ -304,7 +304,7 @@ mod tests {
     use super::{
         AppCredentials, GithubConfig, GithubProvider, ProjectFile, from_config, from_project_with,
     };
-    use secrecy::SecretString;
+    use secrecy::{ExposeSecret, SecretString};
 
     enum TestRead {
         Text(String),
@@ -334,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn file_and_direct_forms_have_the_same_typed_shape() {
+    fn file_and_direct_forms_preserve_the_same_credentials() {
         let file: ProjectFile = toml::from_str(
             r#"
                 [provider.github]
@@ -362,7 +362,23 @@ mod tests {
             .collect(),
             ..GithubConfig::default()
         };
-        assert_eq!(format!("{from_file:?}"), format!("{direct:?}"));
+        assert_eq!(
+            from_file.gh_token.as_ref().map(ExposeSecret::expose_secret),
+            direct.gh_token.as_ref().map(ExposeSecret::expose_secret)
+        );
+        assert_eq!(from_file.apps.len(), direct.apps.len());
+        for (identity, file_credentials) in &from_file.apps {
+            let direct_credentials = direct.apps.get(identity).expect("same app identity");
+            assert_eq!(file_credentials.app_id, direct_credentials.app_id);
+            assert_eq!(
+                file_credentials.installation_id,
+                direct_credentials.installation_id
+            );
+            assert_eq!(
+                file_credentials.private_key.expose_secret(),
+                direct_credentials.private_key.expose_secret()
+            );
+        }
     }
 
     #[test]
