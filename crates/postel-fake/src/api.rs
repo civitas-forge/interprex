@@ -11,8 +11,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures_util::{TryStreamExt, stream};
 use postel_contracts::{
-    JobsDomain, PrDomain, ProviderError, ReleasesDomain, RepoDomain, Result, TrackerDomain,
+    AssetStream, AssetStreamError, AssetUpload, JobsDomain, PrDomain, ProviderError,
+    ReleasesDomain, RepoDomain, Result, TrackerDomain,
 };
 use postel_model::{
     AssetId, CheckOutcome, DispatchInputs, Issue, IssueNumber, Label, NewRelease, PullRequest,
@@ -43,7 +45,7 @@ struct State {
     runs: BTreeMap<(Repository, RunId), WorkflowRun>,
     cancelled_runs: Vec<(Repository, RunId)>,
     releases: BTreeMap<(Repository, String), Release>,
-    assets: BTreeMap<(Repository, AssetId), Bytes>,
+    assets: BTreeMap<(Repository, AssetId), Vec<Bytes>>,
     next_release_id: u64,
     next_asset_id: u64,
 }
@@ -409,15 +411,40 @@ impl ReleasesDomain for FakeProvider {
         release_id: ReleaseId,
         name: &str,
         label: Option<&str>,
-        content: Bytes,
+        upload: AssetUpload,
     ) -> Result<ReleaseAsset> {
+        let (content_length, chunks) = upload.into_parts();
+        let chunks: Vec<Bytes> =
+            chunks
+                .try_collect()
+                .await
+                .map_err(|error| ProviderError::External {
+                    provider: "fake",
+                    operation: "read release asset upload",
+                    message: error.to_string(),
+                })?;
+        let actual_length = chunks.iter().try_fold(0_u64, |length, chunk| {
+            length.checked_add(chunk.len() as u64)
+        });
+        if actual_length != Some(content_length) {
+            return Err(ProviderError::Refused {
+                provider: "fake",
+                fact: format!(
+                    "asset upload declared {content_length} bytes but yielded {}",
+                    actual_length.map_or_else(
+                        || "an overflowing length".to_owned(),
+                        |value| value.to_string()
+                    )
+                ),
+            });
+        }
         let mut state = self.state.write().await;
         state.next_asset_id += 1;
         let asset = ReleaseAsset {
             id: AssetId::new(state.next_asset_id).expect("increment starts at one"),
             name: name.to_owned(),
             label: label.map(str::to_owned),
-            size: content.len() as u64,
+            size: content_length,
             download_url: format!("memory://{}/{}", repository, state.next_asset_id),
         };
         let release = state
@@ -426,28 +453,38 @@ impl ReleasesDomain for FakeProvider {
             .find(|release| release.id == release_id)
             .ok_or_else(|| missing(format!("release {release_id:?}")))?;
         release.assets.push(asset.clone());
-        state.assets.insert((repository.clone(), asset.id), content);
+        state.assets.insert((repository.clone(), asset.id), chunks);
         Ok(asset)
     }
 
-    async fn download_asset(&self, repository: &Repository, asset_id: AssetId) -> Result<Bytes> {
-        self.state
+    async fn download_asset(
+        &self,
+        repository: &Repository,
+        asset_id: AssetId,
+    ) -> Result<AssetStream> {
+        let chunks = self
+            .state
             .read()
             .await
             .assets
             .get(&(repository.clone(), asset_id))
             .cloned()
-            .ok_or_else(|| missing(format!("asset {asset_id:?} in {repository}")))
+            .ok_or_else(|| missing(format!("asset {asset_id:?} in {repository}")))?;
+        Ok(Box::pin(stream::iter(
+            chunks.into_iter().map(Ok::<Bytes, AssetStreamError>),
+        )))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::FakeProvider;
-    use postel_contracts::{PrDomain, RepoDomain};
+    use bytes::Bytes;
+    use futures_util::{TryStreamExt, stream};
+    use postel_contracts::{AssetStreamError, AssetUpload, PrDomain, ReleasesDomain, RepoDomain};
     use postel_model::{
-        PullRequestNumber, Repository, RepositoryFacts, RepositorySettings, ReviewComment,
-        ReviewThread,
+        PullRequestNumber, Release, ReleaseId, Repository, RepositoryFacts, RepositorySettings,
+        ReviewComment, ReviewThread,
     };
 
     #[tokio::test]
@@ -520,6 +557,50 @@ mod tests {
                 .await
                 .expect("review threads"),
             [thread]
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_streams_release_assets_through_the_contract() {
+        let provider = FakeProvider::new();
+        let repository = Repository::new("faictor", "sandbox").expect("repository");
+        let release_id = ReleaseId::new(1).expect("release id");
+        provider
+            .seed_release(
+                repository.clone(),
+                Release {
+                    id: release_id,
+                    tag: "v0.1.0".to_owned(),
+                    name: None,
+                    body: None,
+                    draft: true,
+                    prerelease: false,
+                    assets: Vec::new(),
+                },
+            )
+            .await;
+        let upload = AssetUpload::new(
+            11,
+            stream::iter([
+                Ok::<_, AssetStreamError>(Bytes::from_static(b"hello ")),
+                Ok(Bytes::from_static(b"world")),
+            ]),
+        );
+        let asset = provider
+            .upload_asset(&repository, release_id, "postel.tar.gz", None, upload)
+            .await
+            .expect("upload asset");
+        let chunks: Vec<Bytes> = provider
+            .download_asset(&repository, asset.id)
+            .await
+            .expect("download stream")
+            .try_collect()
+            .await
+            .expect("download chunks");
+
+        assert_eq!(
+            chunks,
+            [Bytes::from_static(b"hello "), Bytes::from_static(b"world")]
         );
     }
 }

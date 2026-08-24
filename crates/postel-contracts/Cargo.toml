@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 async-trait.workspace = true
 bytes.workspace = true
+futures-util.workspace = true
 postel-model = { path = "../postel-model" }
 secrecy.workspace = true
 thiserror.workspace = true

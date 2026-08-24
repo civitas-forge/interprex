@@ -12,10 +12,12 @@ Implementation Stack
     refreshed in-client from the named app's credentials. Repository-secret
     transport: values seal client-side (crypto_box sealed box) before the put.
     Asset transport: large release assets upload through a dedicated streaming
-    call, and downloads stream through the client. The retry policy:
-    octocrab's rate-limit-aware one, enabled, because its default is not. And
-    the graphql documents, hand-written rather than generated — the operation
-    count is small and the schema is enormous.
+    call, and downloads stream through the client. Replayable requests use
+    octocrab's rate-limit-aware retry policy, enabled because its default is
+    not. A streamed upload is one-shot and is not retried after bytes may have
+    been sent; retrying it requires a fresh caller-owned stream. And the graphql
+    documents are hand-written rather than generated — the operation count is
+    small and the schema is enormous.
 
     Octocrab types what it types: checks, releases and assets, workflow dispatch and runs, labels, secrets transport, app auth. Where it does not type, the wrapper reaches its raw REST escape hatch — repo settings, rulesets, branch protection — and its graphql method, the only route to review threads and their resolution, the draft-ready flip, and reviewer requests by login. gh is a developer convenience, never a runtime dependency.
 

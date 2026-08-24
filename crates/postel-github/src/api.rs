@@ -59,6 +59,7 @@ impl fmt::Debug for GithubConfig {
 #[derive(Clone)]
 pub struct GithubProvider {
     pub(crate) user: Option<Arc<Octocrab>>,
+    pub(crate) streaming_user: Option<Arc<Octocrab>>,
     pub(crate) apps: BTreeMap<String, Arc<Octocrab>>,
 }
 
@@ -91,6 +92,15 @@ impl GithubProvider {
                 kind: "named app",
             })
     }
+
+    pub(crate) fn streaming_user(&self) -> Result<&Octocrab> {
+        self.streaming_user
+            .as_deref()
+            .ok_or(ProviderError::MissingCredential {
+                identity: "user".to_owned(),
+                kind: "GH_TOKEN",
+            })
+    }
 }
 
 pub async fn from_config(config: GithubConfig) -> Result<GithubProvider> {
@@ -105,6 +115,12 @@ async fn from_config_with_source(
         .gh_token
         .as_ref()
         .map(|token| build_user(token, &config))
+        .transpose()?
+        .map(Arc::new);
+    let streaming_user = config
+        .gh_token
+        .as_ref()
+        .map(|token| build_streaming_user(token, &config))
         .transpose()?
         .map(Arc::new);
 
@@ -123,7 +139,11 @@ async fn from_config_with_source(
             .map_err(|error| external("scope app installation", error))?;
         apps.insert(identity.clone(), Arc::new(client));
     }
-    Ok(GithubProvider { user, apps })
+    Ok(GithubProvider {
+        user,
+        streaming_user,
+        apps,
+    })
 }
 
 pub async fn from_project(project_root: &Path) -> Result<GithubProvider> {
@@ -156,14 +176,29 @@ fn build_user(token: &SecretString, config: &GithubConfig) -> Result<Octocrab> {
         .map_err(|error| external("construct user client", error))
 }
 
+fn build_streaming_user(token: &SecretString, config: &GithubConfig) -> Result<Octocrab> {
+    base_builder(config)?
+        .personal_token(token.clone())
+        .build()
+        .map_err(|error| external("construct streaming user client", error))
+}
+
 fn configured_builder(
     config: &GithubConfig,
 ) -> Result<OctocrabBuilder<NoSvc, DefaultOctocrabBuilderConfig, NoAuth, NotLayerReady>> {
-    let mut builder = Octocrab::builder().add_retry_config(RetryConfig::HandleRateLimits {
-        metrics: Arc::new(NoOpRateLimitMetrics),
-        max_retries: 3,
-        min_wait_seconds: 1,
-    });
+    Ok(
+        base_builder(config)?.add_retry_config(RetryConfig::HandleRateLimits {
+            metrics: Arc::new(NoOpRateLimitMetrics),
+            max_retries: 3,
+            min_wait_seconds: 1,
+        }),
+    )
+}
+
+fn base_builder(
+    config: &GithubConfig,
+) -> Result<OctocrabBuilder<NoSvc, DefaultOctocrabBuilderConfig, NoAuth, NotLayerReady>> {
+    let mut builder = Octocrab::builder();
     if let Some(uri) = &config.base_uri {
         builder = builder
             .base_uri(uri)
@@ -391,6 +426,7 @@ mod tests {
     async fn named_app_identity_cannot_substitute_for_the_user() {
         let provider = GithubProvider {
             user: None,
+            streaming_user: None,
             apps: BTreeMap::from([(
                 "automation".to_owned(),
                 Arc::new(octocrab::Octocrab::default()),

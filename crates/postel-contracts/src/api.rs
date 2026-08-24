@@ -1,9 +1,10 @@
 //! Stable contract interface and structured provider failures.
 
-use std::fmt;
+use std::{fmt, pin::Pin};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use futures_util::Stream;
 use postel_model::{
     CheckOutcome, DispatchInputs, Issue, IssueNumber, Label, NewRelease, PullRequest,
     PullRequestNumber, Release, ReleaseAsset, Repository, RepositoryFacts, RepositorySettings,
@@ -89,6 +90,48 @@ impl fmt::Display for ConfigurationSource {
 
 pub type Result<T> = std::result::Result<T, ProviderError>;
 
+#[derive(Debug, Error)]
+#[error("{message}")]
+pub struct AssetStreamError {
+    message: String,
+}
+
+impl AssetStreamError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+pub type AssetStreamItem = std::result::Result<Bytes, AssetStreamError>;
+pub type AssetStream = Pin<Box<dyn Stream<Item = AssetStreamItem> + Send + Sync + 'static>>;
+
+/// A one-shot upload body with the exact byte length required by the provider.
+///
+/// Providers consume the stream once and do not retry a partially sent body.
+pub struct AssetUpload {
+    content_length: u64,
+    chunks: AssetStream,
+}
+
+impl AssetUpload {
+    pub fn new<S>(content_length: u64, chunks: S) -> Self
+    where
+        S: Stream<Item = AssetStreamItem> + Send + Sync + 'static,
+    {
+        Self {
+            content_length,
+            chunks: Box::pin(chunks),
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (u64, AssetStream) {
+        (self.content_length, self.chunks)
+    }
+}
+
 #[async_trait]
 pub trait RepoDomain: Send + Sync {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts>;
@@ -171,13 +214,14 @@ pub trait ReleasesDomain: Send + Sync {
         release_id: postel_model::ReleaseId,
         name: &str,
         label: Option<&str>,
-        content: Bytes,
+        upload: AssetUpload,
     ) -> Result<ReleaseAsset>;
+    /// Opens a chunk stream without buffering the complete asset.
     async fn download_asset(
         &self,
         repository: &Repository,
         asset_id: postel_model::AssetId,
-    ) -> Result<Bytes>;
+    ) -> Result<AssetStream>;
 }
 
 #[cfg(test)]

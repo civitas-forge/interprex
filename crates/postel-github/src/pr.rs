@@ -464,6 +464,7 @@ mod tests {
             .expect("client");
         let provider = GithubProvider {
             user: None,
+            streaming_user: None,
             apps: BTreeMap::from([("automation".to_owned(), Arc::new(client))]),
         };
         let repository = Repository::new("faictor", "postel-sandbox").expect("repository");

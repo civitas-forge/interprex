@@ -39,8 +39,8 @@ Interface
         jobs:
             Dispatch a workflow with inputs, read one run and cancel one run.
         releases:
-            Read a release by tag, create a release, upload one asset and
-            download an asset.
+            Read a release by tag, create a release, stream one asset with its
+            exact byte length and open a download stream.
 
     This list owns the consumer-visible operation set. Endpoint selection,
     response normalization and authentication choices belong to the provider's

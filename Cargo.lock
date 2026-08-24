@@ -1363,6 +1363,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "futures-util",
  "postel-model",
  "secrecy",
  "thiserror",
@@ -1374,6 +1375,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
+ "futures-util",
  "postel-contracts",
  "postel-model",
  "secrecy",
@@ -1391,6 +1393,9 @@ dependencies = [
  "crypto_box",
  "fs2",
  "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
  "jsonwebtoken",
  "octocrab",
  "percent-encoding",

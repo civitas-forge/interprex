@@ -1,14 +1,21 @@
 //! Release and asset operations owned by the releases domain.
 //!
-//! Release metadata is normalized into the shared model. Asset traffic uses
-//! Octocrab's dedicated upload and download routes rather than generic JSON
-//! calls, keeping upload-host selection, authentication, and response handling
-//! in the one system client.
+//! Release metadata is normalized into the shared model. Downloads return
+//! Octocrab's response chunks directly. Uploads accept a declared length and a
+//! one-shot stream, use GitHub's upload host, and deliberately bypass request
+//! retries: a partially consumed stream cannot be replayed safely. A caller may
+//! retry the whole operation only by constructing a fresh stream.
 
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
 use futures_util::TryStreamExt;
-use postel_contracts::{ProviderError, ReleasesDomain, Result};
+use http::{Request, header};
+use http_body::Frame;
+use http_body_util::StreamBody;
+use octocrab::{FromResponse, OctoBody};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use postel_contracts::{
+    AssetStream, AssetStreamError, AssetUpload, ProviderError, ReleasesDomain, Result,
+};
 use postel_model::{AssetId, NewRelease, Release, ReleaseAsset, ReleaseId, Repository};
 use serde::Deserialize;
 use serde_json::json;
@@ -123,43 +130,60 @@ impl ReleasesDomain for GithubProvider {
         release_id: ReleaseId,
         name: &str,
         label: Option<&str>,
-        content: Bytes,
+        upload: AssetUpload,
     ) -> Result<ReleaseAsset> {
         let handler = self.user()?.repos(repository.owner(), repository.name());
         let releases = handler.releases();
-        let mut upload = releases.upload_asset(release_id.get(), &name, content);
+        let release = releases
+            .get(release_id.get())
+            .await
+            .map_err(|error| external("read release for asset upload", error))?;
+        let mut upload_url = format!(
+            "{}?name={}",
+            release.upload_url.replace("{?name,label}", ""),
+            utf8_percent_encode(name, NON_ALPHANUMERIC)
+        );
         if let Some(label) = label {
-            upload = upload.label(label);
+            upload_url.push_str("&label=");
+            upload_url.push_str(&utf8_percent_encode(label, NON_ALPHANUMERIC).to_string());
         }
-        let response = upload
-            .send()
+        let (content_length, chunks) = upload.into_parts();
+        let frames = chunks.map_ok(Frame::data);
+        let request = Request::builder()
+            .method(http::Method::POST)
+            .uri(upload_url)
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CONTENT_LENGTH, content_length)
+            .body(OctoBody::new(StreamBody::new(frames)))
+            .map_err(|error| external("construct release asset upload", error))?;
+        let response = self
+            .streaming_user()?
+            .execute(request)
             .await
             .map_err(|error| external("upload release asset", error))?;
-        normalize_asset(GithubAsset {
-            id: response.id.0,
-            name: response.name,
-            label: response.label,
-            size: response.size,
-            browser_download_url: response.browser_download_url.to_string(),
-        })
+        let response = octocrab::map_github_error(response)
+            .await
+            .map_err(|error| external("upload release asset", error))?;
+        let response = GithubAsset::from_response(response)
+            .await
+            .map_err(|error| external("decode release asset upload", error))?;
+        normalize_asset(response)
     }
 
-    async fn download_asset(&self, repository: &Repository, asset_id: AssetId) -> Result<Bytes> {
+    async fn download_asset(
+        &self,
+        repository: &Repository,
+        asset_id: AssetId,
+    ) -> Result<AssetStream> {
         let handler = self.user()?.repos(repository.owner(), repository.name());
-        let mut stream = handler
+        let stream = handler
             .release_assets()
             .stream(asset_id.get())
             .await
             .map_err(|error| external("open release asset stream", error))?;
-        let mut content = BytesMut::new();
-        while let Some(chunk) = stream
-            .try_next()
-            .await
-            .map_err(|error| external("read release asset stream", error))?
-        {
-            content.extend_from_slice(&chunk);
-        }
-        Ok(content.freeze())
+        Ok(Box::pin(
+            stream.map_err(|error| AssetStreamError::new(error.to_string())),
+        ))
     }
 }
 
