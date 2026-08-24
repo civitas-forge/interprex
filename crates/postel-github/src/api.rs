@@ -298,7 +298,7 @@ mod tests {
     use std::{collections::BTreeMap, io, path::Path, sync::Arc, time::Duration};
 
     use async_trait::async_trait;
-    use postel_contracts::ProviderError;
+    use postel_contracts::{ConfigurationSource, ProviderError};
     use postel_sys::System;
 
     use super::{
@@ -306,12 +306,30 @@ mod tests {
     };
     use secrecy::SecretString;
 
-    struct TextSystem(&'static str);
+    enum TestRead {
+        Text(String),
+        Error(io::ErrorKind),
+    }
+
+    struct TestSystem(TestRead);
+
+    impl TestSystem {
+        fn text(contents: impl Into<String>) -> Self {
+            Self(TestRead::Text(contents.into()))
+        }
+
+        fn error(kind: io::ErrorKind) -> Self {
+            Self(TestRead::Error(kind))
+        }
+    }
 
     #[async_trait]
-    impl System for TextSystem {
+    impl System for TestSystem {
         async fn read_to_string(&self, _path: &Path) -> io::Result<String> {
-            Ok(self.0.to_owned())
+            match &self.0 {
+                TestRead::Text(contents) => Ok(contents.clone()),
+                TestRead::Error(kind) => Err(io::Error::from(*kind)),
+            }
         }
 
         async fn sleep(&self, _duration: Duration) {}
@@ -383,7 +401,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_project_app_key_reports_the_file_that_supplied_it() {
         let error = from_project_with(
-            &TextSystem(
+            &TestSystem::text(
                 r#"
                     [provider.github]
 
@@ -403,6 +421,85 @@ mod tests {
             "{message}"
         );
         assert!(!message.contains("direct construction"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn project_file_constructs_the_same_configured_identity_as_direct_input() {
+        let from_project = from_project_with(
+            &TestSystem::text(
+                r#"
+                    [provider.github]
+                    GH_TOKEN = "user-secret"
+                "#,
+            ),
+            Path::new("/workspace/project"),
+        )
+        .await
+        .expect("project provider");
+        let direct = from_config(GithubConfig {
+            gh_token: Some(SecretString::from("user-secret")),
+            ..GithubConfig::default()
+        })
+        .await
+        .expect("direct provider");
+
+        assert_eq!(format!("{from_project:?}"), format!("{direct:?}"));
+        assert!(from_project.user().is_ok());
+        assert!(from_project.streaming_user().is_ok());
+    }
+
+    #[tokio::test]
+    async fn missing_project_file_returns_a_structured_configuration_error() {
+        let error = from_project_with(
+            &TestSystem::error(io::ErrorKind::NotFound),
+            Path::new("/workspace/project"),
+        )
+        .await
+        .expect_err("missing file");
+        assert_eq!(
+            error,
+            ProviderError::Configuration {
+                origin: ConfigurationSource::File("/workspace/project/.postel.toml".to_owned()),
+                reason: io::ErrorKind::NotFound.to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn unreadable_project_file_returns_a_structured_configuration_error() {
+        let error = from_project_with(
+            &TestSystem::error(io::ErrorKind::PermissionDenied),
+            Path::new("/workspace/project"),
+        )
+        .await
+        .expect_err("unreadable file");
+        assert_eq!(
+            error,
+            ProviderError::Configuration {
+                origin: ConfigurationSource::File("/workspace/project/.postel.toml".to_owned()),
+                reason: io::ErrorKind::PermissionDenied.to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_project_file_returns_a_structured_configuration_error() {
+        let error = from_project_with(
+            &TestSystem::text("[provider.github\nGH_TOKEN = broken"),
+            Path::new("/workspace/project"),
+        )
+        .await
+        .expect_err("malformed file");
+        match error {
+            ProviderError::Configuration {
+                origin: ConfigurationSource::File(path),
+                reason,
+            } => {
+                assert_eq!(path, "/workspace/project/.postel.toml");
+                assert!(!reason.is_empty());
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[tokio::test]
