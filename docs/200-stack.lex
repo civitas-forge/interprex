@@ -11,3 +11,11 @@ Implementation Stack
     Octocrab types what it types: checks, releases and assets, workflow dispatch and runs, labels, secrets transport, app auth. Where it does not type, the wrapper reaches its raw REST escape hatch — repo settings, rulesets, branch protection — and its graphql method, the only route to review threads and their resolution, the draft-ready flip, and reviewer requests by login. gh is a developer convenience, never a runtime dependency.
 
     Copilot reviews are requested by bot login through the request mutation — the one path that also re-requests after a push. The copilot auto-review ruleset rule stays off in derived repo state: platform-side automation would land reviews outside the round count.
+
+2. The Bucket Client
+
+    Google Cloud Storage is the default backend. Callers hold paths and records ([./110-data-access.lex], [./contracts/records.lex]); no vendor type crosses the client.
+
+3. The Secret Store Client
+
+    Doppler is the default backend. A credential configuration ([./110-data-access.lex]) is a Doppler config, and the config-scoped token that opens one is a Doppler service token.
