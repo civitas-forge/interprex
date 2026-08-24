@@ -19,9 +19,11 @@ The Development Platform
 
     Identity is not a domain. Each backend authenticates its own way and carries its own credentials — on github, app installation, permissions and tokens — so identity belongs to a backend and is never selected apart from one. A domain that moves takes its new backend's identity with it.
 
+    A backend carries as many identities as a deployment configures ([#3]), and in the pr domain a write names the identity it is performed under: the domain's owner chooses which identity each write uses, and the backend authenticates it.
+
     Git is not a domain either. Refs, tags, branches and pushes are git itself, identical under any backend.
 
-    The contract speaks the model's terms — jobs, not workflows; tracker, not an issues api. A backend that cannot express a required fact refuses loudly; it never approximates.
+    The contract speaks the model's terms — jobs, not workflows; tracker, not an issues api. A backend that cannot express a required fact refuses loudly; it never approximates. The refusal comes at the call that needs the fact, as a structured error naming the backend and the fact; construction probes no capabilities.
 
 2. Ownership
 
@@ -54,7 +56,7 @@ The Development Platform
 
     A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so the pr domain's owner reads them there ([#2]) and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. The pr domain's owner reads one contract whatever runs the jobs.
 
-    Each tool declares the backends for the domains it owns in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's.
+    Each tool declares the backends for the domains it owns in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's. Nothing is discovered: the linking tool passes that directory's path in, and postel reads its own file there.
 
     Per-backend identity — the app, the installation, the token names — is this repo's own schema, in its own operator-side file in that directory, read by these crates from inside whichever tool links them. It carries names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
 
