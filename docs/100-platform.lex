@@ -37,9 +37,9 @@ The Development Platform
 
     A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so a caller reads them there and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. One contract answers whatever runs the jobs.
 
-    Everything a deployment declares to these crates arrives as environment variables. A module names the variables it needs, the way the secret-store client names the one carrying its own token. The operator — whoever runs a tool on a host — sets them; in ci a caller passes them from the repo's secrets; a missing variable is a structured error naming it. Nothing is discovered: no crate here reads a configuration file.
+    Everything a deployment declares to these crates arrives as environment variables. A module names the variables it needs, the way the secret-store client names the one carrying its own token. The operator — whoever runs a tool on a host — sets them; in ci a caller passes them from the repo's secrets; a missing variable is a structured error naming it, at the call that first needs it — construction probes nothing, the same rule every refusal follows ([#1]). Nothing is discovered: no crate here reads a configuration file.
 
-    Github is the default in source. A deployment that selects otherwise sets the domain's selection variable, one per domain.
+    Github is the default in source. A deployment that selects otherwise sets the domain's selection variable, one per domain — declared by the domain's contract crate, since a selection is read before any backend exists to declare it.
 
     Per-backend identity — the app, the installation, the token names — is the variables the backend module declares. They carry names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
 
