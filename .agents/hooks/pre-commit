@@ -48,19 +48,19 @@ done
 VOCAB="$ROOT/.agents/vocabulary"
 if [ -f "$VOCAB" ]; then
     known=$(mktemp); cp "$VOCAB" "$known"
-    if [ -f "$ROOT/GLOSSARY.md" ]; then
-        tr 'A-Z' 'a-z' < "$ROOT/GLOSSARY.md" | tr -cs 'a-z-' '\n' \
+    if [ -f "$ROOT/GLOSSARY.lex" ]; then
+        tr 'A-Z' 'a-z' < "$ROOT/GLOSSARY.lex" | tr -cs 'a-z-' '\n' \
             | grep -E '^[a-z][a-z-]{2,}$' | sort -u | sort -m - "$VOCAB" | sort -u > "$known"
     fi
     for f in $STAGED; do
         case "$f" in *.lex|*.md) ;; *) continue ;; esac
-        case "$f" in .agents/*|GLOSSARY.md) continue ;; esac
+        case "$f" in .agents/*|GLOSSARY.lex) continue ;; esac
         new=$(added_lines "$f" | tr 'A-Z' 'a-z' | tr -cs 'a-z-' '\n' \
               | grep -E '^[a-z][a-z-]{2,}$' | sort -u | comm -23 - "$known")
         if [ -n "$new" ]; then
             echo "── words this corpus has not used before, in ${f} ──"
             echo "$new" | sed 's|^|  |'
-            echo "  Each is a domain term for GLOSSARY.md, or a metaphor to rewrite."
+            echo "  Each is a domain term for GLOSSARY.lex, or a metaphor to rewrite."
             echo "  Deliberate? .agents/hooks/vocabulary-snapshot"
         fi
     done

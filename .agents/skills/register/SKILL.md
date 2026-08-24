@@ -20,6 +20,11 @@ it, and will still be true three years out.
 - One fact, one home. Another doc may point, never restate.
   Overturning a decision means deleting its statement at its one home,
   not amending it.
+- Two files are indexes, not homes, and are exempt from the rule
+  above: `docs/verify.lex` (one-line checkable assertions — commands,
+  variables, tiers, outputs, runtime needs — with no rationale) and
+  `GLOSSARY.lex` (term definitions). A line there is a claim to check
+  against the owning doc, never a second statement of it.
 - The deletion test, per line: would removing this cause a future
   reader or agent to err? If not, cut it.
 - Budget: a doc drifting past ~200 lines is compressing badly or
@@ -55,6 +60,24 @@ The test for any sentence: does it describe the thing, or describe the
 design of the thing? A metaphor is what you reach for when you are
 commenting on a design rather than stating it — so the metaphor is the
 symptom and the view from above is what produced it.
+
+## The README
+
+README.lex is the one product-facing doc and inverts the stance: it
+describes the tool from outside, to a reader who does not yet hold the
+model. It opens by naming the category and function in plain words — "a
+Rust library that abstracts development-platform apis into domains" —
+before any word this repo defines. Everyday vocabulary first, project
+vocabulary second; goals stated as reader benefits; structure shown as
+concrete lists, with canonical names bound to their plain labels where
+the reader first meets them.
+
+What a README never carries: definition by relation ("linked crates
+living inside whichever tool links it" says nothing to a newcomer that
+"a Rust library" does not say better), chains of design verdicts
+readable only from inside the finished model, or implementation
+mechanics — deployment, module layout — at intro altitude. The
+banned-word list and the deletion test still apply.
 
 ## Before / after
 

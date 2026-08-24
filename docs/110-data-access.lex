@@ -22,7 +22,7 @@ Data Access
 
     Github holds no arbitrary query: no join, no secondary index, no filter on a field its api does not expose. A question off the hierarchy is answered by fetching and filtering locally, by reading records and computing it ([#5]), or not at all — and which of the three is a stated decision, never a discovery at implementation time.
 
-    The bucket is a file store and not a service: nothing but a path reaches it. The same discipline the identifiers carry ([#4]) governs it, and the same choice of segment order decides which listing is cheap.
+    The bucket is a file store and not a service: nothing but a path reaches it, so the identifier discipline ([#4]) is all the query language it has.
 
     The host store holds only what is live. Nothing in it is shared, and an environment's container is discarded when it ends, so anything that must outlast it is written to a mounted volume, to the bucket or to the platform.
 
@@ -40,12 +40,10 @@ Data Access
 
 4. Identifiers
 
-    A namespace is a path. The identifier and the path are one form under one parser, so a prefix is a query and a listing is a directory read.
-
-    Segment order chooses which question is cheap. Only questions along the hierarchy's own order are answerable by listing; every question cutting across it is a scan. Ordering the segments is therefore a modeling decision with named losers.
+    A namespace is a path. The identifier and the path are one form under one parser, so a prefix is a query and a listing is a directory read. Which questions a segment order makes cheap and which it turns into scans is stated with the record paths ([./contracts/records.lex]).
 
     An identifier matched across a boundary travels as one string, since the far side cannot read the pieces separately. An identifier used within one read boundary lives as separate fields, since nothing has to carry it anywhere.
 
 5. Computed Answers
 
-    A question no store answers by address or by listing is answered by reading the records and computing it. The result is not written back: it is recomputed next time, so nothing has to be invalidated and no stored answer can disagree with the records behind it. A fact that appears only in a computed result and in no record is a fact nothing captured.
+    A question no store answers by address or by listing is answered by reading the records and computing it. What a computed answer may and may not do is the records contract's ([./contracts/records.lex]).

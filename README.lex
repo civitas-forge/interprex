@@ -1,74 +1,63 @@
 Postel
 
-    Postel holds the clients for the systems these tools do not own — the
-    development platform, the object store, the secret store — and the domain
-    contracts that state what is wanted of them in the tools' own terms. Code
-    above a contract never learns which system answered.
+    Postel is a Rust library that abstracts development-platform apis into
+    high-level domains: code hosting, code review, ci jobs, releases and
+    issue tracking.
 
-    Postel is linked crates and nothing else: no binary, no process of its
-    own, no command line. It runs inside whichever tool links it.
+    Each domain may be served by a different platform, behind one api
+    interface — platforms coexist, and a domain can move to another platform
+    without its callers changing. The api sits above raw endpoints, in
+    operations a caller means: requesting a review, resolving a thread,
+    publishing a release asset.
 
-    One client per backend rather than one per caller: authentication, secret
-    transport, retry policy and asset streaming have to behave identically
-    everywhere, and three implementations of each would move independently.
+    The goal is easier integration with development platforms: portable
+    calling code, platform switches with partial adoption, and callers that
+    never grow specific to a single platform.
 
-    This file is the charter: what postel owns, what it does not, and the words
-    it defines. A fact that fits none of the three does not belong in this repo.
+1. Domains
 
-1. What It Owns
+    repo — code hosting:
+        Configuring repositories, branches, access control, and merge
+        strategy and rules.
+    tracker — issue tracking:
+        Tracking issues, bugs and feature requests.
+    pr — code review:
+        Review requests, review threads and findings, and a pull request's
+        review state.
+    jobs — ci:
+        Integrating with ci pipelines: triggering jobs and managing job
+        status.
+    releases:
+        Cutting releases and managing their assets, versions and notes.
 
-    The domains:
-        Five contracts, each stating its operations in the tools' vocabulary
-        and naming no backend — repo, tracker, pr, jobs, releases. A backend
-        that cannot express a fact a contract requires refuses loudly; it never
-        approximates.
-    The clients:
-        One per backend, holding app authentication and token refresh, secret
-        transport sealed before it leaves the process, streaming upload and
-        download for large release assets, and a rate-limit-aware retry policy.
-    Identity:
-        Not a domain. Each backend authenticates its own way and carries its
-        own credentials, so identity belongs to a backend and is never selected
-        apart from one.
-    The stores:
-        What each store answers cheaply, what it answers only by scan, and what
-        it does not answer at all — and the method for settling a model and its
-        access together, since a model whose questions a store cannot answer is
-        not implementable.
-    Record layout:
-        The paths that address a record in the object store, the naming that
-        carries a schema version where a reader can see it without opening the
-        object, and the rule that a writer only ever creates.
+2. Providers
 
-2. What It Does Not Own
+    Each domain accepts providers — one per platform, all serving the same
+    interface — so several platforms combine behind one api. Github is the
+    first provider, and a new one slots in per domain without touching
+    callers.
 
-    Each entry states a contract. None of them names who is on the other side,
-    because anything honoring the contract serves.
+3. The Docs
 
-    Which backend a domain names:
-        A deployment declares that per domain, in the environment. Postel
-        implements every domain against each backend it carries, and a domain
-        moving to another system costs one module rather than a rewrite.
-    What the domains are for:
-        A contract states operations and has no opinion about who calls them or
-        why. Ownership of the objects behind a domain divides among callers,
-        and that division is theirs to state.
-    Acts performed with a backend's own cli:
-        Opening issues and pull requests, assigning labels, merging and pushing
-        cross no contract here. They are performed directly, under rules that
-        live with whoever performs them.
-    Git:
-        Refs, tags, branches and pushes are git itself, identical under any
-        backend, and no domain models them.
-
-3. The Vocabulary It Owns
-
-    These words mean here what this repo says they mean, and a text using one
-    of them in another sense belongs somewhere else.
-
-    - domain, contract, operation, refusal
-    - backend, client, installation, token
-    - store, lookup, listing, scan, computed answer
-    - snapshot, identifier, namespace, schema version
-    - backend — one system a domain's operations are implemented against.
-      Never an agent cli.
+    [./GLOSSARY.lex]:
+        The words this repo defines.
+    [./docs/architecture.lex]:
+        The shape: crates and clients, domains and refusals, deployment,
+        boundaries, and the tools that link it.
+    [./docs/interface.lex]:
+        What a consumer links, calls and tests against.
+    [./docs/verify.lex]:
+        The checkable assertions: interface, environment, test tiers, build
+        outputs, runtime, siblings.
+    [./docs/100-platform.lex]:
+        The development platform and its five domains.
+    [./docs/110-data-access.lex]:
+        The five stores, what each answers, and the method for settling a
+        model and its access together.
+    [./docs/200-stack.lex]:
+        Bought and built: octocrab and the github client, the bucket, the
+        secret store.
+    [./docs/210-crates.lex]:
+        The crate layout.
+    [./docs/contracts/records.lex]:
+        The write discipline every record writer meets.

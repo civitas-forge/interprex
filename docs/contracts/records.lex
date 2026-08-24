@@ -5,8 +5,8 @@ Writing Records
     the discipline below is what every writer meets. What a given record holds
     is the writer's; how it is written, named and reached is here.
 
-    The store is a file store and not a service. Nothing but a path reaches it,
-    and the choice of path is therefore a modeling decision with named losers.
+    Nothing reaches the store but a path ([../110-data-access.lex]), so the
+    choice of path is a modeling decision with named losers.
 
 1. Writers Only Create
 
