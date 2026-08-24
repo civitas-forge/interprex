@@ -102,6 +102,7 @@ pub trait PrDomain: Send + Sync {
         repository: &Repository,
         number: PullRequestNumber,
     ) -> Result<PullRequest>;
+    /// Returns every thread and its complete comment sequence in provider order.
     async fn review_threads(
         &self,
         repository: &Repository,

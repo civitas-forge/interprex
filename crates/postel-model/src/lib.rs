@@ -179,13 +179,18 @@ pub struct PullRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewComment {
+    pub body: String,
+    pub author: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {
     pub id: String,
     pub resolved: bool,
     pub path: Option<String>,
     pub line: Option<u64>,
-    pub body: String,
-    pub author: String,
+    pub comments: Vec<ReviewComment>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

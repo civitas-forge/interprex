@@ -78,6 +78,19 @@ impl FakeProvider {
             .insert((repository, pull_request.number), pull_request);
     }
 
+    pub async fn seed_review_threads(
+        &self,
+        repository: Repository,
+        number: PullRequestNumber,
+        threads: Vec<ReviewThread>,
+    ) {
+        self.state
+            .write()
+            .await
+            .threads
+            .insert((repository, number), threads);
+    }
+
     pub async fn seed_run(&self, repository: Repository, run: WorkflowRun) {
         self.state
             .write()
@@ -432,7 +445,10 @@ impl ReleasesDomain for FakeProvider {
 mod tests {
     use super::FakeProvider;
     use postel_contracts::{PrDomain, RepoDomain};
-    use postel_model::{PullRequestNumber, Repository, RepositoryFacts, RepositorySettings};
+    use postel_model::{
+        PullRequestNumber, Repository, RepositoryFacts, RepositorySettings, ReviewComment,
+        ReviewThread,
+    };
 
     #[tokio::test]
     async fn consumer_observes_changes_through_the_same_contract() {
@@ -470,6 +486,40 @@ mod tests {
         assert_eq!(
             provider.requested_reviewers(&repository, number).await,
             ["reviewer"]
+        );
+    }
+
+    #[tokio::test]
+    async fn consumer_reads_complete_review_conversations_through_the_contract() {
+        let provider = FakeProvider::new();
+        let repository = Repository::new("faictor", "sandbox").expect("repository");
+        let number = PullRequestNumber::new(3).expect("number");
+        let thread = ReviewThread {
+            id: "thread-1".to_owned(),
+            resolved: false,
+            path: Some("src/lib.rs".to_owned()),
+            line: Some(10),
+            comments: vec![
+                ReviewComment {
+                    body: "question".to_owned(),
+                    author: "reviewer".to_owned(),
+                },
+                ReviewComment {
+                    body: "answer".to_owned(),
+                    author: "author".to_owned(),
+                },
+            ],
+        };
+        provider
+            .seed_review_threads(repository.clone(), number, vec![thread.clone()])
+            .await;
+
+        assert_eq!(
+            provider
+                .review_threads(&repository, number)
+                .await
+                .expect("review threads"),
+            [thread]
         );
     }
 }

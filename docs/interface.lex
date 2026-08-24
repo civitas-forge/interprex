@@ -32,9 +32,10 @@ Interface
         tracker:
             Read one issue, list labels and upsert one label.
         pr:
-            Read one pull request and its review threads, resolve a thread,
-            request reviewers, mark a draft ready and publish an app-owned
-            check outcome.
+            Read one pull request and every review thread with its complete,
+            provider-ordered comment sequence; resolve a thread, request
+            reviewers, mark a draft ready and publish an app-owned check
+            outcome.
         jobs:
             Dispatch a workflow with inputs, read one run and cancel one run.
         releases:

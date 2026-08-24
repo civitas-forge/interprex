@@ -13,12 +13,33 @@
             "path": "src/lib.rs",
             "line": 12,
             "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
               "nodes": [
                 {
                   "body": "Handle this case",
                   "author": { "login": "reviewer-bot" }
+                },
+                {
+                  "body": "Handled in the latest revision",
+                  "author": { "login": "author" }
                 }
               ]
+            }
+          },
+          {
+            "id": "PRRT_kwDOEmpty",
+            "isResolved": false,
+            "path": "src/empty.rs",
+            "line": 7,
+            "comments": {
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              },
+              "nodes": []
             }
           }
         ]

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use postel_contracts::{PrDomain, ProviderError, Result};
 use postel_model::{
     CheckConclusion, CheckOutcome, OpenClosed, PullRequest, PullRequestNumber, Repository,
-    ReviewThread,
+    ReviewComment, ReviewThread,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -24,8 +24,23 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: Str
       reviewThreads(first: 100, after: $cursor) {
         nodes {
           id isResolved path line
-          comments(first: 1) { nodes { body author { login } } }
+          comments(first: 100) {
+            nodes { body author { login } }
+            pageInfo { hasNextPage endCursor }
+          }
         }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"#;
+
+const REVIEW_THREAD_COMMENTS: &str = r#"
+query ReviewThreadComments($threadId: ID!, $cursor: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 100, after: $cursor) {
+        nodes { body author { login } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -150,6 +165,8 @@ struct ThreadNode {
 #[derive(Deserialize)]
 struct CommentConnection {
     nodes: Vec<CommentNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
 }
 
 #[derive(Deserialize)]
@@ -158,21 +175,50 @@ struct CommentNode {
     author: Option<GithubUser>,
 }
 
+#[derive(Deserialize)]
+struct ThreadCommentsData {
+    node: Option<ThreadCommentsNode>,
+}
+
+#[derive(Deserialize)]
+struct ThreadCommentsNode {
+    comments: CommentConnection,
+}
+
+fn continuation_cursor(page_info: &PageInfo, collection: &str) -> Result<Option<String>> {
+    if !page_info.has_next_page {
+        return Ok(None);
+    }
+    page_info
+        .end_cursor
+        .clone()
+        .map(Some)
+        .ok_or_else(|| ProviderError::External {
+            provider: "github",
+            operation: "read review threads",
+            message: format!("GitHub reported another {collection} page without an end cursor"),
+        })
+}
+
 fn normalize_threads(nodes: Vec<ThreadNode>) -> Vec<ReviewThread> {
     nodes
         .into_iter()
-        .filter_map(|thread| {
-            let comment = thread.comments.nodes.into_iter().next()?;
-            Some(ReviewThread {
-                id: thread.id,
-                resolved: thread.resolved,
-                path: thread.path,
-                line: thread.line,
-                body: comment.body,
-                author: comment
-                    .author
-                    .map_or_else(|| "ghost".to_owned(), |user| user.login),
-            })
+        .map(|thread| ReviewThread {
+            id: thread.id,
+            resolved: thread.resolved,
+            path: thread.path,
+            line: thread.line,
+            comments: thread
+                .comments
+                .nodes
+                .into_iter()
+                .map(|comment| ReviewComment {
+                    body: comment.body,
+                    author: comment
+                        .author
+                        .map_or_else(|| "ghost".to_owned(), |user| user.login),
+                })
+                .collect(),
         })
         .collect()
 }
@@ -185,6 +231,31 @@ fn conclusion(value: &CheckConclusion) -> &'static str {
         CheckConclusion::Cancelled => "cancelled",
         CheckConclusion::TimedOut => "timed_out",
         CheckConclusion::ActionRequired => "action_required",
+    }
+}
+
+impl GithubProvider {
+    async fn complete_thread_comments(&self, thread: &mut ThreadNode) -> Result<()> {
+        while let Some(cursor) = continuation_cursor(&thread.comments.page_info, "review comments")?
+        {
+            let data: ThreadCommentsData = self
+                .user()?
+                .graphql(&json!({
+                    "query": REVIEW_THREAD_COMMENTS,
+                    "variables": { "threadId": thread.id, "cursor": cursor }
+                }))
+                .await
+                .map_err(|error| external("read review thread comments", error))?;
+            let mut connection = data
+                .node
+                .ok_or_else(|| ProviderError::NotFound {
+                    entity: format!("review thread {}", thread.id),
+                })?
+                .comments;
+            thread.comments.nodes.append(&mut connection.nodes);
+            thread.comments.page_info = connection.page_info;
+        }
+        Ok(())
     }
 }
 
@@ -223,33 +294,27 @@ impl PrDomain for GithubProvider {
             let data: ThreadsData = self
                 .user()?
                 .graphql(&json!({
-                    "query": REVIEW_THREADS,
-                    "variables": {
-                        "owner": repository.owner(),
-                        "name": repository.name(),
-                        "number": number.get(),
-                        "cursor": cursor,
-                    }
+                        "query": REVIEW_THREADS,
+                        "variables": {
+                            "owner": repository.owner(),
+                            "name": repository.name(),
+                            "number": number.get(),
+                            "cursor": cursor,
+                        }
                 }))
                 .await
                 .map_err(|error| external("read review threads", error))?;
             let connection = data.repository.pull_request.review_threads;
-            threads.extend(normalize_threads(connection.nodes));
-            if !connection.page_info.has_next_page {
-                return Ok(threads);
+            let next_cursor = continuation_cursor(&connection.page_info, "review threads")?;
+            let mut page = connection.nodes;
+            for thread in &mut page {
+                self.complete_thread_comments(thread).await?;
             }
-            cursor =
-                Some(
-                    connection
-                        .page_info
-                        .end_cursor
-                        .ok_or_else(|| ProviderError::External {
-                            provider: "github",
-                            operation: "read review threads",
-                            message: "GitHub reported another page without an end cursor"
-                                .to_owned(),
-                        })?,
-                );
+            threads.extend(normalize_threads(page));
+            let Some(next_cursor) = next_cursor else {
+                return Ok(threads);
+            };
+            cursor = Some(next_cursor);
         }
     }
 
@@ -359,8 +424,12 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("fixture");
         let threads = normalize_threads(response.repository.pull_request.review_threads.nodes);
+        assert_eq!(threads.len(), 2);
         assert_eq!(threads[0].id, "PRRT_kwDOExample");
-        assert_eq!(threads[0].author, "reviewer-bot");
+        assert_eq!(threads[0].comments.len(), 2);
+        assert_eq!(threads[0].comments[0].author, "reviewer-bot");
+        assert_eq!(threads[0].comments[1].author, "author");
+        assert!(threads[1].comments.is_empty());
     }
 
     #[tokio::test]

@@ -330,8 +330,8 @@ async fn pr_domain_requests_copilot_through_the_login_mutation() {
 #[tokio::test]
 async fn pr_domain_returns_review_threads_from_every_graphql_page() {
     let (uri, requests) = json_responses(vec![
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
     ])
     .await;
     let threads = provider(uri)
@@ -347,6 +347,41 @@ async fn pr_domain_returns_review_threads_from_every_graphql_page() {
         ["thread-1", "thread-2"]
     );
     assert!(requests.await.expect("captured requests")[1].contains("\"cursor\":\"cursor-1\""));
+}
+
+#[tokio::test]
+async fn pr_domain_returns_every_comment_and_preserves_empty_threads() {
+    let (uri, requests) = json_responses(vec![
+        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"conversation","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-cursor-1"}}},{"id":"empty","isResolved":false,"path":"src/empty.rs","line":7,"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+        r#"{"data":{"node":{"comments":{"nodes":[{"body":"reply","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#,
+    ])
+    .await;
+    let threads = provider(uri)
+        .await
+        .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
+        .await
+        .expect("review threads");
+    assert_eq!(threads.len(), 2);
+    assert_eq!(
+        threads[0]
+            .comments
+            .iter()
+            .map(|comment| comment.body.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "reply"]
+    );
+    assert!(threads[1].comments.is_empty());
+    let requests = requests.await.expect("captured requests");
+    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("ReviewThreadComments")
+    );
+    assert_eq!(body["variables"]["threadId"], "conversation");
+    assert_eq!(body["variables"]["cursor"], "comment-cursor-1");
 }
 
 #[tokio::test]
