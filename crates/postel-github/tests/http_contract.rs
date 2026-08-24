@@ -55,6 +55,94 @@ async fn server(
     (format!("http://{address}"), receiver)
 }
 
+async fn rest_pages(
+    route: &'static str,
+    bodies: Vec<&'static str>,
+) -> (String, oneshot::Receiver<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test server");
+    let address = listener.local_addr().expect("local address");
+    let base_uri = format!("http://{address}");
+    let next_base = base_uri.clone();
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let page_count = bodies.len();
+        let mut requests = Vec::with_capacity(page_count);
+        for (index, body) in bodies.into_iter().enumerate() {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).await.expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if complete_request(&request) {
+                    break;
+                }
+            }
+            requests.push(String::from_utf8(request).expect("request is UTF-8"));
+            let link = if index + 1 < page_count {
+                format!(
+                    "link: <{next_base}{route}?per_page=100&page={}>; rel=\"next\"\r\n",
+                    index + 2
+                )
+            } else {
+                String::new()
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{link}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        }
+        sender.send(requests).ok();
+    });
+    (base_uri, receiver)
+}
+
+async fn graphql_pages(bodies: Vec<&'static str>) -> (String, oneshot::Receiver<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test server");
+    let address = listener.local_addr().expect("local address");
+    let (sender, receiver) = oneshot::channel();
+    tokio::spawn(async move {
+        let mut requests = Vec::with_capacity(bodies.len());
+        for body in bodies {
+            let (mut stream, _) = listener.accept().await.expect("accept request");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).await.expect("read request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if complete_request(&request) {
+                    break;
+                }
+            }
+            requests.push(String::from_utf8(request).expect("request is UTF-8"));
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        }
+        sender.send(requests).ok();
+    });
+    (format!("http://{address}"), receiver)
+}
+
 fn complete_request(request: &[u8]) -> bool {
     let text = String::from_utf8_lossy(request);
     let Some((headers, body)) = text.split_once("\r\n\r\n") else {
@@ -118,6 +206,35 @@ async fn repo_domain_sends_the_canonical_repository_address() {
 }
 
 #[tokio::test]
+async fn repo_domain_returns_rulesets_from_every_rest_page() {
+    let route = "/repos/faictor/postel-sandbox/rulesets";
+    let (uri, requests) = rest_pages(
+        route,
+        vec![
+            r#"[{"id":1,"name":"first","enforcement":"active","conditions":{},"rules":[]}]"#,
+            r#"[{"id":2,"name":"second","enforcement":"disabled","conditions":{},"rules":[]}]"#,
+        ],
+    )
+    .await;
+    let rulesets = provider(uri)
+        .await
+        .rulesets(&repository())
+        .await
+        .expect("rulesets");
+    assert_eq!(
+        rulesets
+            .iter()
+            .map(|ruleset| ruleset.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert!(
+        requests.await.expect("captured requests")[1]
+            .starts_with("GET /repos/faictor/postel-sandbox/rulesets?per_page=100&page=2 ")
+    );
+}
+
+#[tokio::test]
 async fn tracker_domain_addresses_the_requested_issue_number() {
     let (uri, request) = server(
         "200 OK",
@@ -133,6 +250,35 @@ async fn tracker_domain_addresses_the_requested_issue_number() {
     assert_user_request(
         &request.await.expect("captured request"),
         "GET /repos/faictor/postel-sandbox/issues/11 ",
+    );
+}
+
+#[tokio::test]
+async fn tracker_domain_returns_labels_from_every_rest_page() {
+    let route = "/repos/faictor/postel-sandbox/labels";
+    let (uri, requests) = rest_pages(
+        route,
+        vec![
+            r#"[{"name":"first","color":"111111","description":null}]"#,
+            r#"[{"name":"second","color":"222222","description":null}]"#,
+        ],
+    )
+    .await;
+    let labels = provider(uri)
+        .await
+        .labels(&repository())
+        .await
+        .expect("labels");
+    assert_eq!(
+        labels
+            .iter()
+            .map(|label| label.name.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert!(
+        requests.await.expect("captured requests")[1]
+            .starts_with("GET /repos/faictor/postel-sandbox/labels?per_page=100&page=2 ")
     );
 }
 
@@ -154,6 +300,28 @@ async fn pr_domain_passes_the_exact_reviewer_set() {
         "POST /repos/faictor/postel-sandbox/pulls/5/requested_reviewers ",
     );
     assert!(request.contains("copilot-pull-request-reviewer[bot]"));
+}
+
+#[tokio::test]
+async fn pr_domain_returns_review_threads_from_every_graphql_page() {
+    let (uri, requests) = graphql_pages(vec![
+        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}]}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}]}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+    ])
+    .await;
+    let threads = provider(uri)
+        .await
+        .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
+        .await
+        .expect("review threads");
+    assert_eq!(
+        threads
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect::<Vec<_>>(),
+        ["thread-1", "thread-2"]
+    );
+    assert!(requests.await.expect("captured requests")[1].contains("\"cursor\":\"cursor-1\""));
 }
 
 #[tokio::test]

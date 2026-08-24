@@ -6,6 +6,7 @@
 //! moving ownership between contracts.
 
 use async_trait::async_trait;
+use octocrab::Page;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use postel_contracts::{ProviderError, Result, TrackerDomain};
 use postel_model::{Issue, IssueNumber, Label, OpenClosed, Repository};
@@ -88,12 +89,17 @@ impl TrackerDomain for GithubProvider {
     }
 
     async fn labels(&self, repository: &Repository) -> Result<Vec<Label>> {
-        let response: Vec<GithubLabel> = self
+        let page: Page<GithubLabel> = self
             .user()?
             .get(
                 format!("/repos/{repository}/labels"),
                 Some(&[("per_page", 100)]),
             )
+            .await
+            .map_err(|error| external("list labels", error))?;
+        let response = self
+            .user()?
+            .all_pages(page)
             .await
             .map_err(|error| external("list labels", error))?;
         Ok(response.into_iter().map(Into::into).collect())

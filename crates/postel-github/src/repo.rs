@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crypto_box::{PublicKey, aead::OsRng};
+use octocrab::Page;
 use postel_contracts::{ProviderError, RepoDomain, Result};
 use postel_model::{Repository, RepositoryFacts, RepositorySettings, RequiredCheck, Ruleset};
 use secrecy::{ExposeSecret, SecretString};
@@ -199,12 +200,17 @@ impl RepoDomain for GithubProvider {
     }
 
     async fn rulesets(&self, repository: &Repository) -> Result<Vec<Ruleset>> {
-        let response: Vec<GithubRuleset> = self
+        let page: Page<GithubRuleset> = self
             .user()?
             .get(
                 format!("/repos/{repository}/rulesets"),
                 Some(&[("per_page", 100)]),
             )
+            .await
+            .map_err(|error| external("list repository rulesets", error))?;
+        let response = self
+            .user()?
+            .all_pages(page)
             .await
             .map_err(|error| external("list repository rulesets", error))?;
         Ok(response.into_iter().map(normalize_ruleset).collect())

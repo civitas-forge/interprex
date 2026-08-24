@@ -18,14 +18,15 @@ use serde_json::json;
 use crate::{GithubProvider, api::external};
 
 const REVIEW_THREADS: &str = r#"
-query ReviewThreads($owner: String!, $name: String!, $number: Int!) {
+query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $cursor) {
         nodes {
           id isResolved path line
           comments(first: 1) { nodes { body author { login } } }
         }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
@@ -108,6 +109,16 @@ struct ThreadsPullRequest {
 #[derive(Deserialize)]
 struct ThreadConnection {
     nodes: Vec<ThreadNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Default, Deserialize)]
+struct PageInfo {
+    #[serde(rename = "hasNextPage")]
+    has_next_page: bool,
+    #[serde(rename = "endCursor")]
+    end_cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -131,11 +142,8 @@ struct CommentNode {
     author: Option<GithubUser>,
 }
 
-fn normalize_threads(data: ThreadsData) -> Vec<ReviewThread> {
-    data.repository
-        .pull_request
-        .review_threads
-        .nodes
+fn normalize_threads(nodes: Vec<ThreadNode>) -> Vec<ReviewThread> {
+    nodes
         .into_iter()
         .filter_map(|thread| {
             let comment = thread.comments.nodes.into_iter().next()?;
@@ -193,15 +201,40 @@ impl PrDomain for GithubProvider {
         repository: &Repository,
         number: PullRequestNumber,
     ) -> Result<Vec<ReviewThread>> {
-        let data: ThreadsData = self
-            .user()?
-            .graphql(&json!({
-                "query": REVIEW_THREADS,
-                "variables": { "owner": repository.owner(), "name": repository.name(), "number": number.get() }
-            }))
-            .await
-            .map_err(|error| external("read review threads", error))?;
-        Ok(normalize_threads(data))
+        let mut cursor: Option<String> = None;
+        let mut threads = Vec::new();
+        loop {
+            let data: ThreadsData = self
+                .user()?
+                .graphql(&json!({
+                    "query": REVIEW_THREADS,
+                    "variables": {
+                        "owner": repository.owner(),
+                        "name": repository.name(),
+                        "number": number.get(),
+                        "cursor": cursor,
+                    }
+                }))
+                .await
+                .map_err(|error| external("read review threads", error))?;
+            let connection = data.repository.pull_request.review_threads;
+            threads.extend(normalize_threads(connection.nodes));
+            if !connection.page_info.has_next_page {
+                return Ok(threads);
+            }
+            cursor =
+                Some(
+                    connection
+                        .page_info
+                        .end_cursor
+                        .ok_or_else(|| ProviderError::External {
+                            provider: "github",
+                            operation: "read review threads",
+                            message: "GitHub reported another page without an end cursor"
+                                .to_owned(),
+                        })?,
+                );
+        }
     }
 
     async fn resolve_thread(&self, thread_id: &str) -> Result<()> {
@@ -303,7 +336,7 @@ mod tests {
         let response: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("fixture");
-        let threads = normalize_threads(response);
+        let threads = normalize_threads(response.repository.pull_request.review_threads.nodes);
         assert_eq!(threads[0].id, "PRRT_kwDOExample");
         assert_eq!(threads[0].author, "reviewer-bot");
     }
