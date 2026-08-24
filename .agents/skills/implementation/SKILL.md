@@ -65,11 +65,36 @@ schemas target. Format-preserving rewrites of a declaration file use
 
 ## The CLI Layer
 
-Standout is the CLI framework: declarative command wiring, output through
-templates and styles.
+Standout is the CLI framework, and the split is strict: lib crates and a
+binary crate, and nothing crosses it.
 
-Lib crates carry no CLI code. A binary is a thin standout app over them, and
-its commands honor the command-line contract stated in that repo.
+The lib crates carry all logic as a rust api — rust parameters in, rust data
+returned, no CLI vocabulary, fully testable without a terminal. They never
+depend on clap, standout, view models, templates, styles, or app
+construction.
+
+The binary is a declarative standout app and nothing else: clap derive
+annotations wire the command tree; handlers are thin adapters that translate
+parsed arguments into library calls and library results into serializable
+view models; rendering goes through template files and css themes, per output
+mode — structured output for agents, rendered templates for humans. A handler
+never prints, never emits ansi, never holds logic: it returns the view model
+and the framework does the rest.
+
+The split is also the sequence. The lib side is built first and completely —
+the types, the options, the operations, and their tests — with no output and
+no CLI anywhere, so all of it is unit testable and tested before a command
+exists. Only when the library is done does the cli work start: the wiring,
+the templates and styles, and the integration tests standout's own tooling
+carries.
+
+Tests follow the split: library behavior through its own api first; handlers
+as typed calls; TestHarness for the in-process argv-to-output pipeline; a
+spawned process only for seams the harness cannot model.
+
+The canonical shape is the standout repo's todo-example — todo-core the
+CLI-free library, tdoo the binary-only app. The binary's commands honor the
+command-line contract stated in the repo's own docs/contracts/cli.lex.
 
 ## The Composition Root
 
