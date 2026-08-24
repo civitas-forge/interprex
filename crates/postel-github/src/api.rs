@@ -103,11 +103,11 @@ impl GithubProvider {
     }
 }
 
-pub async fn from_config(config: GithubConfig) -> Result<GithubProvider> {
-    from_config_with_source(config, ConfigurationSource::Direct).await
+pub fn from_config(config: GithubConfig) -> Result<GithubProvider> {
+    from_config_with_source(config, ConfigurationSource::Direct)
 }
 
-async fn from_config_with_source(
+fn from_config_with_source(
     config: GithubConfig,
     source: ConfigurationSource,
 ) -> Result<GithubProvider> {
@@ -166,7 +166,7 @@ async fn from_project_with(system: &dyn System, project_root: &Path) -> Result<G
             origin: source.clone(),
             reason: error.message().to_owned(),
         })?;
-    from_config_with_source(file.provider.github.into(), source).await
+    from_config_with_source(file.provider.github.into(), source)
 }
 
 fn build_user(token: &SecretString, config: &GithubConfig) -> Result<Octocrab> {
@@ -392,8 +392,8 @@ mod tests {
         assert!(debug.contains("REDACTED"));
     }
 
-    #[tokio::test]
-    async fn invalid_direct_app_key_reports_direct_construction() {
+    #[test]
+    fn invalid_direct_app_key_reports_direct_construction() {
         let error = from_config(GithubConfig {
             apps: BTreeMap::from([(
                 "automation".to_owned(),
@@ -405,7 +405,6 @@ mod tests {
             )]),
             ..GithubConfig::default()
         })
-        .await
         .expect_err("invalid key");
         let message = error.to_string();
         assert!(message.contains("direct"), "{message}");
@@ -454,7 +453,6 @@ mod tests {
             gh_token: Some(SecretString::from("user-secret")),
             ..GithubConfig::default()
         })
-        .await
         .expect("direct provider");
 
         assert_eq!(format!("{from_project:?}"), format!("{direct:?}"));
@@ -522,7 +520,6 @@ mod tests {
             gh_token: Some(SecretString::from("user-token")),
             ..GithubConfig::default()
         })
-        .await
         .expect("construction is local");
         assert_eq!(
             provider.app("automation").expect_err("app is absent"),

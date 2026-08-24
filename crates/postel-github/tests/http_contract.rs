@@ -200,14 +200,13 @@ fn complete_request(request: &[u8]) -> bool {
     body.len() >= length
 }
 
-async fn provider(base_uri: String) -> postel_github::GithubProvider {
+fn provider(base_uri: String) -> postel_github::GithubProvider {
     from_config(GithubConfig {
         gh_token: Some(SecretString::from("transport-test-token")),
         base_uri: Some(base_uri.clone()),
         upload_uri: Some(base_uri),
         ..GithubConfig::default()
     })
-    .await
     .expect("provider")
 }
 
@@ -234,7 +233,6 @@ async fn repo_domain_sends_the_canonical_repository_address() {
     )
     .await;
     let settings = provider(uri)
-        .await
         .settings(&repository())
         .await
         .expect("settings");
@@ -254,7 +252,6 @@ async fn repo_domain_maps_settings_into_the_github_request_body() {
     )
     .await;
     provider(uri)
-        .await
         .apply_settings(
             &repository(),
             &RepositorySettings {
@@ -293,7 +290,6 @@ async fn repo_domain_returns_rulesets_from_every_rest_page() {
     )
     .await;
     let rulesets = provider(uri)
-        .await
         .rulesets(&repository())
         .await
         .expect("rulesets");
@@ -319,7 +315,6 @@ async fn tracker_domain_addresses_the_requested_issue_number() {
     )
     .await;
     provider(uri)
-        .await
         .issue(&repository(), IssueNumber::new(11).expect("number"))
         .await
         .expect("issue");
@@ -340,11 +335,7 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
         ],
     )
     .await;
-    let labels = provider(uri)
-        .await
-        .labels(&repository())
-        .await
-        .expect("labels");
+    let labels = provider(uri).labels(&repository()).await.expect("labels");
     assert_eq!(
         labels
             .iter()
@@ -366,7 +357,6 @@ async fn pr_domain_requests_copilot_through_the_login_mutation() {
     ])
     .await;
     provider(uri)
-        .await
         .request_reviewers(
             &repository(),
             PullRequestNumber::new(5).expect("number"),
@@ -410,7 +400,6 @@ async fn pr_domain_resolves_github_identity_before_marking_ready() {
     ])
     .await;
     provider(uri)
-        .await
         .mark_ready(&repository(), PullRequestNumber::new(5).expect("number"))
         .await
         .expect("mark ready");
@@ -431,7 +420,6 @@ async fn pr_domain_resolves_a_scoped_review_thread_handle() {
     )
     .await;
     provider(uri)
-        .await
         .resolve_thread(
             &repository(),
             PullRequestNumber::new(5).expect("number"),
@@ -454,7 +442,6 @@ async fn pr_domain_returns_review_threads_from_every_graphql_page() {
     ])
     .await;
     let threads = provider(uri)
-        .await
         .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
         .await
         .expect("review threads");
@@ -476,7 +463,6 @@ async fn pr_domain_returns_every_comment_and_preserves_empty_threads() {
     ])
     .await;
     let threads = provider(uri)
-        .await
         .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
         .await
         .expect("review threads");
@@ -511,7 +497,6 @@ async fn jobs_domain_dispatches_the_named_ref_and_inputs() {
         serde_json::Value::String("pull-request".to_owned()),
     )]));
     provider(uri)
-        .await
         .dispatch(&repository(), "quality.yml", "main", &inputs)
         .await
         .expect("dispatch");
@@ -533,7 +518,6 @@ async fn releases_domain_reads_by_tag_without_vendor_types_escaping() {
     )
     .await;
     let release = provider(uri)
-        .await
         .release_by_tag(&repository(), "v0.1.0")
         .await
         .expect("release");
@@ -559,7 +543,6 @@ async fn releases_domain_streams_upload_chunks_to_the_upload_host() {
         ]),
     );
     let asset = provider(uri)
-        .await
         .upload_asset(
             &repository(),
             postel_model::ReleaseId::new(88).expect("release id"),
@@ -592,7 +575,7 @@ async fn releases_domain_returns_download_before_the_final_chunk_arrives() {
     let (uri, continue_download) = streaming_download_server().await;
     let mut download = timeout(
         Duration::from_secs(1),
-        provider(uri).await.download_asset(
+        provider(uri).download_asset(
             &repository(),
             postel_model::AssetId::new(99).expect("asset id"),
         ),

@@ -79,7 +79,7 @@ fn now_millis() -> u128 {
         .as_millis()
 }
 
-async fn live_provider() -> (postel_github::GithubProvider, Repository) {
+fn live_provider() -> (postel_github::GithubProvider, Repository) {
     assert_eq!(
         std::env::var("POSTEL_LIVE_GITHUB").as_deref(),
         Ok("1"),
@@ -95,7 +95,6 @@ async fn live_provider() -> (postel_github::GithubProvider, Repository) {
         gh_token: Some(SecretString::from(token)),
         ..GithubConfig::default()
     })
-    .await
     .expect("construct provider without network access");
     (provider, repository)
 }
@@ -103,7 +102,7 @@ async fn live_provider() -> (postel_github::GithubProvider, Repository) {
 #[tokio::test]
 #[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
 async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
-    let (provider, repository) = live_provider().await;
+    let (provider, repository) = live_provider();
 
     let _throttle = GlobalThrottle::acquire();
     let facts = provider

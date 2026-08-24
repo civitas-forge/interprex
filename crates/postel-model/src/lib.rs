@@ -246,12 +246,27 @@ pub enum RunStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunConclusion {
+    Success,
+    Failure,
+    Neutral,
+    Cancelled,
+    Skipped,
+    TimedOut,
+    ActionRequired,
+    Stale,
+    StartupFailure,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkflowRun {
     pub id: RunId,
-    pub workflow_name: String,
+    pub workflow_name: Option<String>,
     pub head_sha: String,
     pub status: RunStatus,
-    pub conclusion: Option<String>,
+    pub conclusion: Option<RunConclusion>,
     pub html_url: String,
 }
 

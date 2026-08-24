@@ -2,12 +2,13 @@
 //!
 //! Dispatch and cancellation use Octocrab's typed operations because their
 //! successful responses have no JSON body. Run responses are normalized into a
-//! small status vocabulary; new GitHub states become `Unknown` rather than
-//! causing deserialization failure or silently pretending to be completed.
+//! small status and conclusion vocabularies; new GitHub values become
+//! `Unknown` rather than causing deserialization failure or silently
+//! pretending to be completed. An omitted workflow name remains absent.
 
 use async_trait::async_trait;
 use postel_contracts::{JobsDomain, ProviderError, Result};
-use postel_model::{DispatchInputs, Repository, RunId, RunStatus, WorkflowRun};
+use postel_model::{DispatchInputs, Repository, RunConclusion, RunId, RunStatus, WorkflowRun};
 use serde::Deserialize;
 
 use crate::{GithubProvider, api::external};
@@ -15,8 +16,7 @@ use crate::{GithubProvider, api::external};
 #[derive(Deserialize)]
 struct GithubRun {
     id: u64,
-    #[serde(default)]
-    name: String,
+    name: Option<String>,
     head_sha: String,
     status: String,
     conclusion: Option<String>,
@@ -30,6 +30,18 @@ fn normalize_run(value: GithubRun) -> Result<WorkflowRun> {
         "completed" => RunStatus::Completed,
         _ => RunStatus::Unknown,
     };
+    let conclusion = value.conclusion.map(|value| match value.as_str() {
+        "success" => RunConclusion::Success,
+        "failure" => RunConclusion::Failure,
+        "neutral" => RunConclusion::Neutral,
+        "cancelled" => RunConclusion::Cancelled,
+        "skipped" => RunConclusion::Skipped,
+        "timed_out" => RunConclusion::TimedOut,
+        "action_required" => RunConclusion::ActionRequired,
+        "stale" => RunConclusion::Stale,
+        "startup_failure" => RunConclusion::StartupFailure,
+        _ => RunConclusion::Unknown,
+    });
     Ok(WorkflowRun {
         id: RunId::new(value.id).map_err(|error| ProviderError::External {
             provider: "github",
@@ -39,7 +51,7 @@ fn normalize_run(value: GithubRun) -> Result<WorkflowRun> {
         workflow_name: value.name,
         head_sha: value.head_sha,
         status,
-        conclusion: value.conclusion,
+        conclusion,
         html_url: value.html_url,
     })
 }
@@ -96,7 +108,7 @@ impl JobsDomain for GithubProvider {
 #[cfg(test)]
 mod tests {
     use super::{GithubRun, normalize_run};
-    use postel_model::RunStatus;
+    use postel_model::{RunConclusion, RunStatus};
 
     #[test]
     fn run_fixture_normalizes_status_without_exporting_octocrab_types() {
@@ -105,6 +117,24 @@ mod tests {
                 .expect("fixture");
         let run = normalize_run(response).expect("normalizes");
         assert_eq!(run.status, RunStatus::Completed);
-        assert_eq!(run.conclusion.as_deref(), Some("success"));
+        assert_eq!(run.workflow_name.as_deref(), Some("quality"));
+        assert_eq!(run.conclusion, Some(RunConclusion::Success));
+    }
+
+    #[test]
+    fn omitted_name_stays_absent_and_new_conclusions_are_explicitly_unknown() {
+        let response: GithubRun = serde_json::from_str(
+            r#"{
+                "id": 123456,
+                "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "status": "completed",
+                "conclusion": "future_value",
+                "html_url": "https://example.invalid/run"
+            }"#,
+        )
+        .expect("response");
+        let run = normalize_run(response).expect("normalizes");
+        assert_eq!(run.workflow_name, None);
+        assert_eq!(run.conclusion, Some(RunConclusion::Unknown));
     }
 }
