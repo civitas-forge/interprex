@@ -37,10 +37,10 @@ The Development Platform
 
     A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so a caller reads them there and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. One contract answers whatever runs the jobs.
 
-    Each tool declares the backends for the domains it uses in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's. Nothing is discovered: the linking tool passes that directory's path in, and postel reads its own file there.
+    Everything a deployment declares to these crates arrives as environment variables. A module names the variables it needs, the way the secret-store client names the one carrying its own token. The operator — whoever runs a tool on a host — sets them; in ci a caller passes them from the repo's secrets; a missing variable is a structured error naming it. Nothing is discovered: no crate here reads a configuration file.
 
-    Per-backend identity — the app, the installation, the token names — is this repo's own schema, in its own operator-side file in that directory, read by these crates from inside whichever tool links them. It carries names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
+    Github is the default in source. A deployment that selects otherwise sets the domain's selection variable, one per domain.
 
-    Github is the default. A backend that cannot express a fact its domain's contract requires refuses rather than approximating ([#1]).
+    Per-backend identity — the app, the installation, the token names — is the variables the backend module declares. They carry names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
 
     A selection reaches the backend modules and nothing else. Agent acts cross no contract — they drive the backend's own cli ([#2]) — so moving a domain never reaches them, and refs, tags, branches and pushes stay git's under any backend ([#1]).

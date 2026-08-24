@@ -46,9 +46,9 @@ Postel
     because anything honoring the contract serves.
 
     Which backend a domain names:
-        A caller declares that for the domains it owns. Postel implements every
-        domain against each backend it carries, and a domain moving to another
-        system costs one module rather than a rewrite.
+        A deployment declares that per domain, in the environment. Postel
+        implements every domain against each backend it carries, and a domain
+        moving to another system costs one module rather than a rewrite.
     What the domains are for:
         A contract states operations and has no opinion about who calls them or
         why. Ownership of the objects behind a domain divides among callers,

@@ -41,7 +41,6 @@ append
 applied
 applying
 approximates
-approximating
 arbitrary
 arch
 architecture
@@ -51,6 +50,7 @@ argument
 arguments
 argv
 arm
+arrives
 artifact
 aside
 ask
@@ -69,7 +69,6 @@ automation
 available
 back
 backend
-backends
 bad
 badly
 banned-word
@@ -498,7 +497,6 @@ like
 line
 lines
 linked
-linking
 links
 lint
 list
@@ -541,6 +539,7 @@ method
 metric
 might
 mints
+missing
 model
 modeled
 modeling
@@ -551,7 +550,6 @@ modules
 more
 most
 mounted
-mounts
 move
 moves
 moving
@@ -600,13 +598,13 @@ opens
 operation
 operations
 operator
-operator-side
 opinion
 order
 ordering
 org
 origin
 other
+otherwise
 out
 outlast
 output
@@ -689,7 +687,6 @@ reached
 reaches
 reaching
 read
-read-only
 reader
 reading
 reads
@@ -782,6 +779,7 @@ segment
 segments
 selected
 selection
+selects
 sense
 sentence
 separate
@@ -793,6 +791,7 @@ serving
 session
 sessions
 set
+sets
 setting
 settings
 settle
@@ -821,6 +820,7 @@ some
 someone
 something
 somewhere
+source
 spanning
 speak
 speaks
@@ -932,6 +932,8 @@ uses
 using
 value
 values
+variable
+variables
 vendor
 verification
 verified
