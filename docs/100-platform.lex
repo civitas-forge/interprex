@@ -19,47 +19,28 @@ The Development Platform
 
     Identity is not a domain. Each backend authenticates its own way and carries its own credentials — on github, app installation, permissions and tokens — so identity belongs to a backend and is never selected apart from one. A domain that moves takes its new backend's identity with it.
 
-    A backend carries as many identities as a deployment configures ([#3]), and in the pr domain a write names the identity it is performed under: the domain's owner chooses which identity each write uses, and the backend authenticates it.
+    A backend carries as many identities as a deployment configures ([#3]), and in the pr domain a write names the identity it is performed under: the caller chooses which identity each write uses, and the backend authenticates it.
 
     Git is not a domain either. Refs, tags, branches and pushes are git itself, identical under any backend.
 
     The contract speaks the model's terms — jobs, not workflows; tracker, not an issues api. A backend that cannot express a required fact refuses loudly; it never approximates. The refusal comes at the call that needs the fact, as a structured error naming the backend and the fact; construction probes no capabilities.
 
-2. Ownership
+2. What The Contracts Do Not Cover
 
-    Each row of the map below has exactly one owner, and the rows divide by when the thing changes rather than by which domain holds it. Domains do not divide cleanly: a tracker's label taxonomy is configuration and its issues are work in flight, and a pull request's facts are one caller's while its creation is the act of whoever opened it.
+    Some acts cross no contract: opening issues and pull requests, assigning labels, merges, branch pushes. Whoever performs them drives the backend's own cli, and no client here grows to own them.
 
-    Agent acts belong to no binary:
-        Opening issues and prs, assigning labels, coordinator merges, branch pushes. Agents perform them with the backend's own cli, under the handbook's rules, and no tool grows to own them.
-
-    The map:
-        | What                                          | Domain   | Owner  |
-        | :-------------------------------------------- | :------- | :----- |
-        | settings, visibility, default branch          | repo     | edward |
-        | merge requirements, required checks           | repo     | edward |
-        | secrets                                       | repo     | edward |
-        | label taxonomy                                | tracker  | edward |
-        | issues, label assignment                      | tracker  | agents |
-        | pr facts, draft-ready flip                    | pr       | kent   |
-        | review requests, reviews, threads, resolution | pr       | kent   |
-        | reviewer outcome check runs                   | pr       | kent   |
-        | pr creation, workstream merges                | pr       | agents |
-        | thin callers, dispatch, runs, runners, caches | jobs     | edward |
-        | draft and live releases, assets, receipts     | releases | sam    |
-        | installation, permissions                     | identity | edward |
-        | tokens at review time                         | identity | kent   |
-    :: table align=lll header=1 ::
+    A domain holds configuration and work in flight both — a tracker's label taxonomy beside its issues, a repo's merge requirements beside its branches — and the two change on different cadences. The contracts carry both; which caller drives which surface is no fact of this repo's.
 
 3. Backend Selection
 
     A domain names one backend, and the domains choose independently ([#1]): moving the tracker to another system costs one new backend module — one per domain and backend ([./210-crates.lex]) — and leaves the other four where they are.
 
-    A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so the pr domain's owner reads them there ([#2]) and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. The pr domain's owner reads one contract whatever runs the jobs.
+    A fact two domains both name is answered by the domain that owns it, never by whichever backend is nearer. Check results belong to the pr domain ([#1]), so a caller reads them there and a jobs backend elsewhere publishes into the pr domain rather than being asked directly. One contract answers whatever runs the jobs.
 
-    Each tool declares the backends for the domains it owns in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's. Nothing is discovered: the linking tool passes that directory's path in, and postel reads its own file there.
+    Each tool declares the backends for the domains it uses in its own operator-side file — one per tool, named for it, in the operator configuration directory that mounts read-only into every environment — and no tool reads another's. Nothing is discovered: the linking tool passes that directory's path in, and postel reads its own file there.
 
     Per-backend identity — the app, the installation, the token names — is this repo's own schema, in its own operator-side file in that directory, read by these crates from inside whichever tool links them. It carries names and ids only, never a value; values live in the secret store ([./110-data-access.lex]).
 
     Github is the default. A backend that cannot express a fact its domain's contract requires refuses rather than approximating ([#1]).
 
-    A selection reaches the backend modules and nothing else. Agent acts cross no contract — they drive the backend's own cli under the handbook's rules ([#2]) — so moving a domain never reaches them, and refs, tags, branches and pushes stay git's under any backend ([#1]).
+    A selection reaches the backend modules and nothing else. Agent acts cross no contract — they drive the backend's own cli ([#2]) — so moving a domain never reaches them, and refs, tags, branches and pushes stay git's under any backend ([#1]).

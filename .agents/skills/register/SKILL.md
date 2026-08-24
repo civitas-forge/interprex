@@ -68,7 +68,7 @@ Good: There is no lane. Tasks and triggers are declared; CI structure
 
 Bad:  Currently the provider takes just one command (this may change as
       we learn more).
-Good: Minsky reaches edward through exactly one command: the provider.
+Good: A tool reaches its provider through exactly one command.
 
 Bad:  The new naming grammar (replacing the old rust-triple scheme)
       is name-version-platform-arch.

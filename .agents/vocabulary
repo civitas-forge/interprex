@@ -60,7 +60,6 @@ assembled
 asset
 assets
 assigning
-assignment
 attempt
 auth
 authenticates
@@ -86,6 +85,7 @@ being
 belong
 belongs
 below
+beside
 between
 binary
 block
@@ -111,6 +111,7 @@ cache
 cached
 caches
 cadence
+cadences
 call
 caller
 callers
@@ -141,7 +142,6 @@ choice
 choose
 chooses
 clapfig
-cleanly
 cli
 client
 client-side
@@ -188,7 +188,6 @@ contract
 contracts
 convenience
 coordinate
-coordinator
 copilot
 copy
 cost
@@ -196,12 +195,12 @@ costs
 could
 count
 coupling
+cover
 covers
 crate
 crates
 create
 creates
-creation
 credential
 credentials
 cross
@@ -262,7 +261,6 @@ discovery
 disk
 dispatch
 dispatches
-divide
 divides
 division
 doc
@@ -288,7 +286,6 @@ earns
 edit
 editing
 editor
-edward
 either
 else
 elsewhere
@@ -401,7 +398,6 @@ groups
 grows
 halves
 hand-written
-handbook
 hands
 has
 hatch
@@ -467,7 +463,6 @@ just
 keep
 keeping
 keeps
-kent
 kept
 key
 kill
@@ -511,7 +506,6 @@ listing
 lists
 live
 lives
-lll
 llll
 load
 loading
@@ -546,7 +540,6 @@ metaphor
 method
 metric
 might
-minsky
 mints
 model
 modeled
@@ -615,7 +608,6 @@ org
 origin
 other
 out
-outcome
 outlast
 output
 outside
@@ -623,7 +615,6 @@ over
 overrides
 overturning
 own
-owner
 ownership
 ownership-driven
 owns
@@ -642,7 +633,6 @@ paths
 payload
 per
 per-backend
-perform
 performance
 performed
 performs
@@ -705,7 +695,6 @@ reading
 reads
 ready
 real
-receipts
 receives
 recomputed
 record
@@ -760,8 +749,6 @@ right
 root
 round
 route
-row
-rows
 rule
 rules
 ruleset
@@ -772,7 +759,6 @@ runners
 runs
 runtime
 rust-triple
-sam
 same
 says
 scan
@@ -831,6 +817,7 @@ slop
 slow
 small
 snapshot
+some
 someone
 something
 somewhere
@@ -951,7 +938,6 @@ verified
 version
 versions
 view
-visibility
 vocabulary
 volume
 wanted
@@ -986,7 +972,6 @@ workflows
 working
 workspace
 workspaces
-workstream
 worth
 worthwhile
 would
