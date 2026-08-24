@@ -5,6 +5,9 @@ Postel
     contracts that state what is wanted of them in the tools' own terms. Code
     above a contract never learns which system answered.
 
+    Postel is linked crates and nothing else: no binary, no process of its
+    own, no command line. It runs inside whichever tool links it.
+
     One client per backend rather than one per caller: authentication, secret
     transport, retry policy and asset streaming have to behave identically
     everywhere, and three implementations of each would move independently.
