@@ -24,6 +24,27 @@ Interface
     - jobs — the ci runtime
     - releases — releases, assets and notes
 
+    The first complete operation set:
+        repo:
+            Read repository facts and merge settings, apply merge settings,
+            list and upsert rulesets, and encrypt then write one repository
+            secret.
+        tracker:
+            Read one issue, list labels and upsert one label.
+        pr:
+            Read one pull request and its review threads, resolve a thread,
+            request reviewers, mark a draft ready and publish an app-owned
+            check outcome.
+        jobs:
+            Dispatch a workflow with inputs, read one run and cancel one run.
+        releases:
+            Read a release by tag, create a release, upload one asset and
+            download an asset.
+
+    This list owns the consumer-visible operation set. Endpoint selection,
+    response normalization and authentication choices belong to the provider's
+    Rust module documentation and are not repeated here.
+
 3. Provider Configuration
 
     A provider accepts its configuration in either of two forms. For the file

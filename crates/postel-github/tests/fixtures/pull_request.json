@@ -1,0 +1,11 @@
+{
+  "number": 5,
+  "node_id": "PR_kwDOExample",
+  "title": "Exercise review provider",
+  "state": "open",
+  "draft": true,
+  "head": { "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "base": { "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+  "user": { "login": "contributor" },
+  "updated_at": "2026-08-24T10:00:00Z"
+}

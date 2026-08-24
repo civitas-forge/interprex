@@ -1,0 +1,24 @@
+{
+  "repository": {
+    "pullRequest": {
+      "reviewThreads": {
+        "nodes": [
+          {
+            "id": "PRRT_kwDOExample",
+            "isResolved": false,
+            "path": "src/lib.rs",
+            "line": 12,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "Handle this case",
+                  "author": { "login": "reviewer-bot" }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

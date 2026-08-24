@@ -1,0 +1,14 @@
+[package]
+name = "postel-sys"
+description = "Injectable filesystem and clock access for Postel adapters"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+
+[lib]
+path = "src/lib.rs"
