@@ -68,13 +68,13 @@ impl CodeReviewsProvider for FakeProvider {
             if code_review
                 .outstanding_requests
                 .iter()
-                .any(|request| request.target.request_target().as_ref() == Some(target))
+                .any(|request| request.request_target.as_ref() == Some(target))
             {
                 continue;
             }
             code_review
                 .outstanding_requests
-                .push(fake_review_request(target));
+                .push(fake_review_request(repository, number, target));
         }
         Ok(())
     }
@@ -104,7 +104,12 @@ impl CodeReviewsProvider for FakeProvider {
     }
 }
 
-fn fake_review_request(target: &ReviewRequestTarget) -> ReviewRequest {
+fn fake_review_request(
+    repository: &Repository,
+    number: CodeReviewNumber,
+    target: &ReviewRequestTarget,
+) -> ReviewRequest {
+    let request_target = target.clone();
     let (identity, target) = match target {
         ReviewRequestTarget::User(login) => (
             format!("user:{login}"),
@@ -137,17 +142,25 @@ fn fake_review_request(target: &ReviewRequestTarget) -> ReviewRequest {
                         .expect("fake team identity is nonempty"),
                     slug: slug.clone(),
                     name: slug,
-                    kind: ReviewTeamKind::Organization {
-                        request_identifier: identifier.clone(),
-                    },
+                    kind: ReviewTeamKind::Organization,
                 }),
             )
         }
     };
     ReviewRequest {
-        id: ReviewRequestId::new(format!("fake-request:{identity}"))
-            .expect("fake request identity is nonempty"),
+        id: ReviewRequestId::new(format!(
+            "fake-request:{}:{}:{}:{}:{}:{}:{}",
+            repository.owner().len(),
+            repository.owner(),
+            repository.name().len(),
+            repository.name(),
+            number.get(),
+            identity.len(),
+            identity
+        ))
+        .expect("fake request identity is nonempty"),
         target,
+        request_target: Some(request_target),
         as_code_owner: false,
     }
 }

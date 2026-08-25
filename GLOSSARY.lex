@@ -19,7 +19,7 @@ Glossary
         as a GitHub user or app installation. A review actor and a provider
         identity are different concepts.
     code review:
-        One proposed change and its reviews, inline discussions, general
+        One proposed change and its reviews, independent discussions, general
         conversation and outstanding review requests. A GitHub pull request is
         represented as a code review.
     review:
@@ -42,14 +42,16 @@ Glossary
         An inline review thread attached to the review in which it originated.
         Its initial comment, replies, source location, resolution status and
         outdated status remain together.
-    inline discussion:
+    independent discussion:
         An inline review thread with no originating review. Later replies do
         not change its origin.
     conversation comment:
         A general comment on the proposed change with no source location.
     review request:
         One currently outstanding request for an actor or team to review a
-        change. It describes current state, not request history.
+        change. The observed target and the provider address that can request
+        it again are separate facts. It describes current state, not request
+        history.
     review application:
         The provider application through which an actor created or submitted a
         review.

@@ -52,7 +52,7 @@ pub struct CommitRange {
     pub head_sha: String,
 }
 
-/// The exact code revision attached to a submitted review.
+/// The exact code revision attached to a review.
 ///
 /// Some providers, including GitHub, retain the reviewed head commit but not
 /// the base commit as it existed when a historical review was submitted.
@@ -81,7 +81,7 @@ pub struct ReviewActor {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewTeamKind {
-    Organization { request_identifier: String },
+    Organization,
     Enterprise,
 }
 
@@ -99,33 +99,6 @@ pub enum ReviewTarget {
     Actor(ReviewActor),
     Team(ReviewTeam),
     Unavailable,
-}
-
-impl ReviewTarget {
-    /// Returns the provider address that can request this observed target.
-    ///
-    /// Deleted identities, placeholders, organization actors and enterprise
-    /// teams can remain visible even though the provider cannot request them
-    /// again.
-    #[must_use]
-    pub fn request_target(&self) -> Option<ReviewRequestTarget> {
-        match self {
-            Self::Actor(actor) => match actor.kind {
-                ReviewActorKind::User => Some(ReviewRequestTarget::User(actor.login.clone())),
-                ReviewActorKind::Bot => Some(ReviewRequestTarget::Bot(actor.login.clone())),
-                ReviewActorKind::Placeholder
-                | ReviewActorKind::Organization
-                | ReviewActorKind::EnterpriseUser => None,
-            },
-            Self::Team(team) => match &team.kind {
-                ReviewTeamKind::Organization { request_identifier } => {
-                    Some(ReviewRequestTarget::Team(request_identifier.clone()))
-                }
-                ReviewTeamKind::Enterprise => None,
-            },
-            Self::Unavailable => None,
-        }
-    }
 }
 
 /// One provider address to add to the outstanding reviewer set.
@@ -147,6 +120,10 @@ pub enum ReviewRequestTarget {
 pub struct ReviewRequest {
     pub id: ReviewRequestId,
     pub target: ReviewTarget,
+    /// The provider address that can request this target again, when one is
+    /// available. This is independent of the target's observed actor or team
+    /// category.
+    pub request_target: Option<ReviewRequestTarget>,
     pub as_code_owner: bool,
 }
 
@@ -175,6 +152,35 @@ pub enum ReviewRelationship {
     ChangeAuthor,
     Other,
     Unknown,
+}
+
+/// The author of a review and the provider's knowledge of that actor's
+/// relationship to the proposed change.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAuthor {
+    ChangeAuthor,
+    Other(ReviewActor),
+    Unknown(ReviewActor),
+}
+
+impl ReviewAuthor {
+    #[must_use]
+    pub const fn relationship(&self) -> ReviewRelationship {
+        match self {
+            Self::ChangeAuthor => ReviewRelationship::ChangeAuthor,
+            Self::Other(_) => ReviewRelationship::Other,
+            Self::Unknown(_) => ReviewRelationship::Unknown,
+        }
+    }
+
+    #[must_use]
+    pub fn actor<'a>(&'a self, change_author: &'a ReviewActor) -> &'a ReviewActor {
+        match self {
+            Self::ChangeAuthor => change_author,
+            Self::Other(actor) | Self::Unknown(actor) => actor,
+        }
+    }
 }
 
 /// Whether a review is still a draft or has been submitted.
@@ -218,21 +224,24 @@ pub enum ReviewDiffSide {
     Right,
 }
 
-/// The stable source anchor of an inline review thread.
-///
-/// A line range records the location at which the conversation began.
+/// The stable source anchor within the file containing an inline review
+/// thread. A line range records the location at which the conversation began.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ReviewLocation {
-    File {
-        path: String,
-    },
+pub enum ReviewAnchor {
+    File,
     Lines {
-        path: String,
         side: ReviewDiffSide,
         original: ReviewLineRange,
         current: Option<ReviewLineRange>,
     },
+}
+
+/// The file and anchor of an inline review thread.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewLocation {
+    pub path: String,
+    pub anchor: ReviewAnchor,
 }
 
 /// One complete inline conversation on the code review.
@@ -258,8 +267,7 @@ pub struct ReviewThread {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Review {
     pub id: ReviewId,
-    pub author: ReviewActor,
-    pub relationship_to_change: ReviewRelationship,
+    pub author: ReviewAuthor,
     pub via_app: Option<ReviewApp>,
     pub revision: ReviewedRevision,
     pub state: ReviewState,
@@ -370,17 +378,19 @@ mod tests {
     fn thread(id: &str, author: ReviewActor) -> ReviewThread {
         ReviewThread {
             id: ReviewThreadId::new(id).expect("thread id"),
-            location: ReviewLocation::Lines {
+            location: ReviewLocation {
                 path: "src/lib.rs".to_owned(),
-                side: ReviewDiffSide::Right,
-                original: ReviewLineRange {
-                    start: None,
-                    end: ReviewLine::new(10).expect("line"),
+                anchor: ReviewAnchor::Lines {
+                    side: ReviewDiffSide::Right,
+                    original: ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    },
+                    current: Some(ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    }),
                 },
-                current: Some(ReviewLineRange {
-                    start: None,
-                    end: ReviewLine::new(10).expect("line"),
-                }),
             },
             outdated: false,
             status: ReviewThreadStatus::Open,
@@ -392,8 +402,7 @@ mod tests {
     fn review(id: &str, author: ReviewActor, findings: Vec<ReviewThread>) -> Review {
         Review {
             id: ReviewId::new(id).expect("review id"),
-            author,
-            relationship_to_change: ReviewRelationship::Other,
+            author: ReviewAuthor::Other(author),
             via_app: None,
             revision: ReviewedRevision {
                 head_sha: "head".to_owned(),
@@ -441,23 +450,34 @@ mod tests {
     }
 
     #[test]
-    fn observed_targets_expose_only_addresses_the_provider_can_request() {
-        let user = ReviewTarget::Actor(ReviewActor {
-            id: ReviewActorId::new("actor-user").expect("actor id"),
-            login: "alice".to_owned(),
-            kind: ReviewActorKind::User,
-        });
-        let enterprise_team = ReviewTarget::Team(ReviewTeam {
-            id: ReviewTeamId::new("team-enterprise").expect("team id"),
-            slug: "security".to_owned(),
-            name: "Security".to_owned(),
-            kind: ReviewTeamKind::Enterprise,
-        });
+    fn observed_target_kind_and_request_address_are_independent() {
+        let organization_team = ReviewRequest {
+            id: ReviewRequestId::new("request-organization").expect("request id"),
+            target: ReviewTarget::Team(ReviewTeam {
+                id: ReviewTeamId::new("team-organization").expect("team id"),
+                slug: "maintainers".to_owned(),
+                name: "Maintainers".to_owned(),
+                kind: ReviewTeamKind::Organization,
+            }),
+            request_target: None,
+            as_code_owner: false,
+        };
+        let enterprise_team = ReviewRequest {
+            id: ReviewRequestId::new("request-enterprise").expect("request id"),
+            target: ReviewTarget::Team(ReviewTeam {
+                id: ReviewTeamId::new("team-enterprise").expect("team id"),
+                slug: "security".to_owned(),
+                name: "Security".to_owned(),
+                kind: ReviewTeamKind::Enterprise,
+            }),
+            request_target: Some(ReviewRequestTarget::Team("security".to_owned())),
+            as_code_owner: false,
+        };
 
+        assert_eq!(organization_team.request_target, None);
         assert_eq!(
-            user.request_target(),
-            Some(ReviewRequestTarget::User("alice".to_owned()))
+            enterprise_team.request_target,
+            Some(ReviewRequestTarget::Team("security".to_owned()))
         );
-        assert_eq!(enterprise_team.request_target(), None);
     }
 }

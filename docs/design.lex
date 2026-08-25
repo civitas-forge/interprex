@@ -29,14 +29,21 @@ Design
     Selection of a tracker provider does not select the code-review or jobs
     provider.
 
+    `ProviderSelections::from_lookup` reads each selection independently from
+    `POSTEL_CODE_HOSTING_PROVIDER`, `POSTEL_TRACKER_PROVIDER`,
+    `POSTEL_CODE_REVIEWS_PROVIDER`, `POSTEL_JOBS_PROVIDER` and
+    `POSTEL_RELEASES_PROVIDER`. An unset or blank selection defaults to
+    `github`. These selections name providers; callers still construct the
+    corresponding implementations.
+
     code hosting:
         Repository facts, merge settings, rulesets and repository secrets.
     tracker:
         Issues and labels.
     code review:
-        Proposed changes, reviews and their findings, independent inline
-        discussions, general conversation, outstanding review requests, check
-        results and the draft-to-ready transition.
+        Proposed changes, reviews and their findings, independent discussions,
+        general conversation, outstanding review requests, check results and
+        the draft-to-ready transition.
     jobs:
         Dispatch, run observation and cancellation.
     releases:
@@ -80,19 +87,24 @@ Design
     `ReviewState::Submitted`, which contains its disposition and submission
     time. The review body becomes its optional summary in either state.
 
-    A review's author is a platform actor. `via_app` separately attributes
-    the provider application used to submit it. Neither field is the provider's
-    authentication identity.
-
-    `relationship_to_change` records only what the provider establishes:
+    `ReviewAuthor` stores the author and the relationship that the provider can
+    establish without allowing contradictory combinations:
 
     change author:
-        The provider returned stable actor identifiers that match.
+        The provider returned stable actor identifiers that match. This variant
+        refers to the proposed change's author rather than duplicating it.
     other:
-        The provider returned stable actor identifiers that differ.
+        The provider returned stable actor identifiers that differ, and the
+        variant contains the other actor.
     unknown:
         At least one stable actor identifier was unavailable, so Postel cannot
-        compare them.
+        compare them. The variant contains the observed or placeholder actor.
+
+    `ReviewAuthor::relationship` returns the category and
+    `ReviewAuthor::actor` returns the actor, using the proposed change's author
+    for the change-author variant. `via_app` separately attributes the provider
+    application used to create the review. Neither the author nor the app is
+    the provider's authentication identity.
 
     A caller may decide that only `other` reviews count as independent evidence.
     Postel does not make that policy decision, and `unknown` never becomes
@@ -100,9 +112,10 @@ Design
     identifiers.
 
     A review thread retains its initial comment, ordered replies, open or
-    resolved status and outdated status. A line location retains its original
-    range, diff side and current mapped range when GitHub supplies one. A file
-    location retains its path without inventing line data.
+    resolved status and outdated status. `ReviewLocation` stores the file path
+    once and an anchor. A line anchor retains its original range, diff side and
+    current mapped range when GitHub supplies one. A file anchor does not
+    invent line data.
 
     A thread whose initial comment names a review is nested under that review as
     a finding. This includes a change author's self-review and a draft review.
@@ -110,10 +123,13 @@ Design
     Replies do not move a thread or create another review. General conversation
     remains separate because it has no source location.
 
-    Outstanding review requests preserve their actor or team target and whether
-    GitHub requested the target as a code owner. Unavailable targets remain
-    present. A request describes current state and is not proof that a review
-    exists.
+    Outstanding review requests preserve their actor or team target, the
+    provider address that can request that target again when available, and
+    whether GitHub requested the target as a code owner. The address is not
+    inferred from actor or team category: an observed organization team may
+    lack an address, while an enterprise team may have one on another provider.
+    Unavailable targets remain present. A request describes current state and
+    is not proof that a review exists.
 
     Postel returns these observations without assigning review rounds, choosing
     a previous review, deciding that a reviewer is stale, classifying finding

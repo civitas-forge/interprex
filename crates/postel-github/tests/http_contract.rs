@@ -471,7 +471,7 @@ async fn code_review_domain_reads_one_complete_observation() {
             .reviews
             .iter()
             .filter(|item| {
-                item.relationship_to_change == postel::ReviewRelationship::ChangeAuthor
+                item.author.relationship() == postel::ReviewRelationship::ChangeAuthor
             })
             .count(),
         1
@@ -480,7 +480,7 @@ async fn code_review_domain_reads_one_complete_observation() {
         review
             .reviews
             .iter()
-            .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Unknown)
+            .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
             .count(),
         2
     );

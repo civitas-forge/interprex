@@ -16,7 +16,7 @@ use std::{
 use fs2::FileExt;
 use postel::{
     CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
-    ReviewLocation, ReviewTarget,
+    ReviewAnchor, ReviewAuthor, ReviewTarget,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -148,18 +148,13 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         review
             .reviews
             .iter()
-            .all(|item| !item.author.id.as_str().is_empty())
+            .all(|item| !item.author.actor(&review.author).id.as_str().is_empty())
     );
-    assert!(
-        review
-            .reviews
-            .iter()
-            .all(|item| match item.relationship_to_change {
-                postel::ReviewRelationship::ChangeAuthor => item.author.id == review.author.id,
-                postel::ReviewRelationship::Other => item.author.id != review.author.id,
-                postel::ReviewRelationship::Unknown => true,
-            })
-    );
+    assert!(review.reviews.iter().all(|item| match &item.author {
+        ReviewAuthor::ChangeAuthor => true,
+        ReviewAuthor::Other(actor) => actor.id != review.author.id,
+        ReviewAuthor::Unknown(_) => true,
+    }));
     assert!(
         review
             .reviews
@@ -174,15 +169,12 @@ async fn configured_code_review_observation_matches_current_provider_data() {
     {
         assert!(!thread.id.as_str().is_empty());
         assert!(!thread.comment.id.as_str().is_empty());
-        match &thread.location {
-            ReviewLocation::File { path } => assert!(!path.is_empty()),
-            ReviewLocation::Lines {
-                path,
-                original,
-                current,
-                ..
+        assert!(!thread.location.path.is_empty());
+        match &thread.location.anchor {
+            ReviewAnchor::File => {}
+            ReviewAnchor::Lines {
+                original, current, ..
             } => {
-                assert!(!path.is_empty());
                 assert!(original.end.get() > 0);
                 assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
             }
@@ -207,17 +199,17 @@ async fn configured_code_review_observation_matches_current_provider_data() {
     let author_review_count = review
         .reviews
         .iter()
-        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::ChangeAuthor)
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::ChangeAuthor)
         .count();
     let other_review_count = review
         .reviews
         .iter()
-        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Other)
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Other)
         .count();
     let unknown_review_count = review
         .reviews
         .iter()
-        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Unknown)
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
         .count();
     let draft_review_count = review
         .reviews

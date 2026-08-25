@@ -19,8 +19,8 @@ Postel
     tracker:
         Read issues and read or update labels.
     code review:
-        Read proposed changes, reviews, findings, independent inline
-        discussions, general conversation and outstanding review requests;
+        Read proposed changes, reviews, findings, independent discussions,
+        general conversation and outstanding review requests;
         resolve threads, request reviewers, mark a change ready and publish
         check results.
     jobs:
@@ -39,11 +39,13 @@ Postel
     state distinguishes a draft from a submitted review; a submitted review
     also carries its disposition and submission time.
 
-    The review author's relationship to the proposed change is one of change
-    author, other or unknown. Unknown means the provider did not return enough
-    identity information to compare the review author with the change author. It
-    does not mean other. Postel returns this fact and leaves decisions about
-    independent review evidence to the caller.
+    The review author is one of change author, another known actor or an actor
+    whose relationship is unknown. The change-author variant refers to the
+    proposed change's author instead of storing a second, independently
+    writable copy. Unknown means the provider did not return enough identity
+    information to compare the actors; it does not mean other. Postel returns
+    this fact and leaves decisions about independent review evidence to the
+    caller.
 
     A thread attached to a review is one of that review's findings, including a
     self-review finding from the change author. A thread with no originating
@@ -70,6 +72,11 @@ Postel
     `[provider.github.apps.<name>]` for an app's `APP_ID`, `INSTALLATION_ID` and
     `PRIVATE_KEY`. Missing credentials are reported when an operation first
     needs them, and credential values do not appear in debug output or errors.
+
+    `ProviderSelections::from_lookup` reads independent provider names from
+    `POSTEL_CODE_HOSTING_PROVIDER`, `POSTEL_TRACKER_PROVIDER`,
+    `POSTEL_CODE_REVIEWS_PROVIDER`, `POSTEL_JOBS_PROVIDER` and
+    `POSTEL_RELEASES_PROVIDER`. An unset or blank value selects `github`.
 
 5. Documentation
 

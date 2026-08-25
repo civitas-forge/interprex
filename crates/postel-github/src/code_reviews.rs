@@ -14,11 +14,11 @@ use octocrab::Page;
 use postel::{
     CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
     OpenClosed, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewApp, ReviewAppId, ReviewComment, ReviewCommentId, ReviewDiffSide,
-    ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship,
-    ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam,
-    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
-    ReviewedRevision,
+    ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange,
+    ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
+    ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -474,10 +474,8 @@ fn normalize_line_range(
 }
 
 fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
-    match thread.subject_type {
-        ThreadSubjectType::File => Ok(ReviewLocation::File {
-            path: thread.path.clone(),
-        }),
+    let anchor = match thread.subject_type {
+        ThreadSubjectType::File => ReviewAnchor::File,
         ThreadSubjectType::Line => {
             let side = thread.diff_side.ok_or_else(|| ProviderError::External {
                 provider: "github",
@@ -494,8 +492,7 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
                 operation: "normalize review thread location",
                 message: format!("line thread {} has no original line", thread.id),
             })?;
-            Ok(ReviewLocation::Lines {
-                path: thread.path.clone(),
+            ReviewAnchor::Lines {
                 side: normalize_diff_side(side),
                 original,
                 current: normalize_line_range(
@@ -503,9 +500,13 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
                     thread.start_line,
                     "normalize review thread location",
                 )?,
-            })
+            }
         }
-    }
+    };
+    Ok(ReviewLocation {
+        path: thread.path.clone(),
+        anchor,
+    })
 }
 
 fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
@@ -545,15 +546,17 @@ fn normalize_conversation_comment(value: GithubConversationComment) -> Result<Re
 }
 
 fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
-    let target = match value.requested_reviewer {
-        Some(RequestedReviewerNode::User { id, login }) => {
-            ReviewTarget::Actor(actor(id, login, "User")?)
-        }
-        Some(RequestedReviewerNode::Bot { id, login }) => {
-            ReviewTarget::Actor(actor(id, login, "Bot")?)
-        }
+    let (target, request_target) = match value.requested_reviewer {
+        Some(RequestedReviewerNode::User { id, login }) => (
+            ReviewTarget::Actor(actor(id, login.clone(), "User")?),
+            Some(ReviewRequestTarget::User(login)),
+        ),
+        Some(RequestedReviewerNode::Bot { id, login }) => (
+            ReviewTarget::Actor(actor(id, login.clone(), "Bot")?),
+            Some(ReviewRequestTarget::Bot(login)),
+        ),
         Some(RequestedReviewerNode::Mannequin { id, login }) => {
-            ReviewTarget::Actor(actor(id, login, "Mannequin")?)
+            (ReviewTarget::Actor(actor(id, login, "Mannequin")?), None)
         }
         Some(RequestedReviewerNode::Team {
             id,
@@ -562,18 +565,21 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
             organization,
         }) => {
             let request_identifier = format!("{}/{}", organization.login, slug);
-            ReviewTarget::Team(ReviewTeam {
-                id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
-                    provider: "github",
-                    operation: "normalize review request",
-                    message: error.to_string(),
-                })?,
-                slug,
-                name,
-                kind: ReviewTeamKind::Organization { request_identifier },
-            })
+            (
+                ReviewTarget::Team(ReviewTeam {
+                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                        provider: "github",
+                        operation: "normalize review request",
+                        message: error.to_string(),
+                    })?,
+                    slug,
+                    name,
+                    kind: ReviewTeamKind::Organization,
+                }),
+                Some(ReviewRequestTarget::Team(request_identifier)),
+            )
         }
-        Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => {
+        Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => (
             ReviewTarget::Team(ReviewTeam {
                 id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
                     provider: "github",
@@ -583,9 +589,10 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
                 slug,
                 name,
                 kind: ReviewTeamKind::Enterprise,
-            })
-        }
-        None => ReviewTarget::Unavailable,
+            }),
+            None,
+        ),
+        None => (ReviewTarget::Unavailable, None),
     };
     Ok(ReviewRequest {
         id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
@@ -594,6 +601,7 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
             message: error.to_string(),
         })?,
         target,
+        request_target,
         as_code_owner: value.as_code_owner,
     })
 }
@@ -622,7 +630,7 @@ fn normalize_code_review(
             .then_with(|| left.node_id.cmp(&right.node_id))
     });
     for review in reviews {
-        let relationship_to_change = match (
+        let relationship = match (
             author_provider_id.as_deref(),
             review.user.as_ref().map(|user| user.node_id.as_str()),
         ) {
@@ -635,6 +643,11 @@ fn normalize_code_review(
         let review_author = match review.user {
             Some(user) => actor(user.node_id, user.login, &user.kind)?,
             None => ghost_actor(format!("unavailable-review-author:{}", review.node_id))?,
+        };
+        let review_author = match relationship {
+            ReviewRelationship::ChangeAuthor => ReviewAuthor::ChangeAuthor,
+            ReviewRelationship::Other => ReviewAuthor::Other(review_author),
+            ReviewRelationship::Unknown => ReviewAuthor::Unknown(review_author),
         };
         let state = if review.state == "PENDING" {
             if review.submitted_at.is_some() {
@@ -666,7 +679,6 @@ fn normalize_code_review(
         normalized_reviews.push(Review {
             id,
             author: review_author,
-            relationship_to_change,
             via_app: review
                 .performed_via_github_app
                 .map(|app| {
@@ -1084,7 +1096,8 @@ mod tests {
 
     use postel::{
         CheckConclusion, CheckOutcome, CodeReviewsProvider, ProviderError, Repository,
-        ReviewActorKind, ReviewLocation, ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
+        ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget,
+        ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1132,17 +1145,19 @@ mod tests {
         let finding = &review.reviews[0].findings[0];
         assert_eq!(
             finding.location,
-            ReviewLocation::Lines {
+            ReviewLocation {
                 path: "docs/dev/architecture.lex".to_owned(),
-                side: postel::ReviewDiffSide::Right,
-                original: postel::ReviewLineRange {
-                    start: Some(postel::ReviewLine::new(177).expect("line")),
-                    end: postel::ReviewLine::new(181).expect("line"),
+                anchor: ReviewAnchor::Lines {
+                    side: postel::ReviewDiffSide::Right,
+                    original: postel::ReviewLineRange {
+                        start: Some(postel::ReviewLine::new(177).expect("line")),
+                        end: postel::ReviewLine::new(181).expect("line"),
+                    },
+                    current: Some(postel::ReviewLineRange {
+                        start: Some(postel::ReviewLine::new(184).expect("line")),
+                        end: postel::ReviewLine::new(188).expect("line"),
+                    }),
                 },
-                current: Some(postel::ReviewLineRange {
-                    start: Some(postel::ReviewLine::new(184).expect("line")),
-                    end: postel::ReviewLine::new(188).expect("line"),
-                }),
             }
         );
         assert!(finding.comment.id.as_str().starts_with("PRRC_"));
@@ -1167,11 +1182,15 @@ mod tests {
         let author_review = review
             .reviews
             .iter()
-            .find(|item| item.author.login == "arthur-debert")
+            .find(|item| item.author == ReviewAuthor::ChangeAuthor)
             .expect("author review");
         assert_eq!(
-            author_review.relationship_to_change,
+            author_review.author.relationship(),
             postel::ReviewRelationship::ChangeAuthor
+        );
+        assert_eq!(
+            author_review.author.actor(&review.author).login,
+            "arthur-debert"
         );
         assert!(matches!(
             author_review.state,
@@ -1181,7 +1200,7 @@ mod tests {
         let draft_review = review
             .reviews
             .iter()
-            .find(|item| item.author.login == "draft-reviewer")
+            .find(|item| item.author.actor(&review.author).login == "draft-reviewer")
             .expect("draft review");
         assert_eq!(draft_review.state, postel::ReviewState::Draft);
         assert_eq!(
@@ -1191,10 +1210,13 @@ mod tests {
         let unavailable = review
             .reviews
             .iter()
-            .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Unknown)
+            .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
             .collect::<Vec<_>>();
         assert_eq!(unavailable.len(), 2);
-        assert_ne!(unavailable[0].author.id, unavailable[1].author.id);
+        assert_ne!(
+            unavailable[0].author.actor(&review.author).id,
+            unavailable[1].author.actor(&review.author).id
+        );
         assert_eq!(
             review
                 .reviews
@@ -1209,8 +1231,9 @@ mod tests {
         assert_eq!(author_thread.replies[0].author.login, "adr-agy-review");
         assert_eq!(
             author_thread.location,
-            ReviewLocation::File {
-                path: "src/lib.rs".to_owned()
+            ReviewLocation {
+                path: "src/lib.rs".to_owned(),
+                anchor: ReviewAnchor::File,
             }
         );
         assert_eq!(review.outstanding_requests.len(), 6);
@@ -1225,10 +1248,12 @@ mod tests {
             &review.outstanding_requests[2].target,
             ReviewTarget::Team(team)
                 if team.slug == "maintainers"
-                    && team.kind == ReviewTeamKind::Organization {
-                        request_identifier: "faictor/maintainers".to_owned()
-                    }
+                    && team.kind == ReviewTeamKind::Organization
         ));
+        assert_eq!(
+            review.outstanding_requests[2].request_target,
+            Some(ReviewRequestTarget::Team("faictor/maintainers".to_owned()))
+        );
         assert!(matches!(
             &review.outstanding_requests[3].target,
             ReviewTarget::Actor(actor) if actor.kind == ReviewActorKind::Placeholder
@@ -1356,6 +1381,54 @@ mod tests {
     }
 
     #[test]
+    fn thread_without_an_originating_review_becomes_an_independent_discussion() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        let thread = threads
+            .repository
+            .pull_request
+            .review_threads
+            .nodes
+            .first_mut()
+            .expect("captured thread");
+        let expected_id = thread.id.clone();
+        thread
+            .comments
+            .nodes
+            .first_mut()
+            .expect("initial comment")
+            .pull_request_review = None;
+
+        let review = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("normalizes independent discussion");
+
+        assert_eq!(review.discussions.len(), 1);
+        assert_eq!(review.discussions[0].id.as_str(), expected_id);
+        assert_eq!(
+            review
+                .reviews
+                .iter()
+                .map(|item| item.findings.len())
+                .sum::<usize>()
+                + review.discussions.len(),
+            4
+        );
+    }
+
+    #[test]
     fn deleted_change_author_remains_an_unavailable_actor() {
         let mut code_review: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
@@ -1374,7 +1447,7 @@ mod tests {
             review
                 .reviews
                 .iter()
-                .all(|item| { item.relationship_to_change == postel::ReviewRelationship::Unknown })
+                .all(|item| { item.author.relationship() == postel::ReviewRelationship::Unknown })
         );
     }
 
