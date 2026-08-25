@@ -49,13 +49,28 @@ Verify
     - Rules that read a contract run against a fake provider: no network, no
       third-party account, nothing left behind in a real repo
       ([./interface.lex]).
+    - The fake implements all five domain traits and records observable domain
+      outcomes rather than expectations about consumer implementation.
     - Provider tests construct equivalent clients from project and direct
       configuration.
     - Github provider tests prove user operations use `GH_TOKEN`, app-only
       operations use the named app installation, and neither can substitute
       for the other.
-    - Above that, the verification ladder is the implementation skill's;
-      postel adds no tier of its own.
+    - Captured Github responses exercise normalization without network access;
+      unknown vendor fields do not enter the model.
+    - Local transport tests run the real Octocrab adapter against a loopback
+      server and assert the method, path, authentication and Postel-owned body
+      for every domain.
+    - One ignored, read-only live test reads repository facts and labels from
+      `faictor/postel-sandbox`. It assumes no issue, pull request, label or
+      branch state.
+    - The live workflow runs manually or for an explicitly named
+      `codex/live-e2e-*` branch, shares one concurrency group across branches
+      without cancellation, runs one test thread, and delays calls under a
+      machine-global inter-process lock. Ordinary pushes and pull requests do
+      not contact the sandbox. Octocrab's rate-limit-aware retry is enabled
+      independently.
+    - Above that, the verification ladder is the implementation skill's.
 
 4. Build Outputs
 

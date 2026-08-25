@@ -1,0 +1,19 @@
+[package]
+name = "postel-fake"
+description = "Stateful in-memory Postel provider for consumer tests"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+postel-contracts = { path = "../postel-contracts" }
+postel-model = { path = "../postel-model" }
+secrecy.workspace = true
+tokio.workspace = true
+
+[lib]
+path = "src/lib.rs"

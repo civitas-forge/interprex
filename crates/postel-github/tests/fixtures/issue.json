@@ -1,0 +1,10 @@
+{
+  "number": 11,
+  "title": "Exercise provider",
+  "body": "Fixture body",
+  "state": "open",
+  "labels": [
+    { "name": "feature", "color": "0052cc", "description": "Feature work" }
+  ],
+  "updated_at": "2026-08-24T10:00:00Z"
+}

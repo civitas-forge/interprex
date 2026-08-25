@@ -1,0 +1,34 @@
+name: Live GitHub end-to-end
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["codex/live-e2e-*"]
+
+concurrency:
+  group: postel-sandbox-live-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live-github:
+    name: Read the shared sandbox through Postel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run sparse serialized live checks
+        env:
+          POSTEL_LIVE_GITHUB: "1"
+          POSTEL_E2E_GH_TOKEN: ${{ secrets.POSTEL_E2E_GH_TOKEN }}
+          POSTEL_E2E_REPOSITORY: faictor/postel-sandbox
+          POSTEL_E2E_INTERVAL_SECONDS: "3"
+        run: >-
+          cargo test -p postel-github --test live_github
+          sandbox_repository_and_label_reads_follow_the_real_consumer_path --
+          --ignored --exact --test-threads=1
