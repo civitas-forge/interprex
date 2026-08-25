@@ -1,4 +1,4 @@
-//! Pull-request REST and GraphQL operations owned by the pr domain.
+//! Pull-request REST and GraphQL operations owned by the pull-requests domain.
 //!
 //! Ordinary pull-request facts use REST. Review threads, thread resolution,
 //! reviewer requests by login, and the draft-ready transition use hand-written
@@ -7,15 +7,14 @@
 //! never assemble GitHub requests or distinguish bot logins from user logins.
 
 use async_trait::async_trait;
-use postel_contracts::{PrDomain, ProviderError, Result};
-use postel_model::{
-    CheckConclusion, CheckOutcome, OpenClosed, PullRequest, PullRequestNumber, Repository,
-    ReviewComment, ReviewThread, ReviewThreadId,
+use postel::{
+    CheckConclusion, CheckOutcome, OpenClosed, ProviderError, PullRequest, PullRequestNumber,
+    PullRequestsProvider, Repository, Result, ReviewComment, ReviewThread, ReviewThreadId,
 };
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{GithubProvider, api::external};
+use crate::{GithubProvider, client::external};
 
 const REVIEW_THREADS: &str = r#"
 query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: String) {
@@ -256,7 +255,7 @@ impl GithubProvider {
             )
             .await
             .map_err(|error| {
-                crate::api::read_error(
+                crate::client::read_error(
                     "read pull request",
                     format!("pull request {} in {repository}", number.get()),
                     error,
@@ -292,7 +291,7 @@ impl GithubProvider {
 }
 
 #[async_trait]
-impl PrDomain for GithubProvider {
+impl PullRequestsProvider for GithubProvider {
     async fn pull_request(
         &self,
         repository: &Repository,
@@ -425,8 +424,7 @@ impl PrDomain for GithubProvider {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use postel_contracts::PrDomain;
-    use postel_model::{CheckConclusion, CheckOutcome, Repository};
+    use postel::{CheckConclusion, CheckOutcome, PullRequestsProvider, Repository};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,

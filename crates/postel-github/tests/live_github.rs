@@ -14,9 +14,8 @@ use std::{
 };
 
 use fs2::FileExt;
-use postel_contracts::{RepoDomain, TrackerDomain};
+use postel::{IssuesProvider, Repository, RepositoryProvider};
 use postel_github::{GithubConfig, from_config};
-use postel_model::Repository;
 use secrecy::SecretString;
 
 const DEFAULT_REPOSITORY: &str = "faictor/postel-sandbox";

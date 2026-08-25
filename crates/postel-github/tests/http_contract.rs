@@ -8,13 +8,12 @@ use std::{collections::BTreeMap, time::Duration};
 
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
-use postel_contracts::{
-    AssetStreamError, AssetUpload, JobsDomain, PrDomain, ReleasesDomain, RepoDomain, TrackerDomain,
+use postel::{
+    AssetId, AssetStreamError, AssetUpload, DispatchInputs, IssueNumber, IssuesProvider,
+    JobsProvider, PullRequestNumber, PullRequestsProvider, ReleaseId, ReleasesProvider, Repository,
+    RepositoryProvider, RepositorySettings, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
-use postel_model::{
-    DispatchInputs, IssueNumber, PullRequestNumber, Repository, RepositorySettings, ReviewThreadId,
-};
 use secrecy::SecretString;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -545,7 +544,7 @@ async fn releases_domain_streams_upload_chunks_to_the_upload_host() {
     let asset = provider(uri)
         .upload_asset(
             &repository(),
-            postel_model::ReleaseId::new(88).expect("release id"),
+            ReleaseId::new(88).expect("release id"),
             "postel.tar.gz",
             Some("Darwin arm64"),
             upload,
@@ -575,10 +574,7 @@ async fn releases_domain_returns_download_before_the_final_chunk_arrives() {
     let (uri, continue_download) = streaming_download_server().await;
     let mut download = timeout(
         Duration::from_secs(1),
-        provider(uri).download_asset(
-            &repository(),
-            postel_model::AssetId::new(99).expect("asset id"),
-        ),
+        provider(uri).download_asset(&repository(), AssetId::new(99).expect("asset id")),
     )
     .await
     .expect("download opens before the complete body arrives")

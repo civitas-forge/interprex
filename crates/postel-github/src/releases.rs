@@ -13,14 +13,14 @@ use http_body::Frame;
 use http_body_util::StreamBody;
 use octocrab::{FromResponse, OctoBody};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use postel_contracts::{
-    AssetStream, AssetStreamError, AssetUpload, ProviderError, ReleasesDomain, Result,
+use postel::{
+    AssetId, AssetStream, AssetStreamError, AssetUpload, NewRelease, ProviderError, Release,
+    ReleaseAsset, ReleaseId, ReleasesProvider, Repository, Result,
 };
-use postel_model::{AssetId, NewRelease, Release, ReleaseAsset, ReleaseId, Repository};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{GithubProvider, api::external};
+use crate::{GithubProvider, client::external};
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -82,7 +82,7 @@ fn normalize_release(value: GithubRelease) -> Result<Release> {
 }
 
 #[async_trait]
-impl ReleasesDomain for GithubProvider {
+impl ReleasesProvider for GithubProvider {
     async fn release_by_tag(&self, repository: &Repository, tag: &str) -> Result<Release> {
         let response: GithubRelease = self
             .user()?
@@ -92,7 +92,7 @@ impl ReleasesDomain for GithubProvider {
             )
             .await
             .map_err(|error| {
-                crate::api::read_error(
+                crate::client::read_error(
                     "read release by tag",
                     format!("release {tag} in {repository}"),
                     error,

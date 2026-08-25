@@ -10,15 +10,17 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crypto_box::{PublicKey, aead::OsRng};
 use octocrab::Page;
-use postel_contracts::{ProviderError, RepoDomain, Result};
-use postel_model::{Repository, RepositoryFacts, RepositorySettings, RequiredCheck, Ruleset};
+use postel::{
+    ProviderError, Repository, RepositoryFacts, RepositoryProvider, RepositorySettings,
+    RequiredCheck, Result, Ruleset,
+};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     GithubProvider,
-    api::{external, read_error},
+    client::{external, read_error},
 };
 
 #[derive(Deserialize)]
@@ -188,7 +190,7 @@ fn ruleset_body(ruleset: &Ruleset) -> serde_json::Value {
 }
 
 #[async_trait]
-impl RepoDomain for GithubProvider {
+impl RepositoryProvider for GithubProvider {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts> {
         let response: GithubRepository = self
             .user()?
