@@ -1,18 +1,19 @@
-//! Issue and label operations owned by the tracker domain.
+//! Issue and label operations owned by the issues domain.
 //!
 //! GitHub presents pull requests through its issues routes too, but this module
-//! intentionally models only tracker issues and label taxonomy. Pull-request
-//! review facts remain in `pr`, preventing a convenient vendor route from
+//! intentionally models only issues and label taxonomy. Pull-request review
+//! facts remain in `pull_requests`, preventing a convenient vendor route from
 //! moving ownership between contracts.
 
 use async_trait::async_trait;
 use octocrab::Page;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use postel_contracts::{ProviderError, Result, TrackerDomain};
-use postel_model::{Issue, IssueNumber, Label, OpenClosed, Repository};
+use postel::{
+    Issue, IssueNumber, IssuesProvider, Label, OpenClosed, ProviderError, Repository, Result,
+};
 use serde::Deserialize;
 
-use crate::{GithubProvider, api::external};
+use crate::{GithubProvider, client::external};
 
 #[derive(Deserialize)]
 struct GithubIssue {
@@ -69,7 +70,7 @@ fn normalize_issue(value: GithubIssue) -> Result<Issue> {
 }
 
 #[async_trait]
-impl TrackerDomain for GithubProvider {
+impl IssuesProvider for GithubProvider {
     async fn issue(&self, repository: &Repository, number: IssueNumber) -> Result<Issue> {
         let response: GithubIssue = self
             .user()?
@@ -79,7 +80,7 @@ impl TrackerDomain for GithubProvider {
             )
             .await
             .map_err(|error| {
-                crate::api::read_error(
+                crate::client::read_error(
                     "read issue",
                     format!("issue {} in {repository}", number.get()),
                     error,

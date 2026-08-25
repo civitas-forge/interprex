@@ -1,6 +1,6 @@
 [package]
-name = "postel-sys"
-description = "Injectable filesystem and clock access for Postel adapters"
+name = "postel-test"
+description = "Stateful in-memory Postel provider for consumer tests"
 edition.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -8,6 +8,10 @@ publish = false
 
 [dependencies]
 async-trait.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+postel = { path = "../postel" }
+secrecy.workspace = true
 tokio.workspace = true
 
 [lib]

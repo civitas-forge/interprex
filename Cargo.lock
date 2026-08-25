@@ -1346,39 +1346,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "postel-bucket"
+name = "postel"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "postel-bucket"
+version = "0.1.0"
+dependencies = [
  "bytes",
  "futures-util",
  "object_store",
  "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "postel-contracts"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-util",
- "postel-model",
- "secrecy",
- "thiserror",
-]
-
-[[package]]
-name = "postel-fake"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-util",
- "postel-contracts",
- "postel-model",
- "secrecy",
  "tokio",
 ]
 
@@ -1399,9 +1387,7 @@ dependencies = [
  "jsonwebtoken",
  "octocrab",
  "percent-encoding",
- "postel-contracts",
- "postel-model",
- "postel-sys",
+ "postel",
  "secrecy",
  "serde",
  "serde_json",
@@ -1410,20 +1396,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "postel-model"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "postel-sys"
+name = "postel-test"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
+ "futures-util",
+ "postel",
+ "secrecy",
  "tokio",
 ]
 

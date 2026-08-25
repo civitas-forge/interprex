@@ -1,12 +1,22 @@
 Implementation Stack
 
-    What is bought and what is built for the clients here, and the boundary between them. Every touch goes through sys, so a caller and its tests stay oblivious to argv, escaping and output formats.
+    What is bought and what is built for the clients here, and the boundary
+    between them. Github network requests use Octocrab, project configuration
+    reads use Tokio filesystem access, and record operations use `ObjectStore`.
+    Github domain operations return Postel values and structured errors rather
+    than Octocrab types. Bucket record operations use `RecordPath`, `Bytes` and
+    `BucketError`; injected construction accepts an `ObjectStore`.
 
 1. The Github Client
 
-    Octocrab is bought; the client over it is built here, one per system ([./architecture.lex]). Callers call the domain contracts ([./100-platform.lex]) and none of them calls octocrab directly. Which crate holds it is [./210-crates.lex]'s.
+    Octocrab is bought; `postel-github` builds the adapter over it
+    ([./architecture.lex]). Callers use the provider-neutral interfaces
+    ([./100-platform.lex]) and do not call Octocrab directly. `client.rs` owns
+    authenticated client construction, `config.rs` owns typed configuration and
+    pure TOML parsing, and the five domain modules own Github operations. The
+    complete file layout is [./210-crates.lex]'s.
 
-    The wrapper holds what every binary needs and what has to behave
+    The Github client contains what every consumer needs and what must behave
     identically in every consumer. User authentication: `GH_TOKEN` is used
     directly. App authentication: installation tokens are fetched, cached and
     refreshed in-client from the named app's credentials. Repository-secret
@@ -19,7 +29,13 @@ Implementation Stack
     documents are hand-written rather than generated — the operation count is
     small and the schema is enormous.
 
-    Octocrab types what it types: checks, releases and assets, workflow dispatch and runs, labels, secrets transport, app auth. Where it does not type, the wrapper reaches its raw REST escape hatch — repo settings, rulesets, branch protection — and its graphql method, the only route to review threads and their resolution, the draft-ready flip, and reviewer requests by login. gh is a developer convenience, never a runtime dependency.
+    Octocrab supplies typed operations for checks, releases and assets,
+    workflow dispatch and runs, labels, secret transport and app
+    authentication. For repo settings, rulesets and branch protection, the
+    Github domain modules call Octocrab's raw REST methods. They use its GraphQL
+    method for review threads and resolution, marking a draft ready, and
+    reviewer requests by login. `gh` is a developer convenience, never a runtime
+    dependency.
 
     Copilot reviews are requested by bot login through the request mutation — the one path that also re-requests after a push. The copilot auto-review ruleset rule stays off in derived repo state: platform-side automation would land reviews outside the round count.
 

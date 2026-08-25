@@ -7,11 +7,13 @@
 //! pretending to be completed. An omitted workflow name remains absent.
 
 use async_trait::async_trait;
-use postel_contracts::{JobsDomain, ProviderError, Result};
-use postel_model::{DispatchInputs, Repository, RunConclusion, RunId, RunStatus, WorkflowRun};
+use postel::{
+    DispatchInputs, JobsProvider, ProviderError, Repository, Result, RunConclusion, RunId,
+    RunStatus, WorkflowRun,
+};
 use serde::Deserialize;
 
-use crate::{GithubProvider, api::external};
+use crate::{GithubProvider, client::external};
 
 #[derive(Deserialize)]
 struct GithubRun {
@@ -57,7 +59,7 @@ fn normalize_run(value: GithubRun) -> Result<WorkflowRun> {
 }
 
 #[async_trait]
-impl JobsDomain for GithubProvider {
+impl JobsProvider for GithubProvider {
     async fn dispatch(
         &self,
         repository: &Repository,
@@ -86,7 +88,7 @@ impl JobsDomain for GithubProvider {
             )
             .await
             .map_err(|error| {
-                crate::api::read_error(
+                crate::client::read_error(
                     "read workflow run",
                     format!("workflow run {} in {repository}", run_id.get()),
                     error,
@@ -108,7 +110,7 @@ impl JobsDomain for GithubProvider {
 #[cfg(test)]
 mod tests {
     use super::{GithubRun, normalize_run};
-    use postel_model::{RunConclusion, RunStatus};
+    use postel::{RunConclusion, RunStatus};
 
     #[test]
     fn run_fixture_normalizes_status_without_exporting_octocrab_types() {

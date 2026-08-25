@@ -19,9 +19,7 @@ http-body-util.workspace = true
 jsonwebtoken.workspace = true
 octocrab.workspace = true
 percent-encoding.workspace = true
-postel-contracts = { path = "../postel-contracts" }
-postel-model = { path = "../postel-model" }
-postel-sys = { path = "../postel-sys" }
+postel = { path = "../postel" }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

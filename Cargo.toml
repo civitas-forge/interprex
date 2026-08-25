@@ -1,11 +1,9 @@
 [workspace]
 members = [
+    "crates/postel",
     "crates/postel-bucket",
-    "crates/postel-contracts",
-    "crates/postel-fake",
     "crates/postel-github",
-    "crates/postel-model",
-    "crates/postel-sys",
+    "crates/postel-test",
 ]
 resolver = "3"
 

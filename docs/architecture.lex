@@ -43,14 +43,13 @@ Architecture
     obtains a directly supplied value is no fact of postel. Postel opens no
     credential store.
 
-    Github is the default in source. A deployment that selects otherwise
-    sets the domain's selection variable, one per domain — declared by the
-    contracts crate, since a selection is read before any provider exists
-    to declare it. A domain names one provider, and the domains choose
-    independently: moving the tracker to another system costs one new
-    provider — one per domain and system — and leaves the other four where
-    they are, a module rather than a rewrite. Postel implements every
-    domain in each provider it carries.
+    Github is the default in source. A deployment that selects otherwise sets
+    the domain's selection variable, one per domain. The `postel::provider`
+    module declares those values because selection happens before an adapter is
+    constructed. Domains choose independently: selecting another system for
+    tracker requires an implementation of the issues interface for that system
+    and does not change the other four selections. The included Github adapter
+    implements all five interfaces.
 
     Authentication belongs to the provider. The github provider holds the
     configured user token and named app credentials. It uses the user identity
@@ -89,8 +88,8 @@ Architecture
 5. The Tools That Link It
 
     kent:
-        Links the contracts crate and drives the pr domain; every platform
-        read and write in a review passes through it.
+        Links `postel` and a selected adapter, then drives the pr domain; every
+        platform read and write in a review uses that interface.
     edward:
         Links the repo and jobs domains for derived repo state and the ci
         runtime, and supplies their providers at its composition root.

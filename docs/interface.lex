@@ -5,14 +5,15 @@ Interface
 
 1. Linking
 
-    A consumer declares the contracts crate and receives a provider at its
-    own composition root. It constructs that provider from exactly one
-    configuration source ([#3]). The rules that read a contract are tested
-    against a fake one: no network, no third-party account, and nothing left
-    behind in a real repo.
+    A consumer declares `postel` for provider-neutral values and interfaces,
+    then links the adapter it selects at its own composition root. It constructs
+    that provider from exactly one configuration source ([#3]). Consumer rules
+    are tested against `postel-test`'s stateful in-memory provider: no network,
+    no third-party account, and nothing left behind in a real repo.
 
-    Each subsystem states its functions in its own api.rs; the crate list
-    is [./210-crates.lex]'s.
+    `postel` groups values and interfaces in domain modules. Adapter crates use
+    matching domain modules, while named client, configuration and state files
+    own shared implementation. The complete crate list is [./210-crates.lex]'s.
 
 2. The Domain Contracts
 
@@ -51,8 +52,9 @@ Interface
     A provider accepts its configuration in either of two forms. For the file
     form, the consumer supplies the project root and the provider reads
     `.postel.toml` there. For the direct form, the consumer supplies the same
-    typed configuration through the provider's public functions in `api.rs`.
-    The forms do not merge, and both construct the same provider.
+    typed configuration to `from_config`. The Github adapter exposes
+    `from_project` for the file form. The forms do not merge, and both construct
+    the same provider.
 
     Github user authentication in `.postel.toml`:
         [provider.github]
@@ -79,5 +81,6 @@ Interface
 
 4. The Store Client
 
-    The bucket client moves records at paths, and no vendor type crosses
-    it; what a path is allowed to be is [./contracts/records.lex]'s.
+    The bucket client creates, reads and lists records by path, and its public
+    interface contains no vendor type; valid paths are defined in
+    [./contracts/records.lex].

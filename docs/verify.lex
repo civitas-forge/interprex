@@ -9,14 +9,19 @@ Verify
 
     - The repo builds as crates only; no target produces a binary
       ([./210-crates.lex]).
-    - The contracts crate declares the five domain traits — repo, tracker,
-      pr, jobs, releases — and depends on no provider ([./architecture.lex]).
-    - Each provider crate implements all five domains against its one
-      system ([./210-crates.lex]).
-    - Each provider crate owns its typed configuration and reads its own table
-      from `.postel.toml`.
-    - The bucket client is its own crate; there is no secret-store crate.
-    - Every subsystem crate states its functions in api.rs.
+    - The workspace members are `postel`, `postel-github`, `postel-test` and
+      `postel-bucket` ([./210-crates.lex]).
+    - `postel` declares provider-neutral values and five interfaces in
+      `repository`, `issues`, `pull_requests`, `jobs` and `releases`; it depends
+      on no adapter ([./architecture.lex]).
+    - `postel-github` implements all five interfaces with `client`, `config` and
+      matching domain modules ([./210-crates.lex]).
+    - `postel-test` implements all five interfaces with shared in-memory state
+      and matching domain modules.
+    - `postel-bucket` is an independent record-client crate; there is no
+      secret-store crate.
+    - No crate contains a generic `api.rs`; each source file names its
+      responsibility.
     - No crate shells out to gh ([./200-stack.lex]).
 
 2. Configuration
@@ -25,11 +30,14 @@ Verify
       directly or `<project-root>/.postel.toml` ([./interface.lex]).
     - The consumer supplies the project root; no provider discovers it from
       the process working directory.
-    - Each provider exposes file and direct construction in its `api.rs`.
+    - `postel-github` exposes `from_project` and `from_config` from its crate
+      root.
+    - `client.rs` reads `<project-root>/.postel.toml` with Tokio filesystem
+      access; `config.rs` parses its contents without filesystem access.
     - The file and direct forms do not merge and produce the same typed
       provider configuration.
-    - One selection variable per domain, declared by the contracts crate;
-      unset means github.
+    - One selection variable per domain, declared by `postel::provider`; unset
+      means github.
     - Github reads user authentication from `[provider.github].GH_TOKEN`.
     - Github reads named app authentication from
       `[provider.github.apps.<identity>]`: `APP_ID`, `INSTALLATION_ID` and
@@ -46,11 +54,11 @@ Verify
 
 3. Test Tiers
 
-    - Rules that read a contract run against a fake provider: no network, no
-      third-party account, nothing left behind in a real repo
-      ([./interface.lex]).
-    - The fake implements all five domain traits and records observable domain
-      outcomes rather than expectations about consumer implementation.
+    - Rules that use a platform interface run against `postel-test`'s
+      `FakeProvider`: no network, no third-party account, nothing left behind in
+      a real repo ([./interface.lex]).
+    - `FakeProvider` implements all five interfaces and records observable
+      domain outcomes rather than expectations about consumer implementation.
     - Provider tests construct equivalent clients from project and direct
       configuration.
     - Github provider tests prove user operations use `GH_TOKEN`, app-only
@@ -89,7 +97,7 @@ Verify
 
 6. Siblings
 
-    - kent links the contracts crate and drives the pr domain
+    - kent links `postel` and a selected adapter, then drives the pr domain
       ([./architecture.lex]).
     - edward links the repo and jobs domains and supplies their providers.
     - minsky and sam write records through the bucket client.
