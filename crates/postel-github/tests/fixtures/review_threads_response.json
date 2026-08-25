@@ -1,0 +1,47 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [
+            {
+              "id": "PRRT_kwDOSCkZoc6LuYFt",
+              "isResolved": true,
+              "path": "docs/dev/architecture.lex",
+              "line": 188,
+              "originalLine": 181,
+              "comments": {
+                "pageInfo": { "hasNextPage": false, "endCursor": null },
+                "nodes": [
+                  {
+                    "databaseId": 3463003324,
+                    "body": "Keep evidence stable when the dependency changes.",
+                    "createdAt": "2026-06-23T21:19:41Z",
+                    "updatedAt": "2026-06-23T21:19:41Z",
+                    "author": {
+                      "login": "adr-codex-review",
+                      "__typename": "Bot"
+                    },
+                    "pullRequestReview": { "databaseId": 4557176716 }
+                  },
+                  {
+                    "databaseId": 3463036766,
+                    "body": "The cited lines are tied to the pinned dependency revision.",
+                    "createdAt": "2026-06-23T21:26:33Z",
+                    "updatedAt": "2026-06-23T21:26:34Z",
+                    "author": {
+                      "login": "arthur-debert",
+                      "__typename": "User"
+                    },
+                    "pullRequestReview": { "databaseId": 4557215507 }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

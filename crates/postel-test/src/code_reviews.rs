@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use postel::{
     CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
-    ReviewThread, ReviewThreadId,
+    ReviewFindingStatus, ReviewThreadId,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -22,21 +22,6 @@ impl CodeReviewsProvider for FakeProvider {
             .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))
     }
 
-    async fn review_threads(
-        &self,
-        repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<Vec<ReviewThread>> {
-        Ok(self
-            .state
-            .read()
-            .await
-            .threads
-            .get(&(repository.clone(), number))
-            .cloned()
-            .unwrap_or_default())
-    }
-
     async fn resolve_thread(
         &self,
         repository: &Repository,
@@ -44,13 +29,19 @@ impl CodeReviewsProvider for FakeProvider {
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
         let mut state = self.state.write().await;
-        let threads = state
-            .threads
+        let code_review = state
+            .code_reviews
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("review threads for code review {number:?}")))?;
-        if let Some(thread) = threads.iter_mut().find(|thread| &thread.id == thread_id) {
-            thread.resolved = true;
-            return Ok(());
+            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
+        for submission in &mut code_review.submissions {
+            if let Some(finding) = submission
+                .findings
+                .iter_mut()
+                .find(|finding| &finding.thread_id == thread_id)
+            {
+                finding.status = ReviewFindingStatus::Resolved;
+                return Ok(());
+            }
         }
         Err(missing(format!("review thread {}", thread_id.as_str())))
     }

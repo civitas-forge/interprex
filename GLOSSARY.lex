@@ -27,6 +27,21 @@ Glossary
     identity:
         The platform principal under which a provider performs an operation —
         a user or an app installation on github.
+    review submission:
+        One formal assessment by one reviewer of one exact head commit. It has
+        a disposition and may have a summary and any number of findings.
+    finding:
+        The initial inline comment attached to a file location by a review
+        submission, together with its current resolution status and replies.
+    reply:
+        A later comment in a finding's thread. It does not become another
+        finding or change which submission created the finding.
+    reviewer round:
+        The one-based position of a submission among the same reviewer's
+        submissions, ordered by submission time.
+    revision round:
+        The one-based position of a reviewed head commit among the distinct
+        reviewed head commits, ordered by their first submission.
     installation:
         The grant under which an app authenticates on the platform, carrying
         its permissions and its tokens.

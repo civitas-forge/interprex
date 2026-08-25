@@ -1,9 +1,11 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use postel::{
-    AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider,
-    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings,
-    ReviewComment, ReviewThread, ReviewThreadId,
+    AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
+    CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
+    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorKind, ReviewComment,
+    ReviewCommentId, ReviewDisposition, ReviewFinding, ReviewFindingStatus, ReviewLocation,
+    ReviewSubmission, ReviewSubmissionId, ReviewThreadId, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -52,32 +54,71 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
     let provider = FakeProvider::new();
     let repository = Repository::new("faictor", "sandbox").expect("repository");
     let number = CodeReviewNumber::new(3).expect("number");
-    let thread = ReviewThread {
-        id: ReviewThreadId::new("thread-1").expect("thread id"),
-        resolved: false,
-        path: Some("src/lib.rs".to_owned()),
-        line: Some(10),
-        comments: vec![
-            ReviewComment {
-                body: "question".to_owned(),
-                author: "reviewer".to_owned(),
+    let reviewer = ReviewActor {
+        login: "reviewer".to_owned(),
+        kind: ReviewActorKind::Bot,
+    };
+    let author = ReviewActor {
+        login: "author".to_owned(),
+        kind: ReviewActorKind::User,
+    };
+    let revision = CommitRange {
+        base_sha: "base".to_owned(),
+        head_sha: "revision-1".to_owned(),
+    };
+    let code_review = CodeReview {
+        number,
+        title: "Review conversation".to_owned(),
+        state: OpenClosed::Open,
+        draft: false,
+        current_revision: revision.clone(),
+        author: author.clone(),
+        updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
+        submissions: vec![ReviewSubmission {
+            id: ReviewSubmissionId::new("review-1").expect("review id"),
+            reviewer: reviewer.clone(),
+            app: None,
+            revision: ReviewedRevision {
+                head_sha: revision.head_sha.clone(),
             },
-            ReviewComment {
-                body: "answer".to_owned(),
-                author: "author".to_owned(),
-            },
-        ],
+            disposition: ReviewDisposition::ChangesRequested,
+            submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+            summary: Some("One concern".to_owned()),
+            findings: vec![ReviewFinding {
+                thread_id: ReviewThreadId::new("thread-1").expect("thread id"),
+                location: ReviewLocation {
+                    path: "src/lib.rs".to_owned(),
+                    line: Some(12),
+                    original_line: Some(10),
+                },
+                status: ReviewFindingStatus::Open,
+                comment: ReviewComment {
+                    id: ReviewCommentId::new("comment-1").expect("comment id"),
+                    author: reviewer,
+                    body: "question".to_owned(),
+                    created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                    updated_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                },
+                replies: vec![ReviewComment {
+                    id: ReviewCommentId::new("comment-2").expect("comment id"),
+                    author,
+                    body: "answer".to_owned(),
+                    created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                    updated_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                }],
+            }],
+        }],
     };
     provider
-        .seed_review_threads(repository.clone(), number, vec![thread.clone()])
+        .seed_code_review(repository.clone(), code_review.clone())
         .await;
 
     assert_eq!(
         provider
-            .review_threads(&repository, number)
+            .code_review(&repository, number)
             .await
-            .expect("review threads"),
-        [thread]
+            .expect("review"),
+        code_review
     );
     provider
         .resolve_thread(
@@ -89,10 +130,13 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         .expect("resolve thread");
     assert!(
         provider
-            .review_threads(&repository, number)
+            .code_review(&repository, number)
             .await
-            .expect("review threads")[0]
-            .resolved
+            .expect("review")
+            .submissions[0]
+            .findings[0]
+            .status
+            == ReviewFindingStatus::Resolved
     );
 }
 

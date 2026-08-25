@@ -20,8 +20,9 @@ The Development Platform
     tracker:
         Issues and the label taxonomy.
     code review:
-        A proposed change: its facts, reviews, threads, review requests, check
-        results and draft-ready transition.
+        A proposed change: its facts, reviewed revisions, formal review
+        submissions, findings and replies, review requests, check results and
+        draft-ready transition.
     jobs:
         The ci runtime: the generated thin callers, dispatch, runs, runners, caches, and a run's own transport containers — each a named archive of any number of files, carrying its own expiry, holding whatever one job hands the next.
     releases:
@@ -40,7 +41,40 @@ The Development Platform
     an issues api; code review, not pull request. A provider that cannot
     express a required fact refuses ([./architecture.lex]).
 
-2. What The Contracts Do Not Cover
+2. Code Review History
+
+    Reading a code review returns one result containing its current change
+    range and its formal review submissions. A submission records one reviewer,
+    an optional provider app, the exact reviewed head commit, its disposition,
+    submission time, summary and zero or more findings. The current code review
+    result separately carries its base and head commits. Github does not
+    retain the historical base commit on a review submission, so Postel does
+    not fill it with the current base and present an invented historical range.
+
+    Submissions are never combined. Two reviewers on one revision are two
+    submissions, and one reviewer submitting twice on that revision is also two
+    submissions. A submission with no findings remains in the history because
+    the reviewer still reviewed that revision. The reviewer set is derived from
+    those submissions; a requested reviewer has not reviewed until a submission
+    exists. A check result is not a reviewer.
+
+    A finding is the initial inline comment in a review thread. It carries the
+    file path, the current line when its anchor still maps, the original line,
+    and an open or resolved status. Later comments are ordered replies on that
+    finding. A reply by the change author does not make the author a reviewer or
+    move the finding to a later submission.
+
+    Rounds are derived rather than stored. All submissions against the same
+    head commit share a revision round. A reviewer's submissions, ordered by
+    submission time, form that reviewer's rounds. For every round after that
+    reviewer's first, Postel derives the new-code range from the prior reviewed
+    head to the new reviewed head. A pushed revision therefore starts a new
+    revision round when it receives a submission, while a second submission
+    against an unchanged head remains in the existing revision round. Commit
+    identifiers name range endpoints; they do not assert that one endpoint
+    remains an ancestor after a force push.
+
+3. What The Contracts Do Not Cover
 
     Agent acts — opening issues and Github pull requests, assigning labels,
     merges and branch pushes — cross no contract ([./architecture.lex]).

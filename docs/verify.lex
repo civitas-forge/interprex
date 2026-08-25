@@ -65,10 +65,16 @@ Verify
       operations use the named app installation, and neither can substitute
       for the other.
     - Captured Github responses exercise normalization without network access;
-      unknown vendor fields do not enter the model.
+      the code review fixture includes several bots, repeated submissions on
+      one revision, later revisions, findings, replies, resolved and outdated
+      locations, and submissions without findings. Unknown vendor fields do not
+      enter the model.
     - Local transport tests run the real Octocrab adapter against a loopback
       server and assert the method, path, authentication and Postel-owned body
       for every domain.
+    - Code review transport tests prove that pull request facts, formal
+      submissions and review threads become one result, and that the adapter
+      retries when the revision changes while it is assembling that result.
     - One ignored, read-only live test reads repository facts and labels from
       `faictor/postel-sandbox`. It assumes no issue, pull request, label or
       branch state.

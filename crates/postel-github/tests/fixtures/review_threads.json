@@ -2,44 +2,83 @@
   "repository": {
     "pullRequest": {
       "reviewThreads": {
-        "pageInfo": {
-          "hasNextPage": false,
-          "endCursor": null
-        },
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
         "nodes": [
           {
-            "id": "PRRT_kwDOExample",
-            "isResolved": false,
-            "path": "src/lib.rs",
-            "line": 12,
+            "id": "PRRT_kwDOSCkZoc6LuYFt",
+            "isResolved": true,
+            "path": "docs/dev/architecture.lex",
+            "line": 188,
+            "originalLine": 181,
             "comments": {
-              "pageInfo": {
-                "hasNextPage": false,
-                "endCursor": null
-              },
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
-                  "body": "Handle this case",
-                  "author": { "login": "reviewer-bot" }
+                  "databaseId": 3463003324,
+                  "body": "Keep evidence stable when the dependency changes.",
+                  "createdAt": "2026-06-23T21:19:41Z",
+                  "updatedAt": "2026-06-23T21:19:41Z",
+                  "author": {
+                    "login": "adr-codex-review",
+                    "__typename": "Bot"
+                  },
+                  "pullRequestReview": { "databaseId": 4557176716 }
                 },
                 {
-                  "body": "Handled in the latest revision",
-                  "author": { "login": "author" }
+                  "databaseId": 3463036766,
+                  "body": "The cited lines are tied to the pinned dependency revision.",
+                  "createdAt": "2026-06-23T21:26:33Z",
+                  "updatedAt": "2026-06-23T21:26:34Z",
+                  "author": { "login": "arthur-debert", "__typename": "User" },
+                  "pullRequestReview": { "databaseId": 4557215507 }
                 }
               ]
             }
           },
           {
-            "id": "PRRT_kwDOEmpty",
+            "id": "PRRT_kwDOSCkZoc6Copilot",
             "isResolved": false,
-            "path": "src/empty.rs",
-            "line": 7,
+            "path": "docs/design/rendering.md",
+            "line": 42,
+            "originalLine": 42,
             "comments": {
-              "pageInfo": {
-                "hasNextPage": false,
-                "endCursor": null
-              },
-              "nodes": []
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": [
+                {
+                  "databaseId": 3463010000,
+                  "body": "Clarify which execution path owns this behavior.",
+                  "createdAt": "2026-06-23T21:22:43Z",
+                  "updatedAt": "2026-06-23T21:22:43Z",
+                  "author": {
+                    "login": "copilot-pull-request-reviewer",
+                    "__typename": "Bot"
+                  },
+                  "pullRequestReview": { "databaseId": 4557191672 }
+                }
+              ]
+            }
+          },
+          {
+            "id": "PRRT_kwDOSCkZoc6Later",
+            "isResolved": false,
+            "path": "docs/dev/architecture.lex",
+            "line": null,
+            "originalLine": 205,
+            "comments": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": [
+                {
+                  "databaseId": 3463050000,
+                  "body": "This finding belongs to the later reviewed revision.",
+                  "createdAt": "2026-06-23T21:40:00Z",
+                  "updatedAt": "2026-06-23T21:40:00Z",
+                  "author": {
+                    "login": "adr-codex-review",
+                    "__typename": "Bot"
+                  },
+                  "pullRequestReview": { "databaseId": 4557227857 }
+                }
+              ]
             }
           }
         ]

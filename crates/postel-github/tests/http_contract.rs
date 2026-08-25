@@ -434,58 +434,70 @@ async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
 }
 
 #[tokio::test]
-async fn code_review_domain_returns_review_threads_from_every_graphql_page() {
+async fn code_review_domain_reads_one_consistent_review_history() {
     let (uri, requests) = json_responses(vec![
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/pull_request.json"),
     ])
     .await;
-    let threads = provider(uri)
-        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
         .await
-        .expect("review threads");
-    assert_eq!(
-        threads
-            .iter()
-            .map(|thread| thread.id.as_str())
-            .collect::<Vec<_>>(),
-        ["thread-1", "thread-2"]
-    );
-    assert!(requests.await.expect("captured requests")[1].contains("\"cursor\":\"cursor-1\""));
-}
+        .expect("code review");
 
-#[tokio::test]
-async fn code_review_domain_returns_every_comment_and_preserves_empty_threads() {
-    let (uri, requests) = json_responses(vec![
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"conversation","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-cursor-1"}}},{"id":"empty","isResolved":false,"path":"src/empty.rs","line":7,"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
-        r#"{"data":{"node":{"comments":{"nodes":[{"body":"reply","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#,
-    ])
-    .await;
-    let threads = provider(uri)
-        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
-        .await
-        .expect("review threads");
-    assert_eq!(threads.len(), 2);
-    assert_eq!(
-        threads[0]
-            .comments
-            .iter()
-            .map(|comment| comment.body.as_str())
-            .collect::<Vec<_>>(),
-        ["first", "reply"]
+    assert_eq!(review.submissions.len(), 7);
+    assert_eq!(review.submissions[0].findings[0].replies.len(), 1);
+    assert!(
+        review
+            .submissions
+            .last()
+            .expect("last review")
+            .findings
+            .is_empty()
     );
-    assert!(threads[1].comments.is_empty());
     let requests = requests.await.expect("captured requests");
-    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    assert_user_request(&requests[0], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(
+        &requests[1],
+        "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
+    );
+    assert_user_request(&requests[2], "POST /graphql ");
+    assert_user_request(&requests[3], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
         body["query"]
             .as_str()
             .expect("GraphQL document")
-            .contains("ReviewThreadComments")
+            .contains("pullRequestReview { databaseId }")
     );
-    assert_eq!(body["variables"]["threadId"], "conversation");
-    assert_eq!(body["variables"]["cursor"], "comment-cursor-1");
+}
+
+#[tokio::test]
+async fn code_review_domain_retries_when_the_revision_changes_during_the_read() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/pull_request_changed.json"),
+        include_str!("fixtures/pull_request_changed.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/pull_request_changed.json"),
+    ])
+    .await;
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review after retry");
+
+    assert_eq!(
+        review.current_revision.head_sha,
+        "cccccccccccccccccccccccccccccccccccccccc"
+    );
+    assert_eq!(requests.await.expect("captured requests").len(), 8);
 }
 
 #[tokio::test]
