@@ -9,7 +9,12 @@ use crate::{OpenClosed, Repository, Result};
 platform_number!(CodeReviewNumber);
 
 macro_rules! opaque_review_id {
-    ($name:ident, $field:literal) => {
+    ($name:ident, $field:literal, $entity:literal) => {
+        #[doc = concat!("Opaque provider identity for a ", $entity, ".")]
+        ///
+        /// Consumers retain this value only to address the same entity
+        /// through the provider that returned it. Its representation has no
+        /// provider-neutral meaning.
         #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
         #[serde(transparent)]
         pub struct $name(String);
@@ -31,9 +36,13 @@ macro_rules! opaque_review_id {
     };
 }
 
-opaque_review_id!(ReviewSubmissionId, "review submission id");
-opaque_review_id!(ReviewThreadId, "review thread id");
-opaque_review_id!(ReviewCommentId, "review comment id");
+opaque_review_id!(
+    ReviewSubmissionId,
+    "review submission id",
+    "review submission"
+);
+opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
+opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
 
 /// Two commit endpoints whose relationship is meaningful to the caller.
 ///
@@ -196,7 +205,8 @@ impl CodeReview {
     }
 
     /// The one-based code revision number, ordered by first reviewed revision.
-    /// All submissions against the same commit range share this number.
+    /// All submissions against the same reviewed head commit share this
+    /// number.
     #[must_use]
     pub fn revision_round(&self, id: &ReviewSubmissionId) -> Option<usize> {
         let submission = self.submissions.iter().find(|item| &item.id == id)?;
