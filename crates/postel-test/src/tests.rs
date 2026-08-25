@@ -4,9 +4,9 @@ use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
     RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewIdentity, ReviewLine, ReviewLineRange,
-    ReviewLocation, ReviewRequestTarget, ReviewThread, ReviewThreadId, ReviewThreadStatus,
-    ReviewedRevision, SubmittedReview, SubmittedReviewId,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewIdentity, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewThread, ReviewThreadId,
+    ReviewThreadStatus, ReviewedRevision, SubmittedReview, SubmittedReviewId,
 };
 
 use crate::FakeProvider;
@@ -134,10 +134,15 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                 id: ReviewThreadId::new("thread-1").expect("thread id"),
                 location: ReviewLocation::Lines {
                     path: "src/lib.rs".to_owned(),
-                    range: ReviewLineRange {
+                    side: ReviewDiffSide::Right,
+                    original: ReviewLineRange {
                         start: None,
                         end: ReviewLine::new(10).expect("line"),
                     },
+                    current: Some(ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    }),
                 },
                 outdated: false,
                 status: ReviewThreadStatus::Open,
@@ -146,14 +151,14 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                     author: reviewer.clone(),
                     body: "question".to_owned(),
                     created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
-                    updated_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                    updated_at: Some("2026-08-25T09:00:00Z".parse().expect("timestamp")),
                 },
                 replies: vec![ReviewComment {
                     id: ReviewCommentId::new("comment-2").expect("comment id"),
                     author: author.clone(),
                     body: "answer".to_owned(),
                     created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
-                    updated_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                    updated_at: Some("2026-08-25T09:30:00Z".parse().expect("timestamp")),
                 }],
             }],
         }],
@@ -169,14 +174,14 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                 author: author.clone(),
                 body: "Can we clarify this?".to_owned(),
                 created_at: "2026-08-25T09:10:00Z".parse().expect("timestamp"),
-                updated_at: "2026-08-25T09:10:00Z".parse().expect("timestamp"),
+                updated_at: Some("2026-08-25T09:10:00Z".parse().expect("timestamp")),
             },
             replies: vec![ReviewComment {
                 id: ReviewCommentId::new("comment-4").expect("comment id"),
                 author: reviewer,
                 body: "Yes".to_owned(),
                 created_at: "2026-08-25T09:20:00Z".parse().expect("timestamp"),
-                updated_at: "2026-08-25T09:20:00Z".parse().expect("timestamp"),
+                updated_at: Some("2026-08-25T09:20:00Z".parse().expect("timestamp")),
             }],
         }],
         conversation: vec![ReviewComment {
@@ -184,7 +189,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
             author,
             body: "Ready for review".to_owned(),
             created_at: "2026-08-25T08:50:00Z".parse().expect("timestamp"),
-            updated_at: "2026-08-25T08:50:00Z".parse().expect("timestamp"),
+            updated_at: Some("2026-08-25T08:50:00Z".parse().expect("timestamp")),
         }],
         outstanding_requests: Vec::new(),
     };

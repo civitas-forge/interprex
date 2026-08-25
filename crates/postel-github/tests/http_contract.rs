@@ -112,7 +112,11 @@ async fn rest_pages(
     (base_uri, receiver)
 }
 
-async fn json_responses(bodies: Vec<&'static str>) -> (String, oneshot::Receiver<Vec<String>>) {
+async fn json_responses<T>(bodies: Vec<T>) -> (String, oneshot::Receiver<Vec<String>>)
+where
+    T: Into<String> + Send + 'static,
+{
+    let bodies = bodies.into_iter().map(Into::into).collect::<Vec<String>>();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test server");
@@ -511,6 +515,41 @@ async fn code_review_domain_reads_one_complete_observation() {
             .expect("GraphQL document")
             .contains("organization { login }")
     );
+}
+
+#[tokio::test]
+async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
+    let mut lagging_reviews: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/code_review_reviews.json"))
+            .expect("review fixture");
+    lagging_reviews.remove(0);
+    let lagging_reviews = serde_json::to_string(&lagging_reviews).expect("review response");
+
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        lagging_reviews,
+        include_str!("fixtures/review_threads_response.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        include_str!("fixtures/review_threads_response.json").to_owned(),
+        include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/conversation_comments.json").to_owned(),
+    ])
+    .await;
+
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review");
+
+    assert_eq!(review.reviews.len(), 9);
+    assert_eq!(review.reviews[0].findings.len(), 1);
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 7);
+    assert_user_request(
+        &requests[3],
+        "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
+    );
+    assert_user_request(&requests[4], "POST /graphql ");
 }
 
 #[tokio::test]

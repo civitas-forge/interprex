@@ -104,8 +104,9 @@ pub enum ReviewTarget {
 impl ReviewTarget {
     /// Returns the provider address that can request this observed target.
     ///
-    /// Deleted identities, placeholders, organizations and enterprise teams
-    /// can remain visible even though the provider cannot request them again.
+    /// Deleted identities, placeholders, organization actors and enterprise
+    /// teams can remain visible even though the provider cannot request them
+    /// again.
     #[must_use]
     pub fn request_target(&self) -> Option<ReviewRequestTarget> {
         match self {
@@ -187,13 +188,21 @@ pub struct ReviewComment {
     pub author: ReviewActor,
     pub body: String,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    /// The last known edit time, when the provider supplies one.
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewLineRange {
     pub start: Option<ReviewLine>,
     pub end: ReviewLine,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDiffSide {
+    Left,
+    Right,
 }
 
 /// The stable source anchor of an inline review thread.
@@ -207,7 +216,9 @@ pub enum ReviewLocation {
     },
     Lines {
         path: String,
-        range: ReviewLineRange,
+        side: ReviewDiffSide,
+        original: ReviewLineRange,
+        current: Option<ReviewLineRange>,
     },
 }
 
@@ -227,7 +238,7 @@ pub struct ReviewThread {
     pub replies: Vec<ReviewComment>,
 }
 
-/// One formal review submitted by one reviewer against one code revision.
+/// One formal review submitted by a reviewer other than the change author.
 ///
 /// Multiple reviews by the same platform identity remain independent,
 /// including reviews against the same revision and reviews without findings.
@@ -260,7 +271,8 @@ pub struct CodeReview {
     pub reviews: Vec<SubmittedReview>,
     /// Inline conversations that did not originate in a submitted review.
     pub discussions: Vec<ReviewThread>,
-    /// General, non-inline conversation in chronological order.
+    /// General, non-inline conversation in chronological order, including
+    /// non-inline text GitHub stores on an implicit author review record.
     pub conversation: Vec<ReviewComment>,
     /// The currently outstanding reviewer requests.
     pub outstanding_requests: Vec<ReviewRequest>,
@@ -338,7 +350,7 @@ mod tests {
             author,
             body: "comment".to_owned(),
             created_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
-            updated_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
+            updated_at: Some(Utc.timestamp_opt(1, 0).single().expect("timestamp")),
         }
     }
 
@@ -347,10 +359,15 @@ mod tests {
             id: ReviewThreadId::new(id).expect("thread id"),
             location: ReviewLocation::Lines {
                 path: "src/lib.rs".to_owned(),
-                range: ReviewLineRange {
+                side: ReviewDiffSide::Right,
+                original: ReviewLineRange {
                     start: None,
                     end: ReviewLine::new(10).expect("line"),
                 },
+                current: Some(ReviewLineRange {
+                    start: None,
+                    end: ReviewLine::new(10).expect("line"),
+                }),
             },
             outdated: false,
             status: ReviewThreadStatus::Open,

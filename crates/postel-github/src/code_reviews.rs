@@ -14,8 +14,8 @@ use octocrab::Page;
 use postel::{
     CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
     OpenClosed, ProviderError, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewApp, ReviewAppId, ReviewComment, ReviewCommentId, ReviewDisposition, ReviewIdentity,
-    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequest, ReviewRequestId,
+    ReviewApp, ReviewAppId, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
+    ReviewIdentity, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequest, ReviewRequestId,
     ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
     ReviewThreadId, ReviewThreadStatus, ReviewedRevision, SubmittedReview, SubmittedReviewId,
 };
@@ -30,8 +30,8 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: Str
     pullRequest(number: $number) {
       reviewThreads(first: 100, after: $cursor) {
         nodes {
-          id isResolved isOutdated path subjectType
-          originalLine originalStartLine
+          id isResolved isOutdated path subjectType diffSide
+          line startLine originalLine originalStartLine
           comments(first: 100) {
             nodes {
               id body createdAt updatedAt
@@ -228,6 +228,11 @@ struct ThreadNode {
     path: String,
     #[serde(rename = "subjectType")]
     subject_type: ThreadSubjectType,
+    #[serde(rename = "diffSide")]
+    diff_side: Option<GithubDiffSide>,
+    line: Option<u64>,
+    #[serde(rename = "startLine")]
+    start_line: Option<u64>,
     #[serde(rename = "originalLine")]
     original_line: Option<u64>,
     #[serde(rename = "originalStartLine")]
@@ -240,6 +245,13 @@ struct ThreadNode {
 enum ThreadSubjectType {
     File,
     Line,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GithubDiffSide {
+    Left,
+    Right,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -430,6 +442,13 @@ fn normalize_line(value: u64, operation: &'static str) -> Result<ReviewLine> {
     })
 }
 
+fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
+    match value {
+        GithubDiffSide::Left => ReviewDiffSide::Left,
+        GithubDiffSide::Right => ReviewDiffSide::Right,
+    }
+}
+
 fn normalize_line_range(
     end: Option<u64>,
     start: Option<u64>,
@@ -459,7 +478,12 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
             path: thread.path.clone(),
         }),
         ThreadSubjectType::Line => {
-            let range = normalize_line_range(
+            let side = thread.diff_side.ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread location",
+                message: format!("line thread {} has no diff side", thread.id),
+            })?;
+            let original = normalize_line_range(
                 thread.original_line,
                 thread.original_start_line,
                 "normalize review thread location",
@@ -471,7 +495,13 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
             })?;
             Ok(ReviewLocation::Lines {
                 path: thread.path.clone(),
-                range,
+                side: normalize_diff_side(side),
+                original,
+                current: normalize_line_range(
+                    thread.line,
+                    thread.start_line,
+                    "normalize review thread location",
+                )?,
             })
         }
     }
@@ -491,7 +521,7 @@ fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
         },
         body: value.body,
         created_at: value.created_at,
-        updated_at: value.updated_at,
+        updated_at: Some(value.updated_at),
     })
 }
 
@@ -509,7 +539,7 @@ fn normalize_conversation_comment(value: GithubConversationComment) -> Result<Re
         },
         body: value.body,
         created_at: value.created_at,
-        updated_at: value.updated_at,
+        updated_at: Some(value.updated_at),
     })
 }
 
@@ -582,6 +612,7 @@ fn normalize_code_review(
     let mut review_positions = BTreeMap::new();
     let mut excluded_review_ids = BTreeSet::new();
     let mut submitted_reviews = Vec::new();
+    let mut author_review_comments = Vec::new();
 
     reviews.sort_by(|left, right| {
         left.submitted_at
@@ -597,15 +628,30 @@ fn normalize_code_review(
             Some(user) => actor(user.node_id, user.login, &user.kind)?,
             None => ghost_actor(format!("unavailable-reviewer:{}", review.node_id))?,
         };
-        if reviewer.id == author.id {
-            excluded_review_ids.insert(review.node_id);
-            continue;
-        }
         let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
             provider: "github",
             operation: "normalize submitted review",
             message: format!("submitted review {} has no submission time", review.node_id),
         })?;
+        if reviewer.id == author.id {
+            excluded_review_ids.insert(review.node_id.clone());
+            if !review.body.trim().is_empty() {
+                author_review_comments.push(ReviewComment {
+                    id: ReviewCommentId::new(review.node_id).map_err(|error| {
+                        ProviderError::External {
+                            provider: "github",
+                            operation: "normalize author review text",
+                            message: error.to_string(),
+                        }
+                    })?,
+                    author: reviewer,
+                    body: review.body,
+                    created_at: submitted_at,
+                    updated_at: None,
+                });
+            }
+            continue;
+        }
         let id = SubmittedReviewId::new(review.node_id.clone()).map_err(|error| {
             ProviderError::External {
                 provider: "github",
@@ -664,7 +710,7 @@ fn normalize_code_review(
                         provider: "github",
                         operation: "normalize review thread",
                         message: format!(
-                            "review thread {} references missing submission {}",
+                            "review thread {} references missing submitted review {}",
                             thread.id, review.id
                         ),
                     });
@@ -705,10 +751,16 @@ fn normalize_code_review(
             .cmp(&right.created_at)
             .then_with(|| left.node_id.cmp(&right.node_id))
     });
-    let conversation = conversation
+    let mut conversation = conversation
         .into_iter()
         .map(normalize_conversation_comment)
         .collect::<Result<Vec<_>>>()?;
+    conversation.extend(author_review_comments);
+    conversation.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 
     Ok(CodeReview {
         number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
@@ -733,6 +785,21 @@ fn normalize_code_review(
         discussions,
         conversation,
         outstanding_requests,
+    })
+}
+
+fn thread_references_missing_review(reviews: &[GithubReview], threads: &[ThreadNode]) -> bool {
+    let review_ids = reviews
+        .iter()
+        .map(|review| review.node_id.as_str())
+        .collect::<BTreeSet<_>>();
+    threads.iter().any(|thread| {
+        thread
+            .comments
+            .nodes
+            .first()
+            .and_then(|comment| comment.pull_request_review.as_ref())
+            .is_some_and(|review| !review_ids.contains(review.id.as_str()))
     })
 }
 
@@ -915,8 +982,12 @@ impl CodeReviewsProvider for GithubProvider {
         number: CodeReviewNumber,
     ) -> Result<CodeReview> {
         let code_review = self.github_code_review(repository, number).await?;
-        let reviews = self.github_reviews(repository, number).await?;
-        let threads = self.github_review_threads(repository, number).await?;
+        let mut reviews = self.github_reviews(repository, number).await?;
+        let mut threads = self.github_review_threads(repository, number).await?;
+        if thread_references_missing_review(&reviews, &threads) {
+            reviews = self.github_reviews(repository, number).await?;
+            threads = self.github_review_threads(repository, number).await?;
+        }
         let requests = self.github_review_requests(repository, number).await?;
         let conversation = self.github_conversation(repository, number).await?;
         normalize_code_review(code_review, reviews, threads, requests, conversation)
@@ -1039,9 +1110,10 @@ mod tests {
         let code_review: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
                 .expect("code review fixture");
-        let reviews: Vec<GithubReview> =
+        let mut reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
+        reviews[4].body = "Author context for reviewers".to_owned();
         let threads: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("thread fixture");
@@ -1069,10 +1141,15 @@ mod tests {
             finding.location,
             ReviewLocation::Lines {
                 path: "docs/dev/architecture.lex".to_owned(),
-                range: postel::ReviewLineRange {
+                side: postel::ReviewDiffSide::Right,
+                original: postel::ReviewLineRange {
                     start: Some(postel::ReviewLine::new(177).expect("line")),
                     end: postel::ReviewLine::new(181).expect("line"),
                 },
+                current: Some(postel::ReviewLineRange {
+                    start: Some(postel::ReviewLine::new(184).expect("line")),
+                    end: postel::ReviewLine::new(188).expect("line"),
+                }),
             }
         );
         assert!(finding.comment.id.as_str().starts_with("PRRC_"));
@@ -1150,8 +1227,20 @@ mod tests {
             review.outstanding_requests[5].target,
             ReviewTarget::Unavailable
         );
-        assert_eq!(review.conversation.len(), 1);
-        assert_eq!(review.conversation[0].author.login, "arthur-debert");
+        assert_eq!(review.conversation.len(), 2);
+        let author_text = review
+            .conversation
+            .iter()
+            .find(|comment| comment.body == "Author context for reviewers")
+            .expect("author review text is preserved as conversation");
+        assert_eq!(author_text.author.login, "arthur-debert");
+        assert_eq!(author_text.updated_at, None);
+        assert!(
+            review
+                .conversation
+                .iter()
+                .any(|comment| comment.updated_at.is_some())
+        );
     }
 
     #[test]

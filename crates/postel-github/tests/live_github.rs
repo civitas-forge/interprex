@@ -154,6 +154,12 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         review
             .reviews
             .iter()
+            .all(|submitted| submitted.reviewer.actor.id != review.author.id)
+    );
+    assert!(
+        review
+            .reviews
+            .iter()
             .all(|submitted| !submitted.revision.head_sha.is_empty())
     );
     for thread in review
@@ -166,9 +172,15 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         assert!(!thread.comment.id.as_str().is_empty());
         match &thread.location {
             ReviewLocation::File { path } => assert!(!path.is_empty()),
-            ReviewLocation::Lines { path, range } => {
+            ReviewLocation::Lines {
+                path,
+                original,
+                current,
+                ..
+            } => {
                 assert!(!path.is_empty());
-                assert!(range.end.get() > 0);
+                assert!(original.end.get() > 0);
+                assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
             }
         }
     }

@@ -32,9 +32,10 @@ Glossary
         reviews, inline discussions, general conversation and outstanding
         review requests. On Github this is a pull request.
     submitted review:
-        One formal assessment by one platform actor of one exact head commit.
-        It has a disposition and may have a summary and any number of findings.
-        An optional app records how that actor submitted it.
+        One formal assessment by a reviewing platform actor other than the
+        change author of one exact head commit. It has a disposition and may
+        have a summary and any number of findings. An optional app records how
+        that actor submitted it.
     review thread:
         One inline conversation attached to a file location. Its initial
         comment, ordered replies, current resolution status and whether later
@@ -47,7 +48,8 @@ Glossary
         reply by a reviewer does not turn it into a finding.
     conversation comment:
         One general comment on the proposed change, not attached to a source
-        location and not itself a submitted review.
+        location and not itself a submitted review. This includes non-inline
+        author text that Github stores on an implicit review record.
     reply:
         A later comment in any review thread. It does not become another
         finding or change the thread's origin.

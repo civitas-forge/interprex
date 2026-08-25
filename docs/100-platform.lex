@@ -52,11 +52,12 @@ The Development Platform
     result does not claim that every value was captured at one instant.
 
     The proposed change carries its current base and head commits. Each
-    submitted review records one platform actor, an optional provider app, the
-    exact reviewed head commit, its disposition, submission time and optional
-    summary. Github does not retain the historical base commit for a submitted
-    review, so Postel does not pair its reviewed head with the current base and
-    present an invented historical range.
+    submitted review records one reviewing platform actor other than the change
+    author, an optional provider app, the exact reviewed head commit, its
+    disposition, submission time and optional summary. Github does not retain
+    the historical base commit for a submitted review, so Postel does not pair
+    its reviewed head with the current base and present an invented historical
+    range.
 
     Submitted reviews are never combined. Two actors reviewing one revision are
     two reviews, and one actor submitting twice on that revision is also two
@@ -69,11 +70,11 @@ The Development Platform
 
     A finding is structurally part of the submitted review that created it. It
     is an inline thread with a stable file or line-range location, an open or
-    resolved status, an initial comment and ordered replies. The line range is
-    the location at which the conversation began; the thread's outdated flag
-    says later changes no longer map that location onto the current revision.
-    Replies do not create a
-    new submitted review or move the finding to another review.
+    resolved status, an initial comment and ordered replies. A line location
+    retains its diff side and original range, plus the current mapped range when
+    Github supplies one. The thread's outdated flag is independent of whether
+    that current mapping is present. Replies do not create a new submitted
+    review or move the finding to another review.
 
     An inline thread that did not originate in a submitted review remains as an
     independent discussion. This includes a thread begun by the change author
@@ -82,7 +83,9 @@ The Development Platform
     response that names a thread but supplies no initial comment is incomplete,
     so the read refuses instead of silently deleting that thread. General
     conversation comments remain separate because they have no source location
-    and are not submitted reviews.
+    and are not submitted reviews. Non-inline text Github stores on an implicit
+    review by the change author is preserved in that conversation; its update
+    time is absent because Github supplies only the submission time.
 
     Outstanding requests name users, bots and teams and say whether Github
     requested them as code owners. A request remains visible with an unavailable
