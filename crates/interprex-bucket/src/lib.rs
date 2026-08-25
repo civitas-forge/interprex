@@ -1,4 +1,4 @@
-//! Create-only record storage over an injected object-store adapter.
+//! Create-only record storage over an injected `ObjectStore`.
 //!
 //! One path names one immutable object: creation never overwrites, listing is
 //! prefix-only, and the public interface contains no vendor type. Retention is

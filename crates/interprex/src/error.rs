@@ -30,8 +30,8 @@ pub(crate) fn segment(
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ProviderError {
-    #[error("{provider} cannot express required fact: {fact}")]
-    Refused {
+    #[error("unrepresentable {provider} data: {fact}")]
+    Unrepresentable {
         provider: &'static str,
         fact: String,
     },

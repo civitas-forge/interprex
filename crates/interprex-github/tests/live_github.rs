@@ -15,7 +15,7 @@ use std::{
 
 use fs2::FileExt;
 use interprex::{
-    CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
+    ChangeRequestNumber, CodeHostingProvider, CodeReviewsProvider, IssuesProvider, Repository,
     ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadStatus,
 };
 use interprex_github::{GithubConfig, from_config};
@@ -125,47 +125,54 @@ async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
 
 #[tokio::test]
 #[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
-async fn configured_code_review_observation_matches_current_provider_data() {
+async fn configured_change_request_observation_matches_current_provider_data() {
     let (provider, repository) = live_provider();
     let number = std::env::var("INTERPREX_E2E_CODE_REVIEW_NUMBER")
-        .expect("INTERPREX_E2E_CODE_REVIEW_NUMBER must name an existing code review")
+        .expect("INTERPREX_E2E_CODE_REVIEW_NUMBER must name an existing change request")
         .parse()
         .expect("INTERPREX_E2E_CODE_REVIEW_NUMBER must be a positive integer");
-    let number = CodeReviewNumber::new(number).expect("positive code review number");
+    let number = ChangeRequestNumber::new(number).expect("positive change request number");
 
     let _throttle = GlobalThrottle::acquire();
-    let review = provider
-        .code_review(&repository, number)
+    let change_request = provider
+        .change_request(&repository, number)
         .await
-        .expect("read configured code review");
+        .expect("read configured change request");
 
-    assert_eq!(review.number, number);
-    assert!(!review.change.base_sha.is_empty());
-    assert!(!review.change.head_sha.is_empty());
-    assert!(!review.reviews.is_empty());
-    assert!(!review.author.id.as_str().is_empty());
-    assert!(
-        review
-            .reviews
-            .iter()
-            .all(|item| !item.author.actor(&review.author).id.as_str().is_empty())
-    );
-    assert!(review.reviews.iter().all(|item| match &item.author {
-        ReviewAuthor::ChangeAuthor => true,
-        ReviewAuthor::Other(actor) => actor.id != review.author.id,
-        ReviewAuthor::Unknown(_) => true,
+    assert_eq!(change_request.number, number);
+    assert!(!change_request.commits.base_sha.is_empty());
+    assert!(!change_request.commits.head_sha.is_empty());
+    assert!(!change_request.reviews.is_empty());
+    assert!(!change_request.author.id.as_str().is_empty());
+    assert!(change_request.reviews.iter().all(|item| {
+        !item
+            .author
+            .actor(&change_request.author)
+            .id
+            .as_str()
+            .is_empty()
     }));
     assert!(
-        review
+        change_request
+            .reviews
+            .iter()
+            .all(|item| match &item.author {
+                ReviewAuthor::ChangeAuthor => true,
+                ReviewAuthor::Other(actor) => actor.id != change_request.author.id,
+                ReviewAuthor::Unknown(_) => true,
+            })
+    );
+    assert!(
+        change_request
             .reviews
             .iter()
             .all(|submitted| !submitted.revision.head_sha.is_empty())
     );
-    for thread in review
+    for thread in change_request
         .reviews
         .iter()
         .flat_map(|submitted| submitted.findings.iter())
-        .chain(review.discussions.iter())
+        .chain(change_request.standalone_threads.iter())
     {
         assert!(!thread.id.as_str().is_empty());
         assert!(!thread.comment.id.as_str().is_empty());
@@ -180,11 +187,11 @@ async fn configured_code_review_observation_matches_current_provider_data() {
             }
         }
     }
-    for comment in &review.conversation {
+    for comment in &change_request.unanchored_comments {
         assert!(!comment.id.as_str().is_empty());
         assert!(!comment.author.id.as_str().is_empty());
     }
-    for request in &review.outstanding_requests {
+    for request in &change_request.outstanding_requests {
         assert!(!request.id.as_str().is_empty());
         match &request.target {
             ReviewTarget::Actor(actor) => assert!(!actor.login.is_empty()),
@@ -196,31 +203,31 @@ async fn configured_code_review_observation_matches_current_provider_data() {
             ReviewTarget::Unavailable => {}
         }
     }
-    let author_review_count = review
+    let author_review_count = change_request
         .reviews
         .iter()
         .filter(|item| item.author.relationship() == interprex::ReviewRelationship::ChangeAuthor)
         .count();
-    let other_review_count = review
+    let other_review_count = change_request
         .reviews
         .iter()
         .filter(|item| item.author.relationship() == interprex::ReviewRelationship::Other)
         .count();
-    let unknown_review_count = review
+    let unknown_review_count = change_request
         .reviews
         .iter()
         .filter(|item| item.author.relationship() == interprex::ReviewRelationship::Unknown)
         .count();
-    let draft_review_count = review
+    let draft_review_count = change_request
         .reviews
         .iter()
         .filter(|item| item.state == interprex::ReviewState::Draft)
         .count();
-    let findings = review
+    let findings = change_request
         .reviews
         .iter()
         .flat_map(|item| item.findings.iter())
-        .chain(review.discussions.iter())
+        .chain(change_request.standalone_threads.iter())
         .collect::<Vec<_>>();
     let open_finding_count = findings
         .iter()
@@ -232,9 +239,9 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         .count();
     assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} discussions, {} conversation comments, {} outstanding requests",
+        "change request {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} stand-alone threads, {} unanchored comments, {} outstanding requests",
         number.get(),
-        review.reviews.len(),
+        change_request.reviews.len(),
         author_review_count,
         other_review_count,
         unknown_review_count,
@@ -242,8 +249,8 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         findings.len(),
         open_finding_count,
         resolved_finding_count,
-        review.discussions.len(),
-        review.conversation.len(),
-        review.outstanding_requests.len()
+        change_request.standalone_threads.len(),
+        change_request.unanchored_comments.len(),
+        change_request.outstanding_requests.len()
     );
 }

@@ -46,7 +46,7 @@ impl From<GithubLabel> for Label {
 
 fn normalize_issue(value: GithubIssue) -> Result<Issue> {
     if value.pull_request.is_some() {
-        return Err(ProviderError::Refused {
+        return Err(ProviderError::Unrepresentable {
             provider: "github",
             fact: "an issue-domain read addressed a pull request".to_owned(),
         });

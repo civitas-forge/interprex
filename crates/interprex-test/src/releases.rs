@@ -64,7 +64,7 @@ impl ReleasesProvider for FakeProvider {
             length.checked_add(chunk.len() as u64)
         });
         if actual_length != Some(content_length) {
-            return Err(ProviderError::Refused {
+            return Err(ProviderError::Unrepresentable {
                 provider: "fake",
                 fact: format!(
                     "asset upload declared {content_length} bytes but yielded {}",

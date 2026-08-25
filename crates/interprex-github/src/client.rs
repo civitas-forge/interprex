@@ -37,12 +37,12 @@ impl GithubProvider {
             })
     }
 
-    pub(crate) fn app(&self, identity: &str) -> Result<&Octocrab> {
+    pub(crate) fn app(&self, name: &str) -> Result<&Octocrab> {
         self.apps
-            .get(identity)
+            .get(name)
             .map(AsRef::as_ref)
             .ok_or_else(|| ProviderError::MissingCredential {
-                identity: identity.to_owned(),
+                identity: name.to_owned(),
                 kind: "named app",
             })
     }
@@ -79,11 +79,11 @@ fn from_config_with_source(
         .map(Arc::new);
 
     let mut apps = BTreeMap::new();
-    for (identity, credentials) in &config.apps {
+    for (name, credentials) in &config.apps {
         let key = EncodingKey::from_rsa_pem(credentials.private_key.expose_secret().as_bytes())
             .map_err(|_| ProviderError::Configuration {
                 origin: source.clone(),
-                reason: format!("invalid RSA private key for app identity {identity}"),
+                reason: format!("invalid RSA private key for app {name}"),
             })?;
         let client = configured_builder(&config)?
             .app(credentials.app_id.into(), key)
@@ -91,7 +91,7 @@ fn from_config_with_source(
             .map_err(|error| external("construct app client", error))?
             .installation(credentials.installation_id.into())
             .map_err(|error| external("scope app installation", error))?;
-        apps.insert(identity.clone(), Arc::new(client));
+        apps.insert(name.clone(), Arc::new(client));
     }
     Ok(GithubProvider {
         user,

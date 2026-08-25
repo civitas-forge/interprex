@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, time::Duration};
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
+    AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, CodeHostingProvider,
     CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
     ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
@@ -363,7 +363,7 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
     provider(uri)
         .request_reviewers(
             &repository(),
-            CodeReviewNumber::new(5).expect("number"),
+            ChangeRequestNumber::new(5).expect("number"),
             &[
                 ReviewRequestTarget::User("alice".to_owned()),
                 ReviewRequestTarget::Bot("copilot-pull-request-reviewer".to_owned()),
@@ -412,7 +412,7 @@ async fn code_review_domain_resolves_the_review_handle_before_marking_ready() {
     ])
     .await;
     provider(uri)
-        .mark_ready(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .mark_ready(&repository(), ChangeRequestNumber::new(5).expect("number"))
         .await
         .expect("mark ready");
     let requests = requests.await.expect("captured requests");
@@ -437,7 +437,7 @@ async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
     provider(uri)
         .resolve_thread(
             &repository(),
-            CodeReviewNumber::new(5).expect("number"),
+            ChangeRequestNumber::new(5).expect("number"),
             &ReviewThreadId::new("PRRT_kwDOExample").expect("thread id"),
         )
         .await
@@ -456,17 +456,17 @@ async fn code_review_domain_reads_one_complete_observation() {
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/review_requests_response.json"),
-        include_str!("fixtures/conversation_comments.json"),
+        include_str!("fixtures/unanchored_comments.json"),
     ])
     .await;
-    let review = provider(uri)
-        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+    let change_request = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
         .await
-        .expect("code review");
+        .expect("change request");
 
-    assert_eq!(review.reviews.len(), 11);
+    assert_eq!(change_request.reviews.len(), 11);
     assert_eq!(
-        review
+        change_request
             .reviews
             .iter()
             .filter(|item| item.state == interprex::ReviewState::Draft)
@@ -474,7 +474,7 @@ async fn code_review_domain_reads_one_complete_observation() {
         1
     );
     assert_eq!(
-        review
+        change_request
             .reviews
             .iter()
             .filter(|item| {
@@ -484,24 +484,24 @@ async fn code_review_domain_reads_one_complete_observation() {
         1
     );
     assert_eq!(
-        review
+        change_request
             .reviews
             .iter()
             .filter(|item| item.author.relationship() == interprex::ReviewRelationship::Unknown)
             .count(),
         2
     );
-    assert_eq!(review.reviews[0].findings[0].replies.len(), 1);
+    assert_eq!(change_request.reviews[0].findings[0].replies.len(), 1);
     assert!(
-        review
+        change_request
             .reviews
             .last()
             .expect("last review")
             .findings
             .is_empty()
     );
-    assert_eq!(review.outstanding_requests.len(), 2);
-    assert_eq!(review.conversation.len(), 1);
+    assert_eq!(change_request.outstanding_requests.len(), 2);
+    assert_eq!(change_request.unanchored_comments.len(), 1);
     let requests = requests.await.expect("captured requests");
     assert_user_request(
         &requests[0],
@@ -554,7 +554,7 @@ async fn code_review_domain_reads_one_complete_observation() {
 }
 
 #[tokio::test]
-async fn code_review_domain_preserves_an_independent_discussion() {
+async fn code_review_domain_preserves_a_standalone_thread() {
     let mut threads: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/review_threads_response.json"))
             .expect("thread fixture");
@@ -566,18 +566,26 @@ async fn code_review_domain_preserves_an_independent_discussion() {
         include_str!("fixtures/code_review_reviews.json").to_owned(),
         threads,
         include_str!("fixtures/review_requests_response.json").to_owned(),
-        include_str!("fixtures/conversation_comments.json").to_owned(),
+        include_str!("fixtures/unanchored_comments.json").to_owned(),
     ])
     .await;
 
-    let review = provider(uri)
-        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+    let change_request = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
         .await
-        .expect("code review");
+        .expect("change request");
 
-    assert_eq!(review.discussions.len(), 1);
-    assert_eq!(review.discussions[0].id.as_str(), "PRRT_kwDOSCkZoc6LuYFt");
-    assert!(review.reviews.iter().all(|item| item.findings.is_empty()));
+    assert_eq!(change_request.standalone_threads.len(), 1);
+    assert_eq!(
+        change_request.standalone_threads[0].id.as_str(),
+        "PRRT_kwDOSCkZoc6LuYFt"
+    );
+    assert!(
+        change_request
+            .reviews
+            .iter()
+            .all(|item| item.findings.is_empty())
+    );
 }
 
 #[tokio::test]
@@ -595,17 +603,17 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
         include_str!("fixtures/code_review_reviews.json").to_owned(),
         include_str!("fixtures/review_threads_response.json").to_owned(),
         include_str!("fixtures/review_requests_response.json").to_owned(),
-        include_str!("fixtures/conversation_comments.json").to_owned(),
+        include_str!("fixtures/unanchored_comments.json").to_owned(),
     ])
     .await;
 
-    let review = provider(uri)
-        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+    let change_request = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
         .await
-        .expect("code review");
+        .expect("change request");
 
-    assert_eq!(review.reviews.len(), 11);
-    assert_eq!(review.reviews[0].findings.len(), 1);
+    assert_eq!(change_request.reviews.len(), 11);
+    assert_eq!(change_request.reviews[0].findings.len(), 1);
     let requests = requests.await.expect("captured requests");
     assert_eq!(requests.len(), 7);
     assert_user_request(
