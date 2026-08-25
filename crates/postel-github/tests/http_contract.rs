@@ -544,6 +544,33 @@ async fn code_review_domain_reads_one_complete_observation() {
 }
 
 #[tokio::test]
+async fn code_review_domain_preserves_an_independent_discussion() {
+    let mut threads: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/review_threads_response.json"))
+            .expect("thread fixture");
+    threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"]
+        [0]["pullRequestReview"] = serde_json::Value::Null;
+    let threads = serde_json::to_string(&threads).expect("thread response");
+    let (uri, _) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        threads,
+        include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/conversation_comments.json").to_owned(),
+    ])
+    .await;
+
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review");
+
+    assert_eq!(review.discussions.len(), 1);
+    assert_eq!(review.discussions[0].id.as_str(), "PRRT_kwDOSCkZoc6LuYFt");
+    assert!(review.reviews.iter().all(|item| item.findings.is_empty()));
+}
+
+#[tokio::test]
 async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
     let mut lagging_reviews: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/code_review_reviews.json"))
