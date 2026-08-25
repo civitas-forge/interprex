@@ -1508,7 +1508,7 @@ mod tests {
             streaming_user: None,
             apps: BTreeMap::from([("automation".to_owned(), Arc::new(client))]),
         };
-        let repository = Repository::new("civitas-forge", "postel-sandbox").expect("repository");
+        let repository = Repository::new("civitas-forge", "interprex-sandbox").expect("repository");
         provider
             .publish_check(
                 &repository,
@@ -1523,7 +1523,7 @@ mod tests {
             .await
             .expect("publish check");
         let request = receiver.await.expect("captured request");
-        assert!(request.starts_with("POST /repos/civitas-forge/postel-sandbox/check-runs "));
+        assert!(request.starts_with("POST /repos/civitas-forge/interprex-sandbox/check-runs "));
         assert!(
             request
                 .to_ascii_lowercase()

@@ -1,4 +1,4 @@
-//! Sparse, opt-in checks against `civitas-forge/postel-sandbox`.
+//! Sparse, opt-in checks against `civitas-forge/interprex-sandbox`.
 //!
 //! The test is read-only so concurrent branches cannot corrupt shared state.
 //! Every request takes a machine-global file lock and observes a minimum delay;
@@ -21,7 +21,7 @@ use interprex::{
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
 
-const DEFAULT_REPOSITORY: &str = "civitas-forge/postel-sandbox";
+const DEFAULT_REPOSITORY: &str = "civitas-forge/interprex-sandbox";
 const DEFAULT_INTERVAL_SECONDS: u64 = 3;
 
 struct GlobalThrottle {

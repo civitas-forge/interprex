@@ -6,7 +6,7 @@ on:
     branches: ["codex/live-e2e-*"]
 
 concurrency:
-  group: postel-sandbox-live-e2e
+  group: interprex-sandbox-live-e2e
   cancel-in-progress: false
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
         env:
           INTERPREX_LIVE_GITHUB: "1"
           INTERPREX_E2E_GH_TOKEN: ${{ secrets.POSTEL_E2E_GH_TOKEN }}
-          INTERPREX_E2E_REPOSITORY: civitas-forge/postel-sandbox
+          INTERPREX_E2E_REPOSITORY: civitas-forge/interprex-sandbox
           INTERPREX_E2E_INTERVAL_SECONDS: "3"
         run: >-
           cargo test -p interprex-github --test live_github

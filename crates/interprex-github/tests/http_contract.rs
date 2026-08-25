@@ -214,7 +214,7 @@ fn provider(base_uri: String) -> interprex_github::GithubProvider {
 }
 
 fn repository() -> Repository {
-    Repository::new("civitas-forge", "postel-sandbox").expect("repository")
+    Repository::new("civitas-forge", "interprex-sandbox").expect("repository")
 }
 
 fn assert_user_request(request: &str, method_and_path: &str) {
@@ -242,7 +242,7 @@ async fn code_hosting_domain_sends_the_canonical_repository_address() {
     assert!(settings.allow_squash_merge);
     assert_user_request(
         &request.await.expect("captured request"),
-        "GET /repos/civitas-forge/postel-sandbox ",
+        "GET /repos/civitas-forge/interprex-sandbox ",
     );
 }
 
@@ -267,7 +267,7 @@ async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
         .await
         .expect("apply settings");
     let request = request.await.expect("captured request");
-    assert_user_request(&request, "PATCH /repos/civitas-forge/postel-sandbox ");
+    assert_user_request(&request, "PATCH /repos/civitas-forge/interprex-sandbox ");
     let (_, body) = request.split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert_eq!(
@@ -283,7 +283,7 @@ async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
 
 #[tokio::test]
 async fn code_hosting_domain_returns_rulesets_from_every_rest_page() {
-    let route = "/repos/civitas-forge/postel-sandbox/rulesets";
+    let route = "/repos/civitas-forge/interprex-sandbox/rulesets";
     let (uri, requests) = rest_pages(
         route,
         vec![
@@ -304,8 +304,9 @@ async fn code_hosting_domain_returns_rulesets_from_every_rest_page() {
         ["first", "second"]
     );
     assert!(
-        requests.await.expect("captured requests")[1]
-            .starts_with("GET /repos/civitas-forge/postel-sandbox/rulesets?per_page=100&page=2 ")
+        requests.await.expect("captured requests")[1].starts_with(
+            "GET /repos/civitas-forge/interprex-sandbox/rulesets?per_page=100&page=2 "
+        )
     );
 }
 
@@ -323,13 +324,13 @@ async fn tracker_domain_addresses_the_requested_issue_number() {
         .expect("issue");
     assert_user_request(
         &request.await.expect("captured request"),
-        "GET /repos/civitas-forge/postel-sandbox/issues/11 ",
+        "GET /repos/civitas-forge/interprex-sandbox/issues/11 ",
     );
 }
 
 #[tokio::test]
 async fn tracker_domain_returns_labels_from_every_rest_page() {
-    let route = "/repos/civitas-forge/postel-sandbox/labels";
+    let route = "/repos/civitas-forge/interprex-sandbox/labels";
     let (uri, requests) = rest_pages(
         route,
         vec![
@@ -348,7 +349,7 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
     );
     assert!(
         requests.await.expect("captured requests")[1]
-            .starts_with("GET /repos/civitas-forge/postel-sandbox/labels?per_page=100&page=2 ")
+            .starts_with("GET /repos/civitas-forge/interprex-sandbox/labels?per_page=100&page=2 ")
     );
 }
 
@@ -377,7 +378,7 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
         .expect("captured requests");
     assert_user_request(
         &requests[0],
-        "GET /repos/civitas-forge/postel-sandbox/pulls/5 ",
+        "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
     );
     assert_user_request(&requests[1], "POST /graphql ");
     let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
@@ -417,7 +418,7 @@ async fn code_review_domain_resolves_the_review_handle_before_marking_ready() {
     let requests = requests.await.expect("captured requests");
     assert_user_request(
         &requests[0],
-        "GET /repos/civitas-forge/postel-sandbox/pulls/5 ",
+        "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
     );
     assert_user_request(&requests[1], "POST /graphql ");
     let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
@@ -504,17 +505,17 @@ async fn code_review_domain_reads_one_complete_observation() {
     let requests = requests.await.expect("captured requests");
     assert_user_request(
         &requests[0],
-        "GET /repos/civitas-forge/postel-sandbox/pulls/5 ",
+        "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
     );
     assert_user_request(
         &requests[1],
-        "GET /repos/civitas-forge/postel-sandbox/pulls/5/reviews?per_page=100 ",
+        "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 ",
     );
     assert_user_request(&requests[2], "POST /graphql ");
     assert_user_request(&requests[3], "POST /graphql ");
     assert_user_request(
         &requests[4],
-        "GET /repos/civitas-forge/postel-sandbox/issues/5/comments?per_page=100 ",
+        "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100 ",
     );
     let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
@@ -609,7 +610,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
     assert_eq!(requests.len(), 7);
     assert_user_request(
         &requests[3],
-        "GET /repos/civitas-forge/postel-sandbox/pulls/5/reviews?per_page=100 ",
+        "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 ",
     );
     assert_user_request(&requests[4], "POST /graphql ");
 }
@@ -628,7 +629,7 @@ async fn jobs_domain_dispatches_the_named_ref_and_inputs() {
     let request = request.await.expect("captured request");
     assert_user_request(
         &request,
-        "POST /repos/civitas-forge/postel-sandbox/actions/workflows/quality.yml/dispatches ",
+        "POST /repos/civitas-forge/interprex-sandbox/actions/workflows/quality.yml/dispatches ",
     );
     assert!(request.contains("\"ref\":\"main\""));
     assert!(request.contains("\"tier\":\"pull-request\""));
@@ -649,14 +650,14 @@ async fn releases_domain_reads_by_tag_without_vendor_types_escaping() {
     assert_eq!(release.tag, "v0.1.0");
     assert_user_request(
         &request.await.expect("captured request"),
-        "GET /repos/civitas-forge/postel-sandbox/releases/tags/v0.1.0 ",
+        "GET /repos/civitas-forge/interprex-sandbox/releases/tags/v0.1.0 ",
     );
 }
 
 #[tokio::test]
 async fn releases_domain_streams_upload_chunks_to_the_upload_host() {
     let (uri, requests) = json_responses(vec![
-        r#"{"url":"{base}/releases/88","html_url":"{base}/releases/88","assets_url":"{base}/releases/88/assets","upload_url":"{base}/repos/civitas-forge/postel-sandbox/releases/88/assets{?name,label}","id":88,"node_id":"R_kwDOExample","tag_name":"v0.1.0","target_commitish":"main","name":null,"body":null,"draft":true,"prerelease":false,"assets":[]}"#,
+        r#"{"url":"{base}/releases/88","html_url":"{base}/releases/88","assets_url":"{base}/releases/88/assets","upload_url":"{base}/repos/civitas-forge/interprex-sandbox/releases/88/assets{?name,label}","id":88,"node_id":"R_kwDOExample","tag_name":"v0.1.0","target_commitish":"main","name":null,"body":null,"draft":true,"prerelease":false,"assets":[]}"#,
         r#"{"id":99,"name":"interprex.tar.gz","label":"Darwin arm64","size":11,"browser_download_url":"https://example.invalid/interprex.tar.gz"}"#,
     ])
     .await;
@@ -681,11 +682,11 @@ async fn releases_domain_streams_upload_chunks_to_the_upload_host() {
     let requests = requests.await.expect("captured requests");
     assert_user_request(
         &requests[0],
-        "GET /repos/civitas-forge/postel-sandbox/releases/88 ",
+        "GET /repos/civitas-forge/interprex-sandbox/releases/88 ",
     );
     assert_user_request(
         &requests[1],
-        "POST /repos/civitas-forge/postel-sandbox/releases/88/assets?name=interprex%2Etar%2Egz&label=Darwin%20arm64 ",
+        "POST /repos/civitas-forge/interprex-sandbox/releases/88/assets?name=interprex%2Etar%2Egz&label=Darwin%20arm64 ",
     );
     assert!(
         requests[1]

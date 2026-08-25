@@ -307,7 +307,10 @@ mod tests {
         let fixture = include_str!("../tests/fixtures/repository.json");
         let response: GithubRepository = serde_json::from_str(fixture).expect("fixture");
         let (facts, settings) = response.try_into().expect("normalizes");
-        assert_eq!(facts.repository.to_string(), "civitas-forge/postel-sandbox");
+        assert_eq!(
+            facts.repository.to_string(),
+            "civitas-forge/interprex-sandbox"
+        );
         assert!(settings.allow_squash_merge);
         assert!(!settings.allow_merge_commit);
     }
