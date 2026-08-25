@@ -542,10 +542,11 @@ impl CodeReviewsProvider for GithubProvider {
                 return normalize_code_review(after, reviews, threads);
             }
         }
-        Err(ProviderError::Refused {
+        Err(ProviderError::External {
             provider: "github",
-            fact: format!(
-                "a stable read of code review {} in {repository}",
+            operation: "read code review",
+            message: format!(
+                "code review {} in {repository} changed during every read attempt",
                 number.get()
             ),
         })
