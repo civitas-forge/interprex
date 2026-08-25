@@ -172,12 +172,11 @@ async fn configured_code_review_history_matches_current_provider_data() {
         assert!(!thread.location.path.is_empty());
         assert!(!thread.comment.id.as_str().is_empty());
         if let ReviewAnchor::DiffRange {
-            line,
-            original_line,
-            ..
+            current, original, ..
         } = &thread.location.anchor
         {
-            assert!(line.is_some() || original_line.is_some());
+            assert!(original.end.get() > 0);
+            assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
         }
         if let Some(origin) = &thread.originating_submission {
             assert!(submission_ids.contains(origin));

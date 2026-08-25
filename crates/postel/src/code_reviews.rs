@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::{OpenClosed, Repository, Result};
 
 platform_number!(CodeReviewNumber);
+platform_number!(ReviewLine);
 
 macro_rules! opaque_review_id {
     ($name:ident, $field:literal, $entity:literal) => {
@@ -170,16 +171,19 @@ pub enum ReviewDiffSide {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewLineRange {
+    pub start: Option<ReviewLine>,
+    pub end: ReviewLine,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewAnchor {
     File,
     DiffRange {
         side: ReviewDiffSide,
-        start_side: Option<ReviewDiffSide>,
-        line: Option<u64>,
-        start_line: Option<u64>,
-        original_line: Option<u64>,
-        original_start_line: Option<u64>,
+        current: Option<ReviewLineRange>,
+        original: ReviewLineRange,
     },
 }
 
@@ -240,12 +244,17 @@ pub struct CodeReview {
 
 impl CodeReview {
     fn submissions_by_time(&self) -> Vec<&ReviewSubmission> {
-        let mut submissions = self.submissions.iter().enumerate().collect::<Vec<_>>();
-        submissions.sort_by_key(|(index, submission)| (submission.submitted_at, *index));
+        let mut submissions = self
+            .submissions
+            .iter()
+            .filter(|submission| submission.reviewer.id != self.author.id)
+            .collect::<Vec<_>>();
+        submissions.sort_by(|left, right| {
+            left.submitted_at
+                .cmp(&right.submitted_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         submissions
-            .into_iter()
-            .map(|(_, submission)| submission)
-            .collect()
     }
 
     /// Reviewers in first-submission order. The change author is not a reviewer.
@@ -480,11 +489,14 @@ mod tests {
                 outdated: false,
                 anchor: ReviewAnchor::DiffRange {
                     side: ReviewDiffSide::Right,
-                    start_side: None,
-                    line: Some(10),
-                    start_line: None,
-                    original_line: Some(10),
-                    original_start_line: None,
+                    current: Some(ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    }),
+                    original: ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    },
                 },
             },
             status: ReviewThreadStatus::Open,
@@ -525,7 +537,14 @@ mod tests {
         first.submitted_at = Utc.timestamp_opt(1, 0).single().expect("timestamp");
         let mut second = submission("review-2", "new-login", "revision-b");
         second.reviewer.id = first.reviewer.id.clone();
-        second.submitted_at = Utc.timestamp_opt(2, 0).single().expect("timestamp");
+        second.submitted_at = Utc.timestamp_opt(1, 0).single().expect("timestamp");
+        let author = ReviewActor {
+            id: ReviewActorId::new("actor-author").expect("actor id"),
+            login: "author".to_owned(),
+            kind: ReviewActorKind::User,
+        };
+        let mut author_submission = submission("review-0", "author", "revision-a");
+        author_submission.reviewer = author.clone();
         let review = CodeReview {
             number: CodeReviewNumber::new(1).expect("number"),
             title: "Renamed reviewer".to_owned(),
@@ -535,13 +554,9 @@ mod tests {
                 base_sha: "base".to_owned(),
                 head_sha: "revision-b".to_owned(),
             },
-            author: ReviewActor {
-                id: ReviewActorId::new("actor-author").expect("actor id"),
-                login: "author".to_owned(),
-                kind: ReviewActorKind::User,
-            },
+            author,
             updated_at: Utc.timestamp_opt(3, 0).single().expect("timestamp"),
-            submissions: vec![second.clone(), first],
+            submissions: vec![second.clone(), author_submission.clone(), first],
             threads: Vec::new(),
             outstanding_review_requests: Vec::new(),
         };
@@ -549,6 +564,7 @@ mod tests {
         assert_eq!(review.reviewers().len(), 1);
         assert_eq!(review.reviewers()[0].login, "old-login");
         assert_eq!(review.reviewer_round(&second.id), Some(2));
+        assert_eq!(review.reviewer_round(&author_submission.id), None);
         assert_eq!(
             review.changes_since_previous_review(&second.id),
             Some(CommitRange {

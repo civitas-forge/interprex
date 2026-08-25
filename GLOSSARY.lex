@@ -48,10 +48,12 @@ Glossary
         and removal events, and it is not a review submission.
     reviewer round:
         The one-based position of a submission among the same reviewer's
-        submissions, ordered by submission time.
+        submissions, ordered by submission time and then opaque submission
+        identity when times match.
     revision round:
         The one-based position of a reviewed head commit among the distinct
-        reviewed head commits, ordered by their first submission.
+        reviewed head commits, ordered by their first submission under the
+        same submission ordering.
     installation:
         The grant under which an app authenticates on the platform, carrying
         its permissions and its tokens.

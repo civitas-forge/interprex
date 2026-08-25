@@ -52,6 +52,11 @@ The Development Platform
     submission, so Postel does not fill it with the current base and present an
     invented historical range.
 
+    The provider reads the mutable submission, thread and request collections
+    twice and returns only when both reads match while the enclosing code review
+    facts remain unchanged. If they continue changing across both attempts, the
+    operation fails instead of combining facts from different moments.
+
     Submissions are never combined. Two reviewers on one revision are two
     submissions, and one reviewer submitting twice on that revision is also two
     submissions. A submission with no findings remains in the history because
@@ -73,9 +78,10 @@ The Development Platform
     the submission is retained rather than silently discarded.
 
     Every inline thread remains in the result. Its location distinguishes a
-    file anchor from a diff range. A diff range carries current and original
-    start and end lines, their diff sides, and whether newer changes made the
-    anchor outdated. The thread also carries an open or resolved status, its
+    file anchor from a diff range. A diff range always carries a nonzero
+    original end line and may carry an original start line. It carries a
+    current nonzero range when the anchor still maps, plus its diff side and
+    whether newer changes made the anchor outdated. The thread also carries an open or resolved status, its
     initial comment and ordered replies. A thread begun by a retained reviewer
     submission is a finding from that submission. A thread begun by the change
     author remains visible without being classified as a finding. Reviewer
@@ -94,8 +100,9 @@ The Development Platform
 
     Rounds are derived rather than stored and do not depend on vector storage
     order. All submissions against the same head commit share a revision round.
-    A reviewer's submissions, ordered by submission time, form that reviewer's
-    rounds. For every round after that
+    A reviewer's submissions, ordered by submission time and then opaque
+    submission identity when times match, form that reviewer's rounds. For
+    every round after that
     reviewer's first, Postel derives the new-code range from the prior reviewed
     head to the new reviewed head. A pushed revision therefore starts a new
     revision round when it receives a submission, while a second submission

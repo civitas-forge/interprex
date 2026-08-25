@@ -446,6 +446,10 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/review_requests_response.json"),
         include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/pull_request.json"),
     ])
     .await;
     let review = provider(uri)
@@ -467,6 +471,13 @@ async fn code_review_domain_reads_one_consistent_review_history() {
     assert_user_request(&requests[2], "POST /graphql ");
     assert_user_request(&requests[3], "POST /graphql ");
     assert_user_request(&requests[4], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(
+        &requests[5],
+        "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
+    );
+    assert_user_request(&requests[6], "POST /graphql ");
+    assert_user_request(&requests[7], "POST /graphql ");
+    assert_user_request(&requests[8], "GET /repos/faictor/postel-sandbox/pulls/5 ");
     let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
@@ -515,6 +526,10 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/review_requests_response.json"),
         include_str!("fixtures/pull_request_changed.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/pull_request_changed.json"),
     ])
     .await;
     let review = provider(uri)
@@ -526,7 +541,40 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         review.current_range.head_sha,
         "cccccccccccccccccccccccccccccccccccccccc"
     );
-    assert_eq!(requests.await.expect("captured requests").len(), 9);
+    assert_eq!(requests.await.expect("captured requests").len(), 13);
+}
+
+#[tokio::test]
+async fn code_review_domain_retries_when_a_child_collection_changes_during_the_read() {
+    const NO_REQUESTS: &str = r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}}}}"#;
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        NO_REQUESTS,
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/pull_request.json"),
+    ])
+    .await;
+
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review after child retry");
+
+    assert_eq!(review.outstanding_review_requests.len(), 2);
+    assert_eq!(requests.await.expect("captured requests").len(), 17);
 }
 
 #[tokio::test]

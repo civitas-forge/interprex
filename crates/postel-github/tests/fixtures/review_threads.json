@@ -112,7 +112,7 @@
             "isOutdated": false,
             "path": "src/lib.rs",
             "subjectType": "FILE",
-            "diffSide": "RIGHT",
+            "diffSide": null,
             "startDiffSide": null,
             "line": null,
             "startLine": null,

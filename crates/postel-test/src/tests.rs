@@ -4,9 +4,9 @@ use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
     RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
-    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewLocation,
-    ReviewRequestTarget, ReviewSubmission, ReviewSubmissionId, ReviewThread, ReviewThreadId,
-    ReviewThreadStatus, ReviewedRevision,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewLine, ReviewLineRange,
+    ReviewLocation, ReviewRequestTarget, ReviewSubmission, ReviewSubmissionId, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -100,11 +100,14 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                 outdated: false,
                 anchor: ReviewAnchor::DiffRange {
                     side: ReviewDiffSide::Right,
-                    start_side: None,
-                    line: Some(12),
-                    start_line: None,
-                    original_line: Some(10),
-                    original_start_line: None,
+                    current: Some(ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(12).expect("line"),
+                    }),
+                    original: ReviewLineRange {
+                        start: None,
+                        end: ReviewLine::new(10).expect("line"),
+                    },
                 },
             },
             status: ReviewThreadStatus::Open,

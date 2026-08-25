@@ -77,8 +77,8 @@ Verify
       for every domain.
     - Code review transport tests prove that pull request facts, formal
       submissions, review threads and outstanding review requests become one
-      result, and that the adapter retries when the revision changes while it
-      is assembling that result.
+      result, and that the adapter retries when the revision or a child
+      collection changes while it is assembling that result.
     - Ignored, read-only live tests read repository facts and labels from
       `faictor/postel-sandbox`, and can read a configured code review to check
       its submissions, threads and outstanding requests against current

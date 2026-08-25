@@ -2,11 +2,12 @@
 //!
 //! The read combines pull-request facts, formal review submissions and review
 //! threads into one provider-neutral result. GitHub's REST review records
-//! identify submissions and apps; GraphQL supplies thread resolution and the
-//! complete comment sequence. The adapter joins them here so callers never
-//! need to correlate GitHub review IDs with thread comments.
+//! identify submissions and apps; GraphQL supplies thread locations,
+//! resolution, complete comment sequences and outstanding review requests.
+//! The adapter joins them here so callers never need to correlate GitHub
+//! review IDs with thread comments.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use octocrab::Page;
@@ -14,9 +15,10 @@ use postel::{
     CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
     OpenClosed, ProviderError, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind,
     ReviewAnchor, ReviewApp, ReviewAppId, ReviewComment, ReviewCommentId, ReviewDiffSide,
-    ReviewDisposition, ReviewLocation, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
-    ReviewSubmission, ReviewSubmissionId, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewDisposition, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewSubmission, ReviewSubmissionId, ReviewTarget, ReviewTeam,
+    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
+    ReviewedRevision,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -29,7 +31,7 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: Str
     pullRequest(number: $number) {
       reviewThreads(first: 100, after: $cursor) {
         nodes {
-          id isResolved isOutdated path subjectType diffSide startDiffSide
+          id isResolved isOutdated path subjectType diffSide
           line startLine originalLine originalStartLine
           comments(first: 100) {
             nodes {
@@ -137,7 +139,7 @@ struct GithubPullRequest {
     draft: bool,
     head: GitRef,
     base: GitRef,
-    user: GithubUser,
+    user: Option<GithubUser>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -146,7 +148,7 @@ struct GitRef {
     sha: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct GithubUser {
     node_id: String,
     login: String,
@@ -158,14 +160,14 @@ fn default_user_kind() -> String {
     "User".to_owned()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct GithubApp {
     id: u64,
     slug: String,
     name: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct GithubReview {
     node_id: String,
     user: Option<GithubUser>,
@@ -200,7 +202,7 @@ struct ThreadConnection {
     page_info: PageInfo,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, PartialEq)]
 struct PageInfo {
     #[serde(rename = "hasNextPage")]
     has_next_page: bool,
@@ -208,7 +210,7 @@ struct PageInfo {
     end_cursor: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct ThreadNode {
     id: String,
     #[serde(rename = "isResolved")]
@@ -219,9 +221,7 @@ struct ThreadNode {
     #[serde(rename = "subjectType")]
     subject_type: ThreadSubjectType,
     #[serde(rename = "diffSide")]
-    diff_side: GithubDiffSide,
-    #[serde(rename = "startDiffSide")]
-    start_diff_side: Option<GithubDiffSide>,
+    diff_side: Option<GithubDiffSide>,
     line: Option<u64>,
     #[serde(rename = "startLine")]
     start_line: Option<u64>,
@@ -232,28 +232,28 @@ struct ThreadNode {
     comments: CommentConnection,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ThreadSubjectType {
     File,
     Line,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum GithubDiffSide {
     Left,
     Right,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct CommentConnection {
     nodes: Vec<CommentNode>,
     #[serde(rename = "pageInfo")]
     page_info: PageInfo,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct CommentNode {
     id: String,
     body: String,
@@ -266,7 +266,7 @@ struct CommentNode {
     pull_request_review: Option<CommentReview>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct GraphqlActor {
     id: String,
     login: String,
@@ -274,7 +274,7 @@ struct GraphqlActor {
     kind: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct CommentReview {
     id: String,
 }
@@ -313,7 +313,7 @@ struct ReviewRequestConnection {
     page_info: PageInfo,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct ReviewRequestNode {
     id: String,
     #[serde(rename = "asCodeOwner")]
@@ -322,7 +322,7 @@ struct ReviewRequestNode {
     requested_reviewer: Option<RequestedReviewerNode>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 #[serde(tag = "__typename")]
 enum RequestedReviewerNode {
     User {
@@ -350,7 +350,7 @@ enum RequestedReviewerNode {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct RequestedReviewerOrganization {
     login: String,
 }
@@ -433,6 +433,69 @@ fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
     }
 }
 
+fn normalize_line(value: u64, operation: &'static str) -> Result<ReviewLine> {
+    ReviewLine::new(value).map_err(|error| ProviderError::External {
+        provider: "github",
+        operation,
+        message: error.to_string(),
+    })
+}
+
+fn normalize_line_range(
+    end: Option<u64>,
+    start: Option<u64>,
+    operation: &'static str,
+) -> Result<Option<ReviewLineRange>> {
+    let Some(end) = end else {
+        if start.is_some() {
+            return Err(ProviderError::External {
+                provider: "github",
+                operation,
+                message: "review range has a start line without an end line".to_owned(),
+            });
+        }
+        return Ok(None);
+    };
+    Ok(Some(ReviewLineRange {
+        start: start
+            .map(|line| normalize_line(line, operation))
+            .transpose()?,
+        end: normalize_line(end, operation)?,
+    }))
+}
+
+fn normalize_review_anchor(thread: &ThreadNode) -> Result<ReviewAnchor> {
+    match thread.subject_type {
+        ThreadSubjectType::File => Ok(ReviewAnchor::File),
+        ThreadSubjectType::Line => {
+            let side = thread.diff_side.ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread location",
+                message: format!("line thread {} has no diff side", thread.id),
+            })?;
+            let original = normalize_line_range(
+                thread.original_line,
+                thread.original_start_line,
+                "normalize review thread location",
+            )?
+            .ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread location",
+                message: format!("line thread {} has no original line", thread.id),
+            })?;
+            Ok(ReviewAnchor::DiffRange {
+                side: normalize_diff_side(side),
+                current: normalize_line_range(
+                    thread.line,
+                    thread.start_line,
+                    "normalize review thread location",
+                )?,
+                original,
+            })
+        }
+    }
+}
+
 fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
     let comment_id = value.id;
     Ok(ReviewComment {
@@ -510,14 +573,19 @@ fn normalize_code_review(
     threads: Vec<ThreadNode>,
     review_requests: Vec<ReviewRequestNode>,
 ) -> Result<CodeReview> {
-    let author = actor(value.user.node_id, value.user.login, &value.user.kind)?;
+    let author = match value.user {
+        Some(user) => actor(user.node_id, user.login, &user.kind)?,
+        None => ghost_actor(format!("unavailable-change-author:{}", value.node_id))?,
+    };
     let base_sha = value.base.sha;
     let mut review_positions = BTreeMap::new();
+    let mut excluded_review_ids = BTreeSet::new();
     let mut submissions = Vec::new();
 
     reviews.sort_by_key(|review| review.submitted_at);
     for review in reviews {
         if review.state == "PENDING" {
+            excluded_review_ids.insert(review.node_id);
             continue;
         }
         let reviewer = match review.user {
@@ -525,6 +593,7 @@ fn normalize_code_review(
             None => ghost_actor(format!("unavailable-reviewer:{}", review.node_id))?,
         };
         if reviewer.id == author.id {
+            excluded_review_ids.insert(review.node_id);
             continue;
         }
         let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
@@ -570,18 +639,30 @@ fn normalize_code_review(
 
     let mut normalized_threads = Vec::with_capacity(threads.len());
     for thread in threads {
+        let anchor = normalize_review_anchor(&thread)?;
         let mut comments = thread.comments.nodes.into_iter();
         let initial = comments.next().ok_or_else(|| ProviderError::External {
             provider: "github",
             operation: "normalize review thread",
             message: format!("review thread {} has no comments", thread.id),
         })?;
-        let originating_submission = initial
-            .pull_request_review
-            .as_ref()
-            .map(|review| &review.id)
-            .and_then(|review_id| review_positions.get(review_id))
-            .map(|position| submissions[*position].id.clone());
+        let originating_submission = match initial.pull_request_review.as_ref() {
+            None => None,
+            Some(review) => match review_positions.get(&review.id) {
+                Some(position) => Some(submissions[*position].id.clone()),
+                None if excluded_review_ids.contains(&review.id) => None,
+                None => {
+                    return Err(ProviderError::External {
+                        provider: "github",
+                        operation: "normalize review thread",
+                        message: format!(
+                            "review thread {} references missing submission {}",
+                            thread.id, review.id
+                        ),
+                    });
+                }
+            },
+        };
         normalized_threads.push(ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
                 provider: "github",
@@ -592,17 +673,7 @@ fn normalize_code_review(
             location: ReviewLocation {
                 path: thread.path,
                 outdated: thread.outdated,
-                anchor: match thread.subject_type {
-                    ThreadSubjectType::File => ReviewAnchor::File,
-                    ThreadSubjectType::Line => ReviewAnchor::DiffRange {
-                        side: normalize_diff_side(thread.diff_side),
-                        start_side: thread.start_diff_side.map(normalize_diff_side),
-                        line: thread.line,
-                        start_line: thread.start_line,
-                        original_line: thread.original_line,
-                        original_start_line: thread.original_start_line,
-                    },
-                },
+                anchor,
             },
             status: if thread.resolved {
                 ReviewThreadStatus::Resolved
@@ -813,11 +884,23 @@ impl CodeReviewsProvider for GithubProvider {
     ) -> Result<CodeReview> {
         let mut before = self.github_code_review(repository, number).await?;
         for _ in 0..2 {
+            let first_reviews = self.github_reviews(repository, number).await?;
+            let first_threads = self.github_review_threads(repository, number).await?;
+            let first_requests = self.github_review_requests(repository, number).await?;
+            let middle = self.github_code_review(repository, number).await?;
+            if !same_code_review_version(&before, &middle) {
+                before = middle;
+                continue;
+            }
             let reviews = self.github_reviews(repository, number).await?;
             let threads = self.github_review_threads(repository, number).await?;
             let requests = self.github_review_requests(repository, number).await?;
             let after = self.github_code_review(repository, number).await?;
-            if same_code_review_version(&before, &after) {
+            if same_code_review_version(&middle, &after)
+                && first_reviews == reviews
+                && first_threads == threads
+                && first_requests == requests
+            {
                 return normalize_code_review(after, reviews, threads, requests);
             }
             before = after;
@@ -995,11 +1078,14 @@ mod tests {
             finding.location.anchor,
             postel::ReviewAnchor::DiffRange {
                 side: postel::ReviewDiffSide::Right,
-                start_side: Some(postel::ReviewDiffSide::Right),
-                line: Some(188),
-                start_line: Some(184),
-                original_line: Some(181),
-                original_start_line: Some(177),
+                current: Some(postel::ReviewLineRange {
+                    start: Some(postel::ReviewLine::new(184).expect("line")),
+                    end: postel::ReviewLine::new(188).expect("line"),
+                }),
+                original: postel::ReviewLineRange {
+                    start: Some(postel::ReviewLine::new(177).expect("line")),
+                    end: postel::ReviewLine::new(181).expect("line"),
+                },
             }
         );
         assert!(finding.comment.id.as_str().starts_with("PRRC_"));
@@ -1129,6 +1215,53 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn missing_thread_submission_is_not_misclassified_as_an_author_thread() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        threads.repository.pull_request.review_threads.nodes[0]
+            .comments
+            .nodes[0]
+            .pull_request_review = Some(super::CommentReview {
+            id: "PRR_missing".to_owned(),
+        });
+
+        let error = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+        )
+        .expect_err("missing originating submission must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review thread",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn deleted_change_author_remains_an_unavailable_actor() {
+        let mut code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        code_review.user = None;
+
+        let review = normalize_code_review(code_review, Vec::new(), Vec::new(), Vec::new())
+            .expect("deleted author remains readable");
+        assert_eq!(review.author.kind, ReviewActorKind::Placeholder);
+        assert_eq!(review.author.login, "ghost");
     }
 
     #[tokio::test]
