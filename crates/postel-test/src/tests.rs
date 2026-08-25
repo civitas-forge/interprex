@@ -3,10 +3,10 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewIdentity, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewThread, ReviewThreadId,
-    ReviewThreadStatus, ReviewedRevision, SubmittedReview, SubmittedReviewId,
+    RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequestTarget, ReviewState,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -118,17 +118,18 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         change: range.clone(),
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
-        reviews: vec![SubmittedReview {
-            id: SubmittedReviewId::new("review-1").expect("review id"),
-            reviewer: ReviewIdentity {
-                actor: reviewer.clone(),
-                via_app: None,
-            },
+        reviews: vec![Review {
+            id: ReviewId::new("review-1").expect("review id"),
+            author: reviewer.clone(),
+            relationship_to_change: ReviewRelationship::Other,
+            via_app: None,
             revision: ReviewedRevision {
                 head_sha: range.head_sha.clone(),
             },
-            disposition: ReviewDisposition::ChangesRequested,
-            submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+            state: ReviewState::Submitted {
+                disposition: ReviewDisposition::ChangesRequested,
+                submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+            },
             summary: Some("One concern".to_owned()),
             findings: vec![ReviewThread {
                 id: ReviewThreadId::new("thread-1").expect("thread id"),

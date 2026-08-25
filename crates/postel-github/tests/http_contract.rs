@@ -401,7 +401,7 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
 }
 
 #[tokio::test]
-async fn code_review_domain_resolves_github_identity_before_marking_ready() {
+async fn code_review_domain_resolves_the_review_handle_before_marking_ready() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"PR_kwDOExample","isDraft":false}}}}"#,
@@ -457,7 +457,33 @@ async fn code_review_domain_reads_one_complete_observation() {
         .await
         .expect("code review");
 
-    assert_eq!(review.reviews.len(), 9);
+    assert_eq!(review.reviews.len(), 11);
+    assert_eq!(
+        review
+            .reviews
+            .iter()
+            .filter(|item| item.state == postel::ReviewState::Draft)
+            .count(),
+        1
+    );
+    assert_eq!(
+        review
+            .reviews
+            .iter()
+            .filter(|item| {
+                item.relationship_to_change == postel::ReviewRelationship::ChangeAuthor
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        review
+            .reviews
+            .iter()
+            .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Unknown)
+            .count(),
+        2
+    );
     assert_eq!(review.reviews[0].findings[0].replies.len(), 1);
     assert!(
         review
@@ -541,7 +567,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
         .await
         .expect("code review");
 
-    assert_eq!(review.reviews.len(), 9);
+    assert_eq!(review.reviews.len(), 11);
     assert_eq!(review.reviews[0].findings.len(), 1);
     let requests = requests.await.expect("captured requests");
     assert_eq!(requests.len(), 7);

@@ -148,13 +148,17 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         review
             .reviews
             .iter()
-            .all(|submitted| !submitted.reviewer.actor.id.as_str().is_empty())
+            .all(|item| !item.author.id.as_str().is_empty())
     );
     assert!(
         review
             .reviews
             .iter()
-            .all(|submitted| submitted.reviewer.actor.id != review.author.id)
+            .all(|item| match item.relationship_to_change {
+                postel::ReviewRelationship::ChangeAuthor => item.author.id == review.author.id,
+                postel::ReviewRelationship::Other => item.author.id != review.author.id,
+                postel::ReviewRelationship::Unknown => true,
+            })
     );
     assert!(
         review
@@ -200,10 +204,34 @@ async fn configured_code_review_observation_matches_current_provider_data() {
             ReviewTarget::Unavailable => {}
         }
     }
+    let author_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::ChangeAuthor)
+        .count();
+    let other_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Other)
+        .count();
+    let unknown_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.relationship_to_change == postel::ReviewRelationship::Unknown)
+        .count();
+    let draft_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.state == postel::ReviewState::Draft)
+        .count();
     eprintln!(
-        "code review {}: {} submitted reviews, {} findings, {} discussions, {} conversation comments, {} outstanding requests",
+        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} findings, {} discussions, {} conversation comments, {} outstanding requests",
         number.get(),
         review.reviews.len(),
+        author_review_count,
+        other_review_count,
+        unknown_review_count,
+        draft_review_count,
         review
             .reviews
             .iter()

@@ -9,7 +9,7 @@ platform_number!(ReviewLine);
 
 macro_rules! opaque_review_id {
     ($name:ident, $field:literal, $entity:literal) => {
-        #[doc = concat!("Opaque provider identity for a ", $entity, ".")]
+        #[doc = concat!("Opaque provider identifier for a ", $entity, ".")]
         ///
         /// Consumers retain this value only to address the same entity
         /// through the provider that returned it. Its representation has no
@@ -35,7 +35,7 @@ macro_rules! opaque_review_id {
     };
 }
 
-opaque_review_id!(SubmittedReviewId, "submitted review id", "submitted review");
+opaque_review_id!(ReviewId, "review id", "review");
 opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
 opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
 opaque_review_id!(ReviewRequestId, "review request id", "review request");
@@ -158,14 +158,6 @@ pub struct ReviewApp {
     pub name: String,
 }
 
-/// The platform actor who submitted a review and the optional application
-/// through which it acted.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ReviewIdentity {
-    pub actor: ReviewActor,
-    pub via_app: Option<ReviewApp>,
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewDisposition {
@@ -173,6 +165,27 @@ pub enum ReviewDisposition {
     ChangesRequested,
     Commented,
     Dismissed,
+}
+
+/// What the provider can establish about a review author's relationship to
+/// the proposed change.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRelationship {
+    ChangeAuthor,
+    Other,
+    Unknown,
+}
+
+/// Whether a review is still a draft or has been submitted.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewState {
+    Draft,
+    Submitted {
+        disposition: ReviewDisposition,
+        submitted_at: DateTime<Utc>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -224,10 +237,9 @@ pub enum ReviewLocation {
 
 /// One complete inline conversation on the code review.
 ///
-/// When nested in [`SubmittedReview::findings`], this is a finding made by that
-/// review. When nested in [`CodeReview::discussions`], it is an inline
-/// conversation that did not originate in a submitted review. Replies never
-/// change that placement.
+/// When nested in [`Review::findings`], this is a finding made in that review.
+/// When nested in [`CodeReview::discussions`], it is an inline conversation
+/// that did not originate in a review. Replies never change that placement.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {
     pub id: ReviewThreadId,
@@ -238,17 +250,19 @@ pub struct ReviewThread {
     pub replies: Vec<ReviewComment>,
 }
 
-/// One formal review submitted by a reviewer other than the change author.
+/// One platform review, including drafts and reviews by the change author.
 ///
-/// Multiple reviews by the same platform identity remain independent,
-/// including reviews against the same revision and reviews without findings.
+/// Multiple reviews by the same actor remain independent. Relationship is an
+/// observed fact, not a decision about whether the review counts as independent
+/// evidence.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SubmittedReview {
-    pub id: SubmittedReviewId,
-    pub reviewer: ReviewIdentity,
+pub struct Review {
+    pub id: ReviewId,
+    pub author: ReviewActor,
+    pub relationship_to_change: ReviewRelationship,
+    pub via_app: Option<ReviewApp>,
     pub revision: ReviewedRevision,
-    pub disposition: ReviewDisposition,
-    pub submitted_at: DateTime<Utc>,
+    pub state: ReviewState,
     pub summary: Option<String>,
     pub findings: Vec<ReviewThread>,
 }
@@ -267,12 +281,11 @@ pub struct CodeReview {
     pub change: CommitRange,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
-    /// Formal reviews in chronological submission order.
-    pub reviews: Vec<SubmittedReview>,
-    /// Inline conversations that did not originate in a submitted review.
+    /// Platform reviews. Collection order carries no policy meaning.
+    pub reviews: Vec<Review>,
+    /// Inline conversations that did not originate in a review.
     pub discussions: Vec<ReviewThread>,
-    /// General, non-inline conversation in chronological order, including
-    /// non-inline text GitHub stores on an implicit author review record.
+    /// General, non-inline conversation in chronological order.
     pub conversation: Vec<ReviewComment>,
     /// The currently outstanding reviewer requests.
     pub outstanding_requests: Vec<ReviewRequest>,
@@ -376,18 +389,19 @@ mod tests {
         }
     }
 
-    fn review(id: &str, reviewer: ReviewActor, findings: Vec<ReviewThread>) -> SubmittedReview {
-        SubmittedReview {
-            id: SubmittedReviewId::new(id).expect("review id"),
-            reviewer: ReviewIdentity {
-                actor: reviewer,
-                via_app: None,
-            },
+    fn review(id: &str, author: ReviewActor, findings: Vec<ReviewThread>) -> Review {
+        Review {
+            id: ReviewId::new(id).expect("review id"),
+            author,
+            relationship_to_change: ReviewRelationship::Other,
+            via_app: None,
             revision: ReviewedRevision {
                 head_sha: "head".to_owned(),
             },
-            disposition: ReviewDisposition::Commented,
-            submitted_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
+            state: ReviewState::Submitted {
+                disposition: ReviewDisposition::Commented,
+                submitted_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
+            },
             summary: None,
             findings,
         }
