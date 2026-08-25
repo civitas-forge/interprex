@@ -1,21 +1,27 @@
 Glossary
 
-    These definitions name the concepts in Interprex's public interfaces.
+    These definitions name the concepts in the development-platform
+    interfaces. The record client's vocabulary is defined in
+    [./docs/contracts/records.lex].
 
 
     change request:
-        A proposed change awaiting merge: a git branch published as a
-        provider pull or merge request. `ChangeRequest` is one complete
-        observation of a change request and its code-review data.
+        A git branch published as a provider pull or merge request, proposing
+        a change for merge. `ChangeRequest` is one complete observation of a
+        change request, open or closed, and its code-review data.
     code review:
         The domain that acts on change requests so merging can be approved.
-        It covers reviews, findings, stand-alone threads, unanchored
+        It covers reviews, findings, standalone threads, unanchored
         comments, review requests and check results.
+    review:
+        One provider review record acting on a change request: its author,
+        reviewing application when known, reviewed head commit, summary and
+        findings. Its state distinguishes a draft from a submitted review.
     finding:
         An inline review thread attached to the review in which it
         originated. Its initial comment, replies, source location,
         resolution status and outdated status remain together.
-    stand-alone thread:
+    standalone thread:
         An inline review thread with no originating review. Later replies do
         not change its origin.
     unanchored comment:

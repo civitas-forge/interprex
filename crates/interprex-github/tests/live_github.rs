@@ -127,10 +127,10 @@ async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
 #[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
 async fn configured_change_request_observation_matches_current_provider_data() {
     let (provider, repository) = live_provider();
-    let number = std::env::var("INTERPREX_E2E_CODE_REVIEW_NUMBER")
-        .expect("INTERPREX_E2E_CODE_REVIEW_NUMBER must name an existing change request")
+    let number = std::env::var("INTERPREX_E2E_CHANGE_REQUEST_NUMBER")
+        .expect("INTERPREX_E2E_CHANGE_REQUEST_NUMBER must name an existing change request")
         .parse()
-        .expect("INTERPREX_E2E_CODE_REVIEW_NUMBER must be a positive integer");
+        .expect("INTERPREX_E2E_CHANGE_REQUEST_NUMBER must be a positive integer");
     let number = ChangeRequestNumber::new(number).expect("positive change request number");
 
     let _throttle = GlobalThrottle::acquire();
@@ -239,7 +239,7 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .count();
     assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "change request {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} stand-alone threads, {} unanchored comments, {} outstanding requests",
+        "change request {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} standalone threads, {} unanchored comments, {} outstanding requests",
         number.get(),
         change_request.reviews.len(),
         author_review_count,

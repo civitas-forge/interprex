@@ -247,7 +247,7 @@ pub struct ReviewLocation {
 /// One complete inline thread on the change request.
 ///
 /// When nested in [`Review::findings`], this is a finding made in that review.
-/// When nested in [`ChangeRequest::standalone_threads`], it is a stand-alone
+/// When nested in [`ChangeRequest::standalone_threads`], it is a standalone
 /// thread that did not originate in a review. Replies never change that placement.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {

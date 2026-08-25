@@ -1,19 +1,19 @@
 Interprex
 
-    Interprex is a Rust library for working with development platforms through provider-neutral domain interfaces. It allows applications to be written both at higher level and be platform independent. It enables a stack that mixes different providers between domains to present as a unified api.
+    Interprex is a Rust library for working with development platforms through provider-neutral domain interfaces. Applications write against the domain interfaces rather than vendor APIs, so they stay platform independent, and one process can mix different providers across domains behind the same interfaces.
 
 1. Domains
 
-    Code Hosting:
+    code hosting:
         Read repository facts and merge settings, apply settings, read and update rulesets, and write encrypted repository secrets.
-    Tracker:
+    tracker:
         Read issues and read or update labels.
-    Code Review:
-        Read change requests, reviews, findings, stand-alone threads, unanchored comments and outstanding review requests; resolve threads, request reviewers, mark a change request ready and
+    code review:
+        Read change requests, reviews, findings, standalone threads, unanchored comments and outstanding review requests; resolve threads, request reviewers, mark a change request ready and
         publish check results.
-    Jobs:
+    jobs:
         Dispatch jobs, read runs and cancel runs.
-    Releases:
+    releases:
         Read and create releases, stream uploads and stream downloads.
 
 2. Code Review Data
@@ -24,7 +24,7 @@ Interprex
 
     The review author is one of change author, another known actor or an actor whose relationship is unknown. The change-author variant refers to the change request's author instead of storing a second, independently writable copy. Unknown means the provider did not return enough identity information to compare the actors; it does not mean other. Interprex returns this fact and leaves decisions about independent review evidence to the caller.
 
-    A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a stand-alone thread. An unanchored comment has no source location. Interprex does not derive rounds, stale reviewers, severity or next actions from these records.
+    A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location. Interprex does not derive rounds, stale reviewers, severity or next actions from these records.
 
 3. Crates
 

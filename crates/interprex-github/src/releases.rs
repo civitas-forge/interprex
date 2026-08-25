@@ -45,17 +45,15 @@ struct GithubAsset {
 
 fn normalize_asset(value: GithubAsset) -> Result<ReleaseAsset> {
     Ok(ReleaseAsset {
-        id: AssetId::new(value.id).map_err(|error| ProviderError::External {
+        id: AssetId::new(value.id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize release asset",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         name: value.name,
         label: value.label,
-        size: u64::try_from(value.size).map_err(|error| ProviderError::External {
+        size: u64::try_from(value.size).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize release asset",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         download_url: value.browser_download_url,
     })
@@ -63,10 +61,9 @@ fn normalize_asset(value: GithubAsset) -> Result<ReleaseAsset> {
 
 fn normalize_release(value: GithubRelease) -> Result<Release> {
     Ok(Release {
-        id: ReleaseId::new(value.id).map_err(|error| ProviderError::External {
+        id: ReleaseId::new(value.id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize release",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         tag: value.tag_name,
         name: value.name,

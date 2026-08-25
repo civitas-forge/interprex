@@ -52,10 +52,9 @@ fn normalize_issue(value: GithubIssue) -> Result<Issue> {
         });
     }
     Ok(Issue {
-        number: IssueNumber::new(value.number).map_err(|error| ProviderError::External {
+        number: IssueNumber::new(value.number).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize issue",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         title: value.title,
         body: value.body,

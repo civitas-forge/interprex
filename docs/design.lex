@@ -41,7 +41,7 @@ Design
     tracker:
         Issues and labels.
     code review:
-        Change requests, reviews and their findings, stand-alone threads,
+        Change requests, reviews and their findings, standalone threads,
         unanchored comments, outstanding review requests, check results and
         the draft-to-ready transition.
     jobs:
@@ -71,8 +71,8 @@ Design
     `CodeReviewsProvider::change_request` returns one complete observation of
     the collections declared by `ChangeRequest`. Every collection is fully
     paginated. GitHub does not provide a transaction across its pull-request,
-    review, thread and request endpoints, so values may have changed between
-    those reads. When a thread names a review absent from the first review
+    review, thread, unanchored-comment and request endpoints, so values may
+    have changed between those reads. When a thread names a review absent from the first review
     response, the provider rereads reviews and threads once. A relationship
     that remains inconsistent is returned as unrepresentable data instead of
     being deleted or guessed.
@@ -121,7 +121,7 @@ Design
 
     A thread whose initial comment names a review is nested under that review as
     a finding. This includes a change author's self-review and a draft review.
-    A thread with no originating review remains a stand-alone thread. Replies
+    A thread with no originating review remains a standalone thread. Replies
     do not move a thread or create another review. Unanchored comments remain
     separate because they have no source location.
 

@@ -391,18 +391,16 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
         "Organization" => ReviewActorKind::Organization,
         "EnterpriseUserAccount" => ReviewActorKind::EnterpriseUser,
         other => {
-            return Err(ProviderError::External {
+            return Err(ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review actor",
-                message: format!("unknown review actor kind {other}"),
+                fact: format!("unknown review actor kind {other}"),
             });
         }
     };
     Ok(ReviewActor {
-        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review actor",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         login,
         kind,
@@ -411,10 +409,9 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
 
 fn ghost_actor(id: String) -> Result<ReviewActor> {
     Ok(ReviewActor {
-        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize unavailable review actor",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         login: "ghost".to_owned(),
         kind: ReviewActorKind::Placeholder,
@@ -427,19 +424,17 @@ fn normalize_disposition(value: &str) -> Result<ReviewDisposition> {
         "CHANGES_REQUESTED" => Ok(ReviewDisposition::ChangesRequested),
         "COMMENTED" => Ok(ReviewDisposition::Commented),
         "DISMISSED" => Ok(ReviewDisposition::Dismissed),
-        other => Err(ProviderError::External {
+        other => Err(ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review",
-            message: format!("unknown review state {other}"),
+            fact: format!("unknown review state {other}"),
         }),
     }
 }
 
-fn normalize_line(value: u64, operation: &'static str) -> Result<ReviewLine> {
-    ReviewLine::new(value).map_err(|error| ProviderError::External {
+fn normalize_line(value: u64) -> Result<ReviewLine> {
+    ReviewLine::new(value).map_err(|error| ProviderError::Unrepresentable {
         provider: "github",
-        operation,
-        message: error.to_string(),
+        fact: error.to_string(),
     })
 }
 
@@ -450,26 +445,19 @@ fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
     }
 }
 
-fn normalize_line_range(
-    end: Option<u64>,
-    start: Option<u64>,
-    operation: &'static str,
-) -> Result<Option<ReviewLineRange>> {
+fn normalize_line_range(end: Option<u64>, start: Option<u64>) -> Result<Option<ReviewLineRange>> {
     let Some(end) = end else {
         if start.is_some() {
-            return Err(ProviderError::External {
+            return Err(ProviderError::Unrepresentable {
                 provider: "github",
-                operation,
-                message: "review range has a start line without an end line".to_owned(),
+                fact: "review range has a start line without an end line".to_owned(),
             });
         }
         return Ok(None);
     };
     Ok(Some(ReviewLineRange {
-        start: start
-            .map(|line| normalize_line(line, operation))
-            .transpose()?,
-        end: normalize_line(end, operation)?,
+        start: start.map(normalize_line).transpose()?,
+        end: normalize_line(end)?,
     }))
 }
 
@@ -477,29 +465,21 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
     let anchor = match thread.subject_type {
         ThreadSubjectType::File => ReviewAnchor::File,
         ThreadSubjectType::Line => {
-            let side = thread.diff_side.ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review thread location",
-                message: format!("line thread {} has no diff side", thread.id),
-            })?;
-            let original = normalize_line_range(
-                thread.original_line,
-                thread.original_start_line,
-                "normalize review thread location",
-            )?
-            .ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review thread location",
-                message: format!("line thread {} has no original line", thread.id),
-            })?;
+            let side = thread
+                .diff_side
+                .ok_or_else(|| ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("line thread {} has no diff side", thread.id),
+                })?;
+            let original = normalize_line_range(thread.original_line, thread.original_start_line)?
+                .ok_or_else(|| ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("line thread {} has no original line", thread.id),
+                })?;
             ReviewAnchor::Lines {
                 side: normalize_diff_side(side),
                 original,
-                current: normalize_line_range(
-                    thread.line,
-                    thread.start_line,
-                    "normalize review thread location",
-                )?,
+                current: normalize_line_range(thread.line, thread.start_line)?,
             }
         }
     };
@@ -512,10 +492,11 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
 fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
     let comment_id = value.id;
     Ok(ReviewComment {
-        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize review comment",
-            message: error.to_string(),
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
         })?,
         author: match value.author {
             Some(author) => actor(author.id, author.login, &author.kind)?,
@@ -530,10 +511,11 @@ fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
 fn normalize_unanchored_comment(value: GithubUnanchoredComment) -> Result<ReviewComment> {
     let comment_id = value.node_id;
     Ok(ReviewComment {
-        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize unanchored comment",
-            message: error.to_string(),
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
         })?,
         author: match value.user {
             Some(author) => actor(author.node_id, author.login, &author.kind)?,
@@ -569,10 +551,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
             let request_identifier = format!("{}/{}", organization.login, slug);
             (
                 ReviewTarget::Team(ReviewTeam {
-                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::Unrepresentable {
                         provider: "github",
-                        operation: "normalize review request",
-                        message: error.to_string(),
+                        fact: error.to_string(),
                     })?,
                     slug,
                     name,
@@ -583,10 +564,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
         }
         Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => (
             ReviewTarget::Team(ReviewTeam {
-                id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                id: ReviewTeamId::new(id).map_err(|error| ProviderError::Unrepresentable {
                     provider: "github",
-                    operation: "normalize review request",
-                    message: error.to_string(),
+                    fact: error.to_string(),
                 })?,
                 slug,
                 name,
@@ -597,10 +577,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
         None => (ReviewTarget::Unavailable, None),
     };
     Ok(ReviewRequest {
-        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
+        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review request",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         target,
         request_target,
@@ -653,30 +632,31 @@ fn normalize_change_request(
         };
         let state = if review.state == "PENDING" {
             if review.submitted_at.is_some() {
-                return Err(ProviderError::External {
+                return Err(ProviderError::Unrepresentable {
                     provider: "github",
-                    operation: "normalize review",
-                    message: format!("draft review {} has a submission time", review.node_id),
+                    fact: format!("draft review {} has a submission time", review.node_id),
                 });
             }
             ReviewState::Draft
         } else {
-            let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review",
-                message: format!("submitted review {} has no submission time", review.node_id),
-            })?;
+            let submitted_at =
+                review
+                    .submitted_at
+                    .ok_or_else(|| ProviderError::Unrepresentable {
+                        provider: "github",
+                        fact: format!("submitted review {} has no submission time", review.node_id),
+                    })?;
             ReviewState::Submitted {
                 disposition: normalize_disposition(&review.state)?,
                 submitted_at,
             }
         };
-        let id =
-            ReviewId::new(review.node_id.clone()).map_err(|error| ProviderError::External {
+        let id = ReviewId::new(review.node_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review",
-                message: error.to_string(),
-            })?;
+                fact: error.to_string(),
+            }
+        })?;
         review_positions.insert(review.node_id, normalized_reviews.len());
         normalized_reviews.push(Review {
             id,
@@ -686,10 +666,9 @@ fn normalize_change_request(
                 .map(|app| {
                     Ok(ReviewApp {
                         id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
-                            ProviderError::External {
+                            ProviderError::Unrepresentable {
                                 provider: "github",
-                                operation: "normalize review app",
-                                message: error.to_string(),
+                                fact: error.to_string(),
                             }
                         })?,
                         slug: app.slug,
@@ -710,20 +689,20 @@ fn normalize_change_request(
     for thread in threads {
         let location = normalize_review_location(&thread)?;
         let mut comments = thread.comments.nodes.into_iter();
-        let initial = comments.next().ok_or_else(|| ProviderError::External {
-            provider: "github",
-            operation: "normalize review thread",
-            message: format!("review thread {} has no comments", thread.id),
-        })?;
+        let initial = comments
+            .next()
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("review thread {} has no comments", thread.id),
+            })?;
         let review_position = match initial.pull_request_review.as_ref() {
             None => None,
             Some(review) => match review_positions.get(&review.id) {
                 Some(position) => Some(*position),
                 None => {
-                    return Err(ProviderError::External {
+                    return Err(ProviderError::Unrepresentable {
                         provider: "github",
-                        operation: "normalize review thread",
-                        message: format!(
+                        fact: format!(
                             "review thread {} references missing review {}",
                             thread.id, review.id
                         ),
@@ -732,10 +711,9 @@ fn normalize_change_request(
             },
         };
         let normalized = ReviewThread {
-            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review thread",
-                message: error.to_string(),
+                fact: error.to_string(),
             })?,
             location,
             outdated: thread.outdated,
@@ -772,10 +750,9 @@ fn normalize_change_request(
 
     Ok(ChangeRequest {
         number: ChangeRequestNumber::new(value.number).map_err(|error| {
-            ProviderError::External {
+            ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize change request",
-                message: error.to_string(),
+                fact: error.to_string(),
             }
         })?,
         title: value.title,
@@ -1286,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn reviews_refuse_unknown_actor_kinds() {
+    fn unknown_actor_kinds_are_unrepresentable() {
         let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
                 .expect("pull request fixture");
@@ -1297,13 +1274,10 @@ mod tests {
 
         let error =
             normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("unknown actor kind must be refused");
+                .expect_err("unknown actor kind must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review actor",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown review actor kind")
         ));
     }
 
@@ -1319,13 +1293,10 @@ mod tests {
 
         let error =
             normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("submitted review without time must be refused");
+                .expect_err("submitted review without time must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no submission time")
         ));
     }
 
@@ -1352,13 +1323,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("thread without an initial comment must be refused");
+        .expect_err("thread without an initial comment must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review thread",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no comments")
         ));
     }
 
@@ -1387,13 +1355,10 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("missing originating submission must be refused");
+        .expect_err("missing originating submission must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review thread",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("references missing review")
         ));
     }
 
@@ -1430,7 +1395,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
         )
-        .expect("normalizes stand-alone thread");
+        .expect("normalizes standalone thread");
 
         assert_eq!(change_request.standalone_threads.len(), 1);
         assert_eq!(
@@ -1471,7 +1436,7 @@ mod tests {
     }
 
     #[test]
-    fn draft_reviews_refuse_a_submission_time() {
+    fn draft_reviews_with_a_submission_time_are_unrepresentable() {
         let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
                 .expect("pull request fixture");
@@ -1482,13 +1447,10 @@ mod tests {
 
         let error =
             normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("draft review with a submission time must be refused");
+                .expect_err("draft review with a submission time must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has a submission time")
         ));
     }
 
