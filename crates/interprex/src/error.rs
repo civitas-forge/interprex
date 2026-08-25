@@ -53,6 +53,13 @@ pub enum ProviderError {
         operation: &'static str,
         message: String,
     },
+    /// The caller's request contradicts itself; correcting the request, not
+    /// retrying it, resolves this error.
+    #[error("invalid input for {provider}: {fact}")]
+    InvalidInput {
+        provider: &'static str,
+        fact: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

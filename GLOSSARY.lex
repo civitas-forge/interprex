@@ -1,6 +1,6 @@
 Glossary
 
-    These definitions name the concepts in the development-platform
+    These definitions name recurring concepts in the development-platform
     interfaces. The record client's vocabulary is defined in
     [./docs/contracts/records.lex].
 
@@ -41,6 +41,7 @@ Glossary
         such as a GitHub user or a named app installation. It is never who a
         review is attributed to.
     unrepresentable data:
-        Provider data that an Interprex model cannot faithfully represent
-        because required facts are missing or inconsistent. Interprex
-        returns `ProviderError::Unrepresentable` instead of approximating.
+        Provider data that an Interprex model cannot faithfully represent:
+        required facts are missing or inconsistent, or the entity lies
+        outside the domain's model. Interprex returns
+        `ProviderError::Unrepresentable` instead of approximating.

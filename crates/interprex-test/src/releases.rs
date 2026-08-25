@@ -64,10 +64,9 @@ impl ReleasesProvider for FakeProvider {
             length.checked_add(chunk.len() as u64)
         });
         if actual_length != Some(content_length) {
-            return Err(ProviderError::External {
+            return Err(ProviderError::InvalidInput {
                 provider: "fake",
-                operation: "upload release asset",
-                message: format!(
+                fact: format!(
                     "asset upload declared {content_length} bytes but yielded {}",
                     actual_length.map_or_else(
                         || "an overflowing length".to_owned(),
