@@ -1,10 +1,15 @@
 [package]
 name = "interprex"
-description = "Provider-neutral development-platform models and contracts"
+description = "Provider-neutral models and async interfaces for development platforms"
+categories = ["development-tools"]
+documentation = "https://docs.rs/interprex"
 edition.workspace = true
+keywords = ["code-review", "devops", "provider", "repository", "workflow"]
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-publish = false
 
 [dependencies]
 async-trait.workspace = true
