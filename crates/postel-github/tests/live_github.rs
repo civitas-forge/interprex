@@ -16,7 +16,7 @@ use std::{
 use fs2::FileExt;
 use postel::{
     CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
-    ReviewAnchor, ReviewAuthor, ReviewTarget,
+    ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadStatus,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -216,19 +216,32 @@ async fn configured_code_review_observation_matches_current_provider_data() {
         .iter()
         .filter(|item| item.state == postel::ReviewState::Draft)
         .count();
+    let findings = review
+        .reviews
+        .iter()
+        .flat_map(|item| item.findings.iter())
+        .chain(review.discussions.iter())
+        .collect::<Vec<_>>();
+    let open_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Open)
+        .count();
+    let resolved_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Resolved)
+        .count();
+    assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} findings, {} discussions, {} conversation comments, {} outstanding requests",
+        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} discussions, {} conversation comments, {} outstanding requests",
         number.get(),
         review.reviews.len(),
         author_review_count,
         other_review_count,
         unknown_review_count,
         draft_review_count,
-        review
-            .reviews
-            .iter()
-            .map(|submitted| submitted.findings.len())
-            .sum::<usize>(),
+        findings.len(),
+        open_finding_count,
+        resolved_finding_count,
         review.discussions.len(),
         review.conversation.len(),
         review.outstanding_requests.len()
