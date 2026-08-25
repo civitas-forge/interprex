@@ -6,9 +6,10 @@ Glossary
 
 
     change request:
-        A git branch published as a provider pull or merge request, proposing
-        a change for merge. `ChangeRequest` is one complete observation of a
-        change request, open or closed, and its code-review data.
+        A proposed change published for merge as a provider pull or merge
+        request. Its source is typically a git branch; the request outlives
+        that branch. `ChangeRequest` is one complete observation of a change
+        request, open or closed, and its code-review data.
     code review:
         The domain that acts on change requests so merging can be approved.
         It covers reviews, findings, standalone threads, unanchored

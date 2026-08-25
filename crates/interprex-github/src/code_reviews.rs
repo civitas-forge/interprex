@@ -152,12 +152,8 @@ struct GitRef {
 struct GithubUser {
     node_id: String,
     login: String,
-    #[serde(rename = "type", default = "default_user_kind")]
-    kind: String,
-}
-
-fn default_user_kind() -> String {
-    "User".to_owned()
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -407,6 +403,14 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
     })
 }
 
+fn rest_actor(user: GithubUser) -> Result<ReviewActor> {
+    let kind = user.kind.ok_or_else(|| ProviderError::Unrepresentable {
+        provider: "github",
+        fact: format!("actor {} has no type", user.login),
+    })?;
+    actor(user.node_id, user.login, &kind)
+}
+
 fn ghost_actor(id: String) -> Result<ReviewActor> {
     Ok(ReviewActor {
         id: ReviewActorId::new(id).map_err(|error| ProviderError::Unrepresentable {
@@ -518,7 +522,7 @@ fn normalize_unanchored_comment(value: GithubUnanchoredComment) -> Result<Review
             }
         })?,
         author: match value.user {
-            Some(author) => actor(author.node_id, author.login, &author.kind)?,
+            Some(author) => rest_actor(author)?,
             None => ghost_actor(format!(
                 "unavailable-unanchored-comment-author:{comment_id}"
             ))?,
@@ -596,7 +600,7 @@ fn normalize_change_request(
 ) -> Result<ChangeRequest> {
     let author_provider_id = value.user.as_ref().map(|user| user.node_id.clone());
     let author = match value.user {
-        Some(user) => actor(user.node_id, user.login, &user.kind)?,
+        Some(user) => rest_actor(user)?,
         None => ghost_actor(format!("unavailable-change-author:{}", value.node_id))?,
     };
     let base_sha = value.base.sha;
@@ -622,7 +626,7 @@ fn normalize_change_request(
             _ => ReviewRelationship::Unknown,
         };
         let review_author = match review.user {
-            Some(user) => actor(user.node_id, user.login, &user.kind)?,
+            Some(user) => rest_actor(user)?,
             None => ghost_actor(format!("unavailable-review-author:{}", review.node_id))?,
         };
         let review_author = match relationship {
@@ -756,10 +760,15 @@ fn normalize_change_request(
             }
         })?,
         title: value.title,
-        state: if value.state == "open" {
-            OpenClosed::Open
-        } else {
-            OpenClosed::Closed
+        state: match value.state.as_str() {
+            "open" => OpenClosed::Open,
+            "closed" => OpenClosed::Closed,
+            other => {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("unknown change request state {other}"),
+                });
+            }
         },
         draft: value.draft,
         commits: CommitRange {
@@ -1270,7 +1279,7 @@ mod tests {
         let mut reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
-        reviews[0].user.as_mut().expect("reviewer").kind = "Repository".to_owned();
+        reviews[0].user.as_mut().expect("reviewer").kind = Some("Repository".to_owned());
 
         let error =
             normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
@@ -1278,6 +1287,41 @@ mod tests {
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown review actor kind")
+        ));
+    }
+
+    #[test]
+    fn actors_without_a_type_are_unrepresentable() {
+        let pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].user.as_mut().expect("reviewer").kind = None;
+
+        let error =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect_err("missing actor type must be unrepresentable");
+        assert!(matches!(
+            error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no type")
+        ));
+    }
+
+    #[test]
+    fn unknown_change_request_states_are_unrepresentable() {
+        let mut pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        pull_request.state = "reopening".to_owned();
+
+        let error =
+            normalize_change_request(pull_request, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                .expect_err("unknown state must be unrepresentable");
+        assert!(matches!(
+            error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown change request state")
         ));
     }
 

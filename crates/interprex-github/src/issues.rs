@@ -58,10 +58,15 @@ fn normalize_issue(value: GithubIssue) -> Result<Issue> {
         })?,
         title: value.title,
         body: value.body,
-        state: if value.state == "open" {
-            OpenClosed::Open
-        } else {
-            OpenClosed::Closed
+        state: match value.state.as_str() {
+            "open" => OpenClosed::Open,
+            "closed" => OpenClosed::Closed,
+            other => {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("unknown issue state {other}"),
+                });
+            }
         },
         labels: value.labels.into_iter().map(Into::into).collect(),
         updated_at: value.updated_at,
@@ -139,5 +144,18 @@ mod tests {
         let issue = normalize_issue(response).expect("normalizes");
         assert_eq!(issue.number.get(), 11);
         assert_eq!(issue.labels[0].name, "feature");
+    }
+
+    #[test]
+    fn unknown_issue_states_are_unrepresentable() {
+        let mut response: GithubIssue =
+            serde_json::from_str(include_str!("../tests/fixtures/issue.json")).expect("fixture");
+        response.state = "reopening".to_owned();
+        let error = normalize_issue(response).expect_err("unknown state must be unrepresentable");
+        assert!(matches!(
+            error,
+            interprex::ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("unknown issue state")
+        ));
     }
 }
