@@ -1,6 +1,6 @@
 Glossary
 
-    These definitions name the concepts in Postel's public interfaces.
+    These definitions name the concepts in Interprex's public interfaces.
 
     domain:
         One area of a development platform with its own provider interface:
@@ -9,7 +9,7 @@ Glossary
         An implementation of one or more domain interfaces for an external
         system.
     adapter:
-        A provider implementation that translates between Postel models and an
+        A provider implementation that translates between Interprex models and an
         external system's transport and data formats.
     client:
         The provider-owned code that authenticates and communicates with its
@@ -59,7 +59,7 @@ Glossary
         identity.
     refusal:
         A structured provider error returned when required data is missing,
-        inconsistent or cannot be represented by a Postel model.
+        inconsistent or cannot be represented by a Interprex model.
     record path:
         A validated relative object-store path used for exact reads, creates and
         prefix listings.

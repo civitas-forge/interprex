@@ -1,27 +1,27 @@
 Design
 
-    Postel is a set of Rust libraries between callers and development-platform
+    Interprex is a set of Rust libraries between callers and development-platform
     providers. Its public models and asynchronous traits use domain language;
     provider adapters own authentication, endpoint selection, pagination and
     response normalization.
 
 1. Shape
 
-    `postel` defines provider-neutral values and five domain interfaces. It
-    depends on no adapter. `postel-github` implements those interfaces with
+    `interprex` defines provider-neutral values and five domain interfaces. It
+    depends on no adapter. `interprex-github` implements those interfaces with
     GitHub REST and GraphQL. GitHub identifiers and response types remain
-    private to that crate. `postel-test` implements the same interfaces with
+    private to that crate. `interprex-test` implements the same interfaces with
     state held in memory so consumer rules use the public interface without a
     network or third-party account.
 
-    `postel-bucket` is independent from the development-platform crates. It
+    `interprex-bucket` is independent from the development-platform crates. It
     provides create-only records over an injected `ObjectStore`; its guaranteed
     behavior is [./contracts/records.lex].
 
     A consumer links the crates it needs and constructs providers at its
-    composition root. Postel owns no process, schedule, command line or
+    composition root. Interprex owns no process, schedule, command line or
     orchestration policy. Git operations such as commits, refs, branches and
-    pushes remain Git operations rather than Postel domains.
+    pushes remain Git operations rather than Interprex domains.
 
 2. Domains
 
@@ -30,9 +30,9 @@ Design
     provider.
 
     `ProviderSelections::from_lookup` reads each selection independently from
-    `POSTEL_CODE_HOSTING_PROVIDER`, `POSTEL_TRACKER_PROVIDER`,
-    `POSTEL_CODE_REVIEWS_PROVIDER`, `POSTEL_JOBS_PROVIDER` and
-    `POSTEL_RELEASES_PROVIDER`. An unset or blank selection defaults to
+    `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`,
+    `INTERPREX_CODE_REVIEWS_PROVIDER`, `INTERPREX_JOBS_PROVIDER` and
+    `INTERPREX_RELEASES_PROVIDER`. An unset or blank selection defaults to
     `github`. These selections name providers; callers still construct the
     corresponding implementations.
 
@@ -49,13 +49,13 @@ Design
     releases:
         Releases and streaming assets.
 
-    An adapter returns Postel values or a structured refusal. It does not
+    An adapter returns Interprex values or a structured refusal. It does not
     return vendor response types or fill a required fact with an approximation.
 
 3. Provider Construction
 
-    `postel-github::from_config` accepts typed configuration directly.
-    `postel-github::from_project` reads `<project-root>/.postel.toml`; the
+    `interprex-github::from_config` accepts typed configuration directly.
+    `interprex-github::from_project` reads `<project-root>/.interprex.toml`; the
     caller supplies the project root. The forms do not merge.
 
     A GitHub provider may hold a user token and several named app
@@ -77,7 +77,7 @@ Design
 
     The proposed change carries its current base and head commits. A review
     carries only the reviewed head commit because GitHub does not retain the
-    historical base commit for each review. Postel does not pair a historical
+    historical base commit for each review. Interprex does not pair a historical
     head with the current base and present it as a historical range.
 
     Every review record remains independent, including repeated reviews by the
@@ -97,7 +97,7 @@ Design
         The provider returned stable actor identifiers that differ, and the
         variant contains the other actor.
     unknown:
-        At least one stable actor identifier was unavailable, so Postel cannot
+        At least one stable actor identifier was unavailable, so Interprex cannot
         compare them. The variant contains the observed or placeholder actor.
 
     `ReviewAuthor::relationship` returns the category and
@@ -107,7 +107,7 @@ Design
     the provider's authentication identity.
 
     A caller may decide that only `other` reviews count as independent evidence.
-    Postel does not make that policy decision, and `unknown` never becomes
+    Interprex does not make that policy decision, and `unknown` never becomes
     `other` merely because unavailable actors receive distinct placeholder
     identifiers.
 
@@ -131,7 +131,7 @@ Design
     Unavailable targets remain present. A request describes current state and
     is not proof that a review exists.
 
-    Postel returns these observations without assigning review rounds, choosing
+    Interprex returns these observations without assigning review rounds, choosing
     a previous review, deciding that a reviewer is stale, classifying finding
     severity or recommending a next action. Callers derive those answers from
     their own configuration and policy.
@@ -143,7 +143,7 @@ Design
     secret encryption and asset streaming. The GitHub adapter uses Octocrab but
     exposes no Octocrab type through a domain interface.
 
-    Callers own why an operation occurs and what follows from its result. Postel
+    Callers own why an operation occurs and what follows from its result. Interprex
     can request a reviewer, resolve a thread or publish a check; it does not
     decide when those operations should happen. The same distinction keeps
     review rounds and convergence rules outside the library while keeping all

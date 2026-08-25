@@ -1,9 +1,9 @@
 [workspace]
 members = [
-    "crates/postel",
-    "crates/postel-bucket",
-    "crates/postel-github",
-    "crates/postel-test",
+    "crates/interprex",
+    "crates/interprex-bucket",
+    "crates/interprex-github",
+    "crates/interprex-test",
 ]
 resolver = "3"
 

@@ -1,6 +1,6 @@
 Record Client Contract
 
-    `postel-bucket` provides exact object reads, create-only writes and prefix
+    `interprex-bucket` provides exact object reads, create-only writes and prefix
     listings over an injected `ObjectStore`. The client supplies storage
     behavior; callers own record schemas and path conventions.
 

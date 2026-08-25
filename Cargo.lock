@@ -938,6 +938,68 @@ dependencies = [
 ]
 
 [[package]]
+name = "interprex"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "interprex-bucket"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "object_store",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "interprex-github"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "bytes",
+ "chrono",
+ "crypto_box",
+ "fs2",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "interprex",
+ "jsonwebtoken",
+ "octocrab",
+ "percent-encoding",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+]
+
+[[package]]
+name = "interprex-test"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "interprex",
+ "secrecy",
+ "tokio",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1343,68 +1405,6 @@ dependencies = [
  "cpufeatures 0.2.17",
  "opaque-debug",
  "universal-hash",
-]
-
-[[package]]
-name = "postel"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "chrono",
- "futures-util",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "postel-bucket"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "futures-util",
- "object_store",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "postel-github"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64",
- "bytes",
- "chrono",
- "crypto_box",
- "fs2",
- "futures-util",
- "http",
- "http-body",
- "http-body-util",
- "jsonwebtoken",
- "octocrab",
- "percent-encoding",
- "postel",
- "secrecy",
- "serde",
- "serde_json",
- "tokio",
- "toml",
-]
-
-[[package]]
-name = "postel-test"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "bytes",
- "futures-util",
- "postel",
- "secrecy",
- "tokio",
 ]
 
 [[package]]

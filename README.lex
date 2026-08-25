@@ -1,11 +1,11 @@
-Postel
+Interprex
 
-    Postel is a Rust library for working with development platforms through
+    Interprex is a Rust library for working with development platforms through
     provider-neutral domain interfaces. Callers use code hosting, issue
     tracking, code review, CI jobs and releases without depending on GitHub
     response types or endpoint names.
 
-    Postel is linked into a caller. It has no binary, server or command line.
+    Interprex is linked into a caller. It has no binary, server or command line.
     A caller constructs providers at its composition root and may select a
     different provider for each domain. The included GitHub provider implements
     all five domains, and the in-memory provider implements the same interfaces
@@ -43,40 +43,40 @@ Postel
     whose relationship is unknown. The change-author variant refers to the
     proposed change's author instead of storing a second, independently
     writable copy. Unknown means the provider did not return enough identity
-    information to compare the actors; it does not mean other. Postel returns
+    information to compare the actors; it does not mean other. Interprex returns
     this fact and leaves decisions about independent review evidence to the
     caller.
 
     A thread attached to a review is one of that review's findings, including a
     self-review finding from the change author. A thread with no originating
     review is an independent discussion. General conversation has no source
-    location. Postel does not derive rounds, stale reviewers, severity or next
+    location. Interprex does not derive rounds, stale reviewers, severity or next
     actions from these records.
 
 3. Crates
 
-    `postel`:
+    `interprex`:
         Provider-neutral models, errors and asynchronous domain interfaces.
-    `postel-github`:
+    `interprex-github`:
         The GitHub adapter and its typed configuration.
-    `postel-test`:
+    `interprex-test`:
         A stateful in-memory provider for consumer tests.
-    `postel-bucket`:
+    `interprex-bucket`:
         An independent create-only record client over `ObjectStore`.
 
 4. Configuration
 
     Construct the GitHub provider directly with `from_config`, or pass a
-    project root to `from_project` to read `.postel.toml`. The file form uses
+    project root to `from_project` to read `.interprex.toml`. The file form uses
     `[provider.github]` for `GH_TOKEN` and
     `[provider.github.apps.<name>]` for an app's `APP_ID`, `INSTALLATION_ID` and
     `PRIVATE_KEY`. Missing credentials are reported when an operation first
     needs them, and credential values do not appear in debug output or errors.
 
     `ProviderSelections::from_lookup` reads independent provider names from
-    `POSTEL_CODE_HOSTING_PROVIDER`, `POSTEL_TRACKER_PROVIDER`,
-    `POSTEL_CODE_REVIEWS_PROVIDER`, `POSTEL_JOBS_PROVIDER` and
-    `POSTEL_RELEASES_PROVIDER`. An unset or blank value selects `github`.
+    `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`,
+    `INTERPREX_CODE_REVIEWS_PROVIDER`, `INTERPREX_JOBS_PROVIDER` and
+    `INTERPREX_RELEASES_PROVIDER`. An unset or blank value selects `github`.
 
 5. Documentation
 

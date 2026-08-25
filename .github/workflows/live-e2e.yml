@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   live-github:
-    name: Read the shared sandbox through Postel
+    name: Read the shared sandbox through Interprex
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -24,11 +24,11 @@ jobs:
 
       - name: Run sparse serialized live checks
         env:
-          POSTEL_LIVE_GITHUB: "1"
-          POSTEL_E2E_GH_TOKEN: ${{ secrets.POSTEL_E2E_GH_TOKEN }}
-          POSTEL_E2E_REPOSITORY: faictor/postel-sandbox
-          POSTEL_E2E_INTERVAL_SECONDS: "3"
+          INTERPREX_LIVE_GITHUB: "1"
+          INTERPREX_E2E_GH_TOKEN: ${{ secrets.POSTEL_E2E_GH_TOKEN }}
+          INTERPREX_E2E_REPOSITORY: civitas-forge/postel-sandbox
+          INTERPREX_E2E_INTERVAL_SECONDS: "3"
         run: >-
-          cargo test -p postel-github --test live_github
+          cargo test -p interprex-github --test live_github
           sandbox_repository_and_label_reads_follow_the_real_consumer_path --
           --ignored --exact --test-threads=1

@@ -1,0 +1,17 @@
+{
+  "id": 88,
+  "tag_name": "v0.1.0",
+  "name": "Interprex 0.1.0",
+  "body": "Fixture release",
+  "draft": true,
+  "prerelease": false,
+  "assets": [
+    {
+      "id": 99,
+      "name": "interprex.tar.gz",
+      "label": "Darwin arm64",
+      "size": 1024,
+      "browser_download_url": "https://example.invalid/interprex.tar.gz"
+    }
+  ]
+}

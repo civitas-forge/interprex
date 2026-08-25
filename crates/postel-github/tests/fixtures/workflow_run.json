@@ -1,8 +1,0 @@
-{
-  "id": 123456,
-  "name": "quality",
-  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "status": "completed",
-  "conclusion": "success",
-  "html_url": "https://github.com/faictor/postel-sandbox/actions/runs/123456"
-}
