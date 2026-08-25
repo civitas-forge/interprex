@@ -41,8 +41,9 @@ Implementation Stack
 
     The reviewer-request mutation is verified without a sandbox write. The
     live suite is read-only ([./verify.lex]), so the loopback transport test
-    asserts the exact `requestReviewsByLogin` document and the typed partition
-    into user logins, bot logins and team slugs.
+    asserts the exact `requestReviewsByLogin` document, the partition into user
+    logins, bot logins with Github's required `[bot]` suffix, and canonical
+    `organization/team-slug` team identifiers.
 
 2. The Bucket Client
 

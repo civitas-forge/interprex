@@ -37,8 +37,9 @@ Interface
             submission, its reviewed revision, every inline thread and each
             outstanding review request; identify which threads are findings
             from each submission; derive the commit range between a reviewer's
-            submissions; resolve a review thread, request users, bots or teams,
-            mark a draft ready and publish an app-owned check outcome.
+            submissions; resolve a review thread; request users and bots by
+            login or teams by canonical provider identifier; mark a draft ready
+            and publish an app-owned check outcome.
         jobs:
             Dispatch a workflow with inputs, read one run and cancel one run.
         releases:

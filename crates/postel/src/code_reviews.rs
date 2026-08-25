@@ -44,6 +44,7 @@ opaque_review_id!(
 opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
 opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
 opaque_review_id!(ReviewRequestId, "review request id", "review request");
+opaque_review_id!(ReviewActorId, "review actor id", "review actor");
 
 /// Two commit endpoints whose relationship is meaningful to the caller.
 ///
@@ -69,12 +70,22 @@ pub enum ReviewActorKind {
     User,
     Bot,
     Placeholder,
+    Organization,
+    EnterpriseUser,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ReviewActor {
+    pub id: ReviewActorId,
     pub login: String,
     pub kind: ReviewActorKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewTeamKind {
+    Organization,
+    Enterprise,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,6 +93,7 @@ pub struct ReviewTeam {
     pub id: String,
     pub slug: String,
     pub name: String,
+    pub kind: ReviewTeamKind,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +101,21 @@ pub struct ReviewTeam {
 pub enum ReviewTarget {
     Actor(ReviewActor),
     Team(ReviewTeam),
+    Unavailable,
+}
+
+/// One provider address to add to the outstanding reviewer set.
+///
+/// User and bot values are logins. A team value is its canonical provider
+/// identifier, such as `organization/team-slug` on GitHub. Targets observed
+/// in a read can contain richer facts or unavailable identities, so writes use
+/// this deliberately narrower shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRequestTarget {
+    User(String),
+    Bot(String),
+    Team(String),
 }
 
 /// One outstanding request for a user, bot or team to review the change.
@@ -132,7 +159,7 @@ pub struct ReviewComment {
     pub updated_at: DateTime<Utc>,
 }
 
-/// A source location as GitHub reports it after subsequent revisions.
+/// The current and original source location of an inline review thread.
 ///
 /// `line` is the current line when the anchor still maps to the latest diff.
 /// `original_line` retains the line selected when the finding was created.
@@ -302,7 +329,7 @@ pub trait CodeReviewsProvider: Send + Sync {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[ReviewTarget],
+        reviewers: &[ReviewRequestTarget],
     ) -> Result<()>;
     async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()>;
     async fn publish_check(
@@ -321,6 +348,7 @@ mod tests {
 
     fn actor(login: &str) -> ReviewActor {
         ReviewActor {
+            id: ReviewActorId::new(format!("actor-{login}")).expect("actor id"),
             login: login.to_owned(),
             kind: ReviewActorKind::Bot,
         }
@@ -352,6 +380,7 @@ mod tests {
                 head_sha: "revision-b".to_owned(),
             },
             author: ReviewActor {
+                id: ReviewActorId::new("actor-author").expect("actor id"),
                 login: "author".to_owned(),
                 kind: ReviewActorKind::User,
             },
@@ -400,6 +429,7 @@ mod tests {
     fn author_threads_remain_visible_without_becoming_review_findings() {
         let reviewer = actor("reviewer");
         let author = ReviewActor {
+            id: ReviewActorId::new("actor-author").expect("actor id"),
             login: "author".to_owned(),
             kind: ReviewActorKind::User,
         };

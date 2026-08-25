@@ -6,6 +6,10 @@
   "draft": true,
   "head": { "sha": "cccccccccccccccccccccccccccccccccccccccc" },
   "base": { "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-  "user": { "login": "arthur-debert", "type": "User" },
+  "user": {
+    "node_id": "U_kwDOArthur",
+    "login": "arthur-debert",
+    "type": "User"
+  },
   "updated_at": "2026-08-24T10:05:00Z"
 }

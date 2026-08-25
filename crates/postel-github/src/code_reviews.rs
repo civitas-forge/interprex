@@ -12,10 +12,10 @@ use async_trait::async_trait;
 use octocrab::Page;
 use postel::{
     CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
-    OpenClosed, ProviderError, Repository, Result, ReviewActor, ReviewActorKind, ReviewApp,
-    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewRequest,
-    ReviewRequestId, ReviewSubmission, ReviewSubmissionId, ReviewTarget, ReviewTeam, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    OpenClosed, ProviderError, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewApp, ReviewComment, ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewRequest,
+    ReviewRequestId, ReviewRequestTarget, ReviewSubmission, ReviewSubmissionId, ReviewTarget,
+    ReviewTeam, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -31,9 +31,16 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: Str
           id isResolved path line originalLine
           comments(first: 100) {
             nodes {
-              databaseId body createdAt updatedAt
-              author { login __typename }
-              pullRequestReview { databaseId }
+              id body createdAt updatedAt
+              author {
+                login __typename
+                ... on Bot { id }
+                ... on EnterpriseUserAccount { id }
+                ... on Mannequin { id }
+                ... on Organization { id }
+                ... on User { id }
+              }
+              pullRequestReview { id }
             }
             pageInfo { hasNextPage endCursor }
           }
@@ -50,9 +57,16 @@ query ReviewThreadComments($threadId: ID!, $cursor: String) {
     ... on PullRequestReviewThread {
       comments(first: 100, after: $cursor) {
         nodes {
-          databaseId body createdAt updatedAt
-          author { login __typename }
-          pullRequestReview { databaseId }
+          id body createdAt updatedAt
+          author {
+            login __typename
+            ... on Bot { id }
+            ... on EnterpriseUserAccount { id }
+            ... on Mannequin { id }
+            ... on Organization { id }
+            ... on User { id }
+          }
+          pullRequestReview { id }
         }
         pageInfo { hasNextPage endCursor }
       }
@@ -132,6 +146,7 @@ struct GitRef {
 
 #[derive(Deserialize)]
 struct GithubUser {
+    node_id: String,
     login: String,
     #[serde(rename = "type", default = "default_user_kind")]
     kind: String,
@@ -150,7 +165,7 @@ struct GithubApp {
 
 #[derive(Deserialize)]
 struct GithubReview {
-    id: u64,
+    node_id: String,
     user: Option<GithubUser>,
     body: String,
     state: String,
@@ -212,8 +227,7 @@ struct CommentConnection {
 
 #[derive(Deserialize)]
 struct CommentNode {
-    #[serde(rename = "databaseId")]
-    database_id: u64,
+    id: String,
     body: String,
     #[serde(rename = "createdAt")]
     created_at: chrono::DateTime<chrono::Utc>,
@@ -226,6 +240,7 @@ struct CommentNode {
 
 #[derive(Deserialize)]
 struct GraphqlActor {
+    id: String,
     login: String,
     #[serde(rename = "__typename")]
     kind: String,
@@ -233,8 +248,7 @@ struct GraphqlActor {
 
 #[derive(Deserialize)]
 struct CommentReview {
-    #[serde(rename = "databaseId")]
-    database_id: u64,
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -284,18 +298,15 @@ struct ReviewRequestNode {
 #[serde(tag = "__typename")]
 enum RequestedReviewerNode {
     User {
-        #[serde(rename = "id")]
-        _id: String,
+        id: String,
         login: String,
     },
     Bot {
-        #[serde(rename = "id")]
-        _id: String,
+        id: String,
         login: String,
     },
     Mannequin {
-        #[serde(rename = "id")]
-        _id: String,
+        id: String,
         login: String,
     },
     Team {
@@ -329,22 +340,42 @@ fn continuation_cursor(
         })
 }
 
-fn actor(login: String, kind: &str) -> ReviewActor {
-    ReviewActor {
+fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
+    let kind = match kind {
+        "User" => ReviewActorKind::User,
+        "Bot" => ReviewActorKind::Bot,
+        "Mannequin" => ReviewActorKind::Placeholder,
+        "Organization" => ReviewActorKind::Organization,
+        "EnterpriseUserAccount" => ReviewActorKind::EnterpriseUser,
+        other => {
+            return Err(ProviderError::External {
+                provider: "github",
+                operation: "normalize review actor",
+                message: format!("unknown review actor kind {other}"),
+            });
+        }
+    };
+    Ok(ReviewActor {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review actor",
+            message: error.to_string(),
+        })?,
         login,
-        kind: match kind {
-            "Bot" => ReviewActorKind::Bot,
-            "Mannequin" => ReviewActorKind::Placeholder,
-            _ => ReviewActorKind::User,
-        },
-    }
+        kind,
+    })
 }
 
-fn ghost_actor() -> ReviewActor {
-    ReviewActor {
+fn ghost_actor(id: String) -> Result<ReviewActor> {
+    Ok(ReviewActor {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize unavailable review actor",
+            message: error.to_string(),
+        })?,
         login: "ghost".to_owned(),
-        kind: ReviewActorKind::User,
-    }
+        kind: ReviewActorKind::Placeholder,
+    })
 }
 
 fn normalize_disposition(value: &str) -> Result<ReviewDisposition> {
@@ -362,17 +393,17 @@ fn normalize_disposition(value: &str) -> Result<ReviewDisposition> {
 }
 
 fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
+    let comment_id = value.id;
     Ok(ReviewComment {
-        id: ReviewCommentId::new(value.database_id.to_string()).map_err(|error| {
-            ProviderError::External {
-                provider: "github",
-                operation: "normalize review comment",
-                message: error.to_string(),
-            }
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review comment",
+            message: error.to_string(),
         })?,
-        author: value
-            .author
-            .map_or_else(ghost_actor, |author| actor(author.login, &author.kind)),
+        author: match value.author {
+            Some(author) => actor(author.id, author.login, &author.kind)?,
+            None => ghost_actor(format!("unavailable-comment-author:{comment_id}"))?,
+        },
         body: value.body,
         created_at: value.created_at,
         updated_at: value.updated_at,
@@ -380,30 +411,31 @@ fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
 }
 
 fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
-    let requested_reviewer = value
-        .requested_reviewer
-        .ok_or_else(|| ProviderError::External {
-            provider: "github",
-            operation: "normalize review request",
-            message: format!("review request {} has no target", value.id),
-        })?;
-    let target = match requested_reviewer {
-        RequestedReviewerNode::User { login, .. } => ReviewTarget::Actor(ReviewActor {
-            login,
-            kind: ReviewActorKind::User,
-        }),
-        RequestedReviewerNode::Bot { login, .. } => ReviewTarget::Actor(ReviewActor {
-            login,
-            kind: ReviewActorKind::Bot,
-        }),
-        RequestedReviewerNode::Mannequin { login, .. } => ReviewTarget::Actor(ReviewActor {
-            login,
-            kind: ReviewActorKind::Placeholder,
-        }),
-        RequestedReviewerNode::Team { id, slug, name }
-        | RequestedReviewerNode::EnterpriseTeam { id, slug, name } => {
-            ReviewTarget::Team(ReviewTeam { id, slug, name })
+    let target = match value.requested_reviewer {
+        Some(RequestedReviewerNode::User { id, login }) => {
+            ReviewTarget::Actor(actor(id, login, "User")?)
         }
+        Some(RequestedReviewerNode::Bot { id, login }) => {
+            ReviewTarget::Actor(actor(id, login, "Bot")?)
+        }
+        Some(RequestedReviewerNode::Mannequin { id, login }) => {
+            ReviewTarget::Actor(actor(id, login, "Mannequin")?)
+        }
+        Some(RequestedReviewerNode::Team { id, slug, name }) => ReviewTarget::Team(ReviewTeam {
+            id,
+            slug,
+            name,
+            kind: ReviewTeamKind::Organization,
+        }),
+        Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => {
+            ReviewTarget::Team(ReviewTeam {
+                id,
+                slug,
+                name,
+                kind: ReviewTeamKind::Enterprise,
+            })
+        }
+        None => ReviewTarget::Unavailable,
     };
     Ok(ReviewRequest {
         id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
@@ -422,7 +454,7 @@ fn normalize_code_review(
     threads: Vec<ThreadNode>,
     review_requests: Vec<ReviewRequestNode>,
 ) -> Result<CodeReview> {
-    let author = actor(value.user.login, &value.user.kind);
+    let author = actor(value.user.node_id, value.user.login, &value.user.kind)?;
     let base_sha = value.base.sha;
     let mut review_positions = BTreeMap::new();
     let mut submissions = Vec::new();
@@ -432,23 +464,26 @@ fn normalize_code_review(
         if review.state == "PENDING" {
             continue;
         }
-        let reviewer = review
-            .user
-            .map_or_else(ghost_actor, |user| actor(user.login, &user.kind));
-        if reviewer.login == author.login {
+        let reviewer = match review.user {
+            Some(user) => actor(user.node_id, user.login, &user.kind)?,
+            None => ghost_actor(format!("unavailable-reviewer:{}", review.node_id))?,
+        };
+        if reviewer.id == author.id {
             continue;
         }
-        let Some(submitted_at) = review.submitted_at else {
-            continue;
-        };
-        let id = ReviewSubmissionId::new(review.id.to_string()).map_err(|error| {
+        let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
+            provider: "github",
+            operation: "normalize review submission",
+            message: format!("submitted review {} has no submission time", review.node_id),
+        })?;
+        let id = ReviewSubmissionId::new(review.node_id.clone()).map_err(|error| {
             ProviderError::External {
                 provider: "github",
                 operation: "normalize review submission",
                 message: error.to_string(),
             }
         })?;
-        review_positions.insert(review.id, submissions.len());
+        review_positions.insert(review.node_id, submissions.len());
         submissions.push(ReviewSubmission {
             id,
             reviewer,
@@ -477,8 +512,8 @@ fn normalize_code_review(
         let originating_submission = initial
             .pull_request_review
             .as_ref()
-            .map(|review| review.database_id)
-            .and_then(|review_id| review_positions.get(&review_id))
+            .map(|review| &review.id)
+            .and_then(|review_id| review_positions.get(review_id))
             .map(|position| submissions[*position].id.clone());
         normalized_threads.push(ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
@@ -741,7 +776,7 @@ impl CodeReviewsProvider for GithubProvider {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[ReviewTarget],
+        reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
         let code_review = self.github_code_review(repository, number).await?;
         let mut user_logins = Vec::new();
@@ -749,13 +784,13 @@ impl CodeReviewsProvider for GithubProvider {
         let mut team_slugs = Vec::new();
         for reviewer in reviewers {
             match reviewer {
-                ReviewTarget::Actor(actor) => match actor.kind {
-                    ReviewActorKind::Bot => bot_logins.push(actor.login.as_str()),
-                    ReviewActorKind::User | ReviewActorKind::Placeholder => {
-                        user_logins.push(actor.login.as_str());
-                    }
-                },
-                ReviewTarget::Team(team) => team_slugs.push(team.slug.as_str()),
+                ReviewRequestTarget::User(login) => user_logins.push(login.as_str()),
+                ReviewRequestTarget::Bot(login) => bot_logins.push(if login.ends_with("[bot]") {
+                    login.clone()
+                } else {
+                    format!("{login}[bot]")
+                }),
+                ReviewRequestTarget::Team(identifier) => team_slugs.push(identifier.as_str()),
             }
         }
         let _: serde_json::Value = self
@@ -816,8 +851,8 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use postel::{
-        CheckConclusion, CheckOutcome, CodeReviewsProvider, Repository, ReviewActorKind,
-        ReviewTarget, ReviewThreadStatus,
+        CheckConclusion, CheckOutcome, CodeReviewsProvider, ProviderError, Repository,
+        ReviewActorKind, ReviewTarget, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -853,7 +888,7 @@ mod tests {
         )
         .expect("normalizes");
 
-        assert_eq!(review.submissions.len(), 7);
+        assert_eq!(review.submissions.len(), 9);
         assert_eq!(
             review
                 .reviewers()
@@ -863,7 +898,9 @@ mod tests {
             [
                 "adr-codex-review",
                 "adr-agy-review",
-                "copilot-pull-request-reviewer"
+                "copilot-pull-request-reviewer",
+                "ghost",
+                "ghost"
             ]
         );
         assert_eq!(
@@ -871,6 +908,7 @@ mod tests {
             review.submissions[3].revision
         );
         assert_ne!(review.submissions[1].id, review.submissions[3].id);
+        assert!(review.submissions[0].id.as_str().starts_with("PRR_"));
         let finding = review
             .findings_for(&review.submissions[0].id)
             .next()
@@ -878,6 +916,7 @@ mod tests {
         assert_eq!(finding.location.path, "docs/dev/architecture.lex");
         assert_eq!(finding.location.line, Some(188));
         assert_eq!(finding.location.original_line, Some(181));
+        assert!(finding.comment.id.as_str().starts_with("PRRC_"));
         assert_eq!(finding.replies.len(), 1);
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
@@ -890,6 +929,10 @@ mod tests {
         );
         let last_submission = review.submissions.last().expect("last review");
         assert!(review.findings_for(&last_submission.id).next().is_none());
+        let unavailable = &review.submissions[7..9];
+        assert_ne!(unavailable[0].reviewer.id, unavailable[1].reviewer.id);
+        assert_eq!(review.reviewer_round(&unavailable[0].id), Some(1));
+        assert_eq!(review.reviewer_round(&unavailable[1].id), Some(1));
         assert_eq!(review.threads.len(), 4);
         let author_thread = review
             .threads
@@ -899,7 +942,7 @@ mod tests {
         assert!(author_thread.originating_submission.is_none());
         assert_eq!(author_thread.comment.author.login, "arthur-debert");
         assert_eq!(author_thread.replies[0].author.login, "adr-agy-review");
-        assert_eq!(review.outstanding_review_requests.len(), 4);
+        assert_eq!(review.outstanding_review_requests.len(), 6);
         assert!(matches!(
             &review.outstanding_review_requests[0].target,
             ReviewTarget::Actor(actor)
@@ -914,6 +957,56 @@ mod tests {
         assert!(matches!(
             &review.outstanding_review_requests[3].target,
             ReviewTarget::Actor(actor) if actor.kind == ReviewActorKind::Placeholder
+        ));
+        assert!(matches!(
+            &review.outstanding_review_requests[4].target,
+            ReviewTarget::Team(team) if team.kind == postel::ReviewTeamKind::Enterprise
+        ));
+        assert_eq!(
+            review.outstanding_review_requests[5].target,
+            ReviewTarget::Unavailable
+        );
+    }
+
+    #[test]
+    fn submitted_reviews_refuse_unknown_actor_kinds() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].user.as_mut().expect("reviewer").kind = "Repository".to_owned();
+
+        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new())
+            .expect_err("unknown actor kind must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review actor",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn submitted_reviews_require_a_submission_time() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].submitted_at = None;
+
+        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new())
+            .expect_err("submitted review without time must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review submission",
+                ..
+            }
         ));
     }
 

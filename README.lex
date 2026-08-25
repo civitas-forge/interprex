@@ -23,8 +23,8 @@ Postel
         Tracking issues, bugs and feature requests.
     code review:
         Proposed changes, formal review submissions by users and apps, the
-        revisions they reviewed, all inline conversations, findings and their
-        replies, outstanding review requests, and review state.
+        revisions they reviewed, all inline conversations and their replies,
+        findings, outstanding review requests, and review state.
     jobs — ci:
         Integrating with ci pipelines: triggering jobs and managing job
         status.

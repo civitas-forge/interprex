@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use postel::{
     CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
-    ReviewTarget, ReviewThreadId, ReviewThreadStatus,
+    ReviewRequestTarget, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -48,7 +48,7 @@ impl CodeReviewsProvider for FakeProvider {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[ReviewTarget],
+        reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
         self.state
             .write()

@@ -40,6 +40,21 @@
               "id": "M_kwDOImported",
               "login": "imported-reviewer"
             }
+          },
+          {
+            "id": "PRR_kwDORequestEnterpriseTeam",
+            "asCodeOwner": false,
+            "requestedReviewer": {
+              "__typename": "EnterpriseTeam",
+              "id": "ET_kwDOPlatform",
+              "slug": "platform",
+              "name": "Platform"
+            }
+          },
+          {
+            "id": "PRR_kwDORequestUnavailable",
+            "asCodeOwner": false,
+            "requestedReviewer": null
           }
         ]
       }

@@ -3,9 +3,10 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorKind, ReviewComment,
-    ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewSubmission, ReviewSubmissionId,
-    ReviewTarget, ReviewTeam, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewRequestTarget,
+    ReviewSubmission, ReviewSubmissionId, ReviewThread, ReviewThreadId, ReviewThreadStatus,
+    ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -40,15 +41,8 @@ async fn consumer_observes_changes_through_the_same_contract() {
 
     let number = CodeReviewNumber::new(3).expect("number");
     let targets = vec![
-        ReviewTarget::Actor(ReviewActor {
-            login: "reviewer".to_owned(),
-            kind: ReviewActorKind::User,
-        }),
-        ReviewTarget::Team(ReviewTeam {
-            id: "team-1".to_owned(),
-            slug: "maintainers".to_owned(),
-            name: "Maintainers".to_owned(),
-        }),
+        ReviewRequestTarget::User("reviewer".to_owned()),
+        ReviewRequestTarget::Team("faictor/maintainers".to_owned()),
     ];
     provider
         .request_reviewers(&repository, number, &targets)
@@ -66,10 +60,12 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
     let repository = Repository::new("faictor", "sandbox").expect("repository");
     let number = CodeReviewNumber::new(3).expect("number");
     let reviewer = ReviewActor {
+        id: ReviewActorId::new("actor-reviewer").expect("actor id"),
         login: "reviewer".to_owned(),
         kind: ReviewActorKind::Bot,
     };
     let author = ReviewActor {
+        id: ReviewActorId::new("actor-author").expect("actor id"),
         login: "author".to_owned(),
         kind: ReviewActorKind::User,
     };

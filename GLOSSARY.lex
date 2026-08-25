@@ -39,12 +39,13 @@ Glossary
         its origin; its current resolution status and replies belong to the
         thread.
     reply:
-        A later comment in a finding's thread. It does not become another
-        finding or change which submission created the finding.
+        A later comment in any review thread. It does not become another
+        finding or change the thread's origin.
     review request:
         One currently outstanding request for a user, bot or team to review a
-        change. It is current state, not a history of request and removal
-        events, and it is not a review submission.
+        change. A deleted target remains as an unavailable target rather than
+        deleting the request. It is current state, not a history of request
+        and removal events, and it is not a review submission.
     reviewer round:
         The one-based position of a submission among the same reviewer's
         submissions, ordered by submission time.

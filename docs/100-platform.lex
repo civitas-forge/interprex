@@ -58,8 +58,17 @@ The Development Platform
     the reviewer still reviewed that revision. The reviewer set is derived from
     those submissions; a requested reviewer has not reviewed until a submission
     exists. Outstanding requests name users, bots and teams and say whether
-    Github requested them as code owners. They describe current state rather
-    than request and removal history. A check result is not a reviewer.
+    Github requested them as code owners. A request remains visible with an
+    unavailable target when the platform no longer returns that identity.
+    Organization and enterprise teams remain distinct. Outstanding requests
+    describe current state rather than request and removal history. A check
+    result is not a reviewer.
+
+    Actors carry opaque provider identities as well as display logins. The
+    identity, not the mutable login, determines whether two submissions belong
+    to the same reviewer. When a platform no longer returns a reviewer's
+    identity, Postel assigns a distinct unavailable identity to that submission
+    rather than combining unrelated deleted reviewers into one history.
 
     Every inline thread remains in the result. It carries the file path, the
     current line when its anchor still maps, the original line, an open or
@@ -70,6 +79,12 @@ The Development Platform
     do not turn it into a reviewer submission. Likewise, a reply by the change
     author does not make the author a reviewer or move a finding to a later
     submission.
+
+    Requesting a reviewer uses a narrower input than reading an outstanding
+    request. A caller supplies a user or bot login, or a team's canonical
+    provider identifier. Read results also carry actor and team identities,
+    display names, team kind, code-owner status and unavailable targets; those
+    observed facts are not required to make a new request.
 
     Rounds are derived rather than stored. All submissions against the same
     head commit share a revision round. A reviewer's submissions, ordered by

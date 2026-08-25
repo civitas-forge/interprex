@@ -11,8 +11,7 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
     CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
-    ReleasesProvider, Repository, RepositorySettings, ReviewActor, ReviewActorKind, ReviewTarget,
-    ReviewTeam, ReviewThreadId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -361,19 +360,9 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
             &repository(),
             CodeReviewNumber::new(5).expect("number"),
             &[
-                ReviewTarget::Actor(ReviewActor {
-                    login: "alice".to_owned(),
-                    kind: ReviewActorKind::User,
-                }),
-                ReviewTarget::Actor(ReviewActor {
-                    login: "copilot-pull-request-reviewer".to_owned(),
-                    kind: ReviewActorKind::Bot,
-                }),
-                ReviewTarget::Team(ReviewTeam {
-                    id: "T_kwDOMaintainers".to_owned(),
-                    slug: "maintainers".to_owned(),
-                    name: "Maintainers".to_owned(),
-                }),
+                ReviewRequestTarget::User("alice".to_owned()),
+                ReviewRequestTarget::Bot("copilot-pull-request-reviewer".to_owned()),
+                ReviewRequestTarget::Team("faictor/maintainers".to_owned()),
             ],
         )
         .await
@@ -399,11 +388,11 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
     );
     assert_eq!(
         body["variables"]["botLogins"],
-        serde_json::json!(["copilot-pull-request-reviewer"])
+        serde_json::json!(["copilot-pull-request-reviewer[bot]"])
     );
     assert_eq!(
         body["variables"]["teamSlugs"],
-        serde_json::json!(["maintainers"])
+        serde_json::json!(["faictor/maintainers"])
     );
 }
 
@@ -464,7 +453,7 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         .await
         .expect("code review");
 
-    assert_eq!(review.submissions.len(), 7);
+    assert_eq!(review.submissions.len(), 9);
     assert_eq!(review.threads[0].replies.len(), 1);
     let last_submission = review.submissions.last().expect("last review");
     assert!(review.findings_for(&last_submission.id).next().is_none());
@@ -484,7 +473,13 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         body["query"]
             .as_str()
             .expect("GraphQL document")
-            .contains("pullRequestReview { databaseId }")
+            .contains("pullRequestReview { id }")
+    );
+    assert!(
+        !body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("databaseId")
     );
     let (_, body) = requests[3].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");

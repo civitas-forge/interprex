@@ -68,7 +68,8 @@ Verify
       the code review fixture includes several bots, repeated submissions on
       one revision, later revisions, reviewer and author-started threads,
       findings, replies, resolved and outdated locations, submissions without
-      findings, and outstanding user, bot, placeholder and team requests.
+      findings, distinct unavailable reviewers, and outstanding user, bot,
+      placeholder, unavailable, organization-team and enterprise-team requests.
       Unknown vendor fields do not enter the model.
     - Local transport tests run the real Octocrab adapter against a loopback
       server and assert the method, path, authentication and Postel-owned body

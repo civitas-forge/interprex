@@ -142,6 +142,14 @@ async fn configured_code_review_history_matches_current_provider_data() {
     assert_eq!(review.number, number);
     assert!(!review.current_range.base_sha.is_empty());
     assert!(!review.current_range.head_sha.is_empty());
+    assert!(!review.submissions.is_empty());
+    assert!(!review.author.id.as_str().is_empty());
+    assert!(
+        review
+            .submissions
+            .iter()
+            .all(|submission| !submission.reviewer.id.as_str().is_empty())
+    );
     let submission_ids = review
         .submissions
         .iter()
@@ -164,6 +172,15 @@ async fn configured_code_review_history_matches_current_provider_data() {
                 assert!(!team.slug.is_empty());
                 assert!(!team.name.is_empty());
             }
+            ReviewTarget::Unavailable => {}
         }
     }
+    eprintln!(
+        "code review {}: {} submissions from {} reviewers, {} threads, {} outstanding requests",
+        number.get(),
+        review.submissions.len(),
+        review.reviewers().len(),
+        review.threads.len(),
+        review.outstanding_review_requests.len()
+    );
 }

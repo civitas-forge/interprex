@@ -14,23 +14,28 @@
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
-                  "databaseId": 3463003324,
+                  "id": "PRRC_3463003324",
                   "body": "Keep evidence stable when the dependency changes.",
                   "createdAt": "2026-06-23T21:19:41Z",
                   "updatedAt": "2026-06-23T21:19:41Z",
                   "author": {
+                    "id": "BOT_kwDOCodex",
                     "login": "adr-codex-review",
                     "__typename": "Bot"
                   },
-                  "pullRequestReview": { "databaseId": 4557176716 }
+                  "pullRequestReview": { "id": "PRR_4557176716" }
                 },
                 {
-                  "databaseId": 3463036766,
+                  "id": "PRRC_3463036766",
                   "body": "The cited lines are tied to the pinned dependency revision.",
                   "createdAt": "2026-06-23T21:26:33Z",
                   "updatedAt": "2026-06-23T21:26:34Z",
-                  "author": { "login": "arthur-debert", "__typename": "User" },
-                  "pullRequestReview": { "databaseId": 4557215507 }
+                  "author": {
+                    "id": "U_kwDOArthur",
+                    "login": "arthur-debert",
+                    "__typename": "User"
+                  },
+                  "pullRequestReview": { "id": "PRR_4557215507" }
                 }
               ]
             }
@@ -45,15 +50,16 @@
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
-                  "databaseId": 3463010000,
+                  "id": "PRRC_3463010000",
                   "body": "Clarify which execution path owns this behavior.",
                   "createdAt": "2026-06-23T21:22:43Z",
                   "updatedAt": "2026-06-23T21:22:43Z",
                   "author": {
+                    "id": "BOT_kwDOCopilot",
                     "login": "copilot-pull-request-reviewer",
                     "__typename": "Bot"
                   },
-                  "pullRequestReview": { "databaseId": 4557191672 }
+                  "pullRequestReview": { "id": "PRR_4557191672" }
                 }
               ]
             }
@@ -68,15 +74,16 @@
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
-                  "databaseId": 3463050000,
+                  "id": "PRRC_3463050000",
                   "body": "This finding belongs to the later reviewed revision.",
                   "createdAt": "2026-06-23T21:40:00Z",
                   "updatedAt": "2026-06-23T21:40:00Z",
                   "author": {
+                    "id": "BOT_kwDOCodex",
                     "login": "adr-codex-review",
                     "__typename": "Bot"
                   },
-                  "pullRequestReview": { "databaseId": 4557227857 }
+                  "pullRequestReview": { "id": "PRR_4557227857" }
                 }
               ]
             }
@@ -91,20 +98,28 @@
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
-                  "databaseId": 3463060000,
+                  "id": "PRRC_3463060000",
                   "body": "Does this behavior need another compatibility case?",
                   "createdAt": "2026-06-23T21:26:34Z",
                   "updatedAt": "2026-06-23T21:26:34Z",
-                  "author": { "login": "arthur-debert", "__typename": "User" },
-                  "pullRequestReview": { "databaseId": 4557215507 }
+                  "author": {
+                    "id": "U_kwDOArthur",
+                    "login": "arthur-debert",
+                    "__typename": "User"
+                  },
+                  "pullRequestReview": { "id": "PRR_4557215507" }
                 },
                 {
-                  "databaseId": 3463060001,
+                  "id": "PRRC_3463060001",
                   "body": "Yes, the later review covers it.",
                   "createdAt": "2026-06-23T21:42:00Z",
                   "updatedAt": "2026-06-23T21:42:00Z",
-                  "author": { "login": "adr-agy-review", "__typename": "Bot" },
-                  "pullRequestReview": { "databaseId": 4557243595 }
+                  "author": {
+                    "id": "BOT_kwDOAgy",
+                    "login": "adr-agy-review",
+                    "__typename": "Bot"
+                  },
+                  "pullRequestReview": { "id": "PRR_4557243595" }
                 }
               ]
             }
