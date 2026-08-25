@@ -482,7 +482,6 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/pull_request_changed.json"),
-        include_str!("fixtures/pull_request_changed.json"),
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/pull_request_changed.json"),
@@ -497,7 +496,7 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         review.current_range.head_sha,
         "cccccccccccccccccccccccccccccccccccccccc"
     );
-    assert_eq!(requests.await.expect("captured requests").len(), 8);
+    assert_eq!(requests.await.expect("captured requests").len(), 7);
 }
 
 #[tokio::test]

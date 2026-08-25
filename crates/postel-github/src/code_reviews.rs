@@ -533,14 +533,15 @@ impl CodeReviewsProvider for GithubProvider {
         repository: &Repository,
         number: CodeReviewNumber,
     ) -> Result<CodeReview> {
+        let mut before = self.github_code_review(repository, number).await?;
         for _ in 0..2 {
-            let before = self.github_code_review(repository, number).await?;
             let reviews = self.github_reviews(repository, number).await?;
             let threads = self.github_review_threads(repository, number).await?;
             let after = self.github_code_review(repository, number).await?;
             if same_code_review_version(&before, &after) {
                 return normalize_code_review(after, reviews, threads);
             }
+            before = after;
         }
         Err(ProviderError::External {
             provider: "github",
