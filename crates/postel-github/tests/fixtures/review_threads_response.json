@@ -8,9 +8,15 @@
             {
               "id": "PRRT_kwDOSCkZoc6LuYFt",
               "isResolved": true,
+              "isOutdated": false,
               "path": "docs/dev/architecture.lex",
+              "subjectType": "LINE",
+              "diffSide": "RIGHT",
+              "startDiffSide": "RIGHT",
               "line": 188,
+              "startLine": 184,
               "originalLine": 181,
+              "originalStartLine": 177,
               "comments": {
                 "pageInfo": { "hasNextPage": false, "endCursor": null },
                 "nodes": [

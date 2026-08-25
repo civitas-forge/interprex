@@ -3,10 +3,10 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewRequestTarget,
-    ReviewSubmission, ReviewSubmissionId, ReviewThread, ReviewThreadId, ReviewThreadStatus,
-    ReviewedRevision,
+    RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewLocation,
+    ReviewRequestTarget, ReviewSubmission, ReviewSubmissionId, ReviewThread, ReviewThreadId,
+    ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -97,8 +97,15 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
             originating_submission: Some(ReviewSubmissionId::new("review-1").expect("review id")),
             location: ReviewLocation {
                 path: "src/lib.rs".to_owned(),
-                line: Some(12),
-                original_line: Some(10),
+                outdated: false,
+                anchor: ReviewAnchor::DiffRange {
+                    side: ReviewDiffSide::Right,
+                    start_side: None,
+                    line: Some(12),
+                    start_line: None,
+                    original_line: Some(10),
+                    original_start_line: None,
+                },
             },
             status: ReviewThreadStatus::Open,
             comment: ReviewComment {

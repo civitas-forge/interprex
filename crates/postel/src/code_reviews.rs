@@ -45,6 +45,8 @@ opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
 opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
 opaque_review_id!(ReviewRequestId, "review request id", "review request");
 opaque_review_id!(ReviewActorId, "review actor id", "review actor");
+opaque_review_id!(ReviewTeamId, "review team id", "review team");
+opaque_review_id!(ReviewAppId, "review app id", "review app");
 
 /// Two commit endpoints whose relationship is meaningful to the caller.
 ///
@@ -90,10 +92,11 @@ pub enum ReviewTeamKind {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewTeam {
-    pub id: String,
+    pub id: ReviewTeamId,
     pub slug: String,
     pub name: String,
     pub kind: ReviewTeamKind,
+    pub request_identifier: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -118,7 +121,7 @@ pub enum ReviewRequestTarget {
     Team(String),
 }
 
-/// One outstanding request for a user, bot or team to review the change.
+/// One outstanding request, including one whose target became unavailable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewRequest {
     pub id: ReviewRequestId,
@@ -129,7 +132,7 @@ pub struct ReviewRequest {
 /// The GitHub App or equivalent provider application that produced a review.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewApp {
-    pub id: String,
+    pub id: ReviewAppId,
     pub slug: String,
     pub name: String,
 }
@@ -159,15 +162,33 @@ pub struct ReviewComment {
     pub updated_at: DateTime<Utc>,
 }
 
-/// The current and original source location of an inline review thread.
-///
-/// `line` is the current line when the anchor still maps to the latest diff.
-/// `original_line` retains the line selected when the finding was created.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewDiffSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewAnchor {
+    File,
+    DiffRange {
+        side: ReviewDiffSide,
+        start_side: Option<ReviewDiffSide>,
+        line: Option<u64>,
+        start_line: Option<u64>,
+        original_line: Option<u64>,
+        original_start_line: Option<u64>,
+    },
+}
+
+/// The source anchor of an inline review thread.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewLocation {
     pub path: String,
-    pub line: Option<u64>,
-    pub original_line: Option<u64>,
+    pub outdated: bool,
+    pub anchor: ReviewAnchor,
 }
 
 /// One complete inline conversation on the code review.
@@ -218,14 +239,23 @@ pub struct CodeReview {
 }
 
 impl CodeReview {
+    fn submissions_by_time(&self) -> Vec<&ReviewSubmission> {
+        let mut submissions = self.submissions.iter().enumerate().collect::<Vec<_>>();
+        submissions.sort_by_key(|(index, submission)| (submission.submitted_at, *index));
+        submissions
+            .into_iter()
+            .map(|(_, submission)| submission)
+            .collect()
+    }
+
     /// Reviewers in first-submission order. The change author is not a reviewer.
     #[must_use]
     pub fn reviewers(&self) -> Vec<&ReviewActor> {
         let mut seen = BTreeSet::new();
-        self.submissions
-            .iter()
+        self.submissions_by_time()
+            .into_iter()
             .filter_map(|submission| {
-                seen.insert(submission.reviewer.clone())
+                seen.insert(submission.reviewer.id.clone())
                     .then_some(&submission.reviewer)
             })
             .collect()
@@ -245,9 +275,9 @@ impl CodeReview {
     #[must_use]
     pub fn reviewer_round(&self, id: &ReviewSubmissionId) -> Option<usize> {
         let submission = self.submissions.iter().find(|item| &item.id == id)?;
-        self.submissions
-            .iter()
-            .filter(|item| item.reviewer == submission.reviewer)
+        self.submissions_by_time()
+            .into_iter()
+            .filter(|item| item.reviewer.id == submission.reviewer.id)
             .position(|item| &item.id == id)
             .map(|index| index + 1)
     }
@@ -258,12 +288,13 @@ impl CodeReview {
     /// reviewer-relative range.
     #[must_use]
     pub fn changes_since_previous_review(&self, id: &ReviewSubmissionId) -> Option<CommitRange> {
-        let position = self.submissions.iter().position(|item| &item.id == id)?;
-        let submission = &self.submissions[position];
-        let previous = self.submissions[..position]
+        let submissions = self.submissions_by_time();
+        let position = submissions.iter().position(|item| &item.id == id)?;
+        let submission = submissions[position];
+        let previous = submissions[..position]
             .iter()
             .rev()
-            .find(|item| item.reviewer == submission.reviewer)?;
+            .find(|item| item.reviewer.id == submission.reviewer.id)?;
         Some(CommitRange {
             base_sha: previous.revision.head_sha.clone(),
             head_sha: submission.revision.head_sha.clone(),
@@ -277,7 +308,7 @@ impl CodeReview {
     pub fn revision_round(&self, id: &ReviewSubmissionId) -> Option<usize> {
         let submission = self.submissions.iter().find(|item| &item.id == id)?;
         let mut revisions = Vec::new();
-        for item in &self.submissions {
+        for item in self.submissions_by_time() {
             if !revisions.contains(&item.revision) {
                 revisions.push(item.revision.clone());
             }
@@ -446,8 +477,15 @@ mod tests {
             originating_submission: origin,
             location: ReviewLocation {
                 path: "src/lib.rs".to_owned(),
-                line: Some(10),
-                original_line: Some(10),
+                outdated: false,
+                anchor: ReviewAnchor::DiffRange {
+                    side: ReviewDiffSide::Right,
+                    start_side: None,
+                    line: Some(10),
+                    start_line: None,
+                    original_line: Some(10),
+                    original_start_line: None,
+                },
             },
             status: ReviewThreadStatus::Open,
             comment: initial,
@@ -479,5 +517,45 @@ mod tests {
         assert_eq!(review.threads.len(), 2);
         assert_eq!(review.findings_for(&review_id).count(), 1);
         assert!(review.threads[1].originating_submission.is_none());
+    }
+
+    #[test]
+    fn reviewer_identity_and_time_determine_rounds() {
+        let mut first = submission("review-1", "old-login", "revision-a");
+        first.submitted_at = Utc.timestamp_opt(1, 0).single().expect("timestamp");
+        let mut second = submission("review-2", "new-login", "revision-b");
+        second.reviewer.id = first.reviewer.id.clone();
+        second.submitted_at = Utc.timestamp_opt(2, 0).single().expect("timestamp");
+        let review = CodeReview {
+            number: CodeReviewNumber::new(1).expect("number"),
+            title: "Renamed reviewer".to_owned(),
+            state: OpenClosed::Open,
+            draft: false,
+            current_range: CommitRange {
+                base_sha: "base".to_owned(),
+                head_sha: "revision-b".to_owned(),
+            },
+            author: ReviewActor {
+                id: ReviewActorId::new("actor-author").expect("actor id"),
+                login: "author".to_owned(),
+                kind: ReviewActorKind::User,
+            },
+            updated_at: Utc.timestamp_opt(3, 0).single().expect("timestamp"),
+            submissions: vec![second.clone(), first],
+            threads: Vec::new(),
+            outstanding_review_requests: Vec::new(),
+        };
+
+        assert_eq!(review.reviewers().len(), 1);
+        assert_eq!(review.reviewers()[0].login, "old-login");
+        assert_eq!(review.reviewer_round(&second.id), Some(2));
+        assert_eq!(
+            review.changes_since_previous_review(&second.id),
+            Some(CommitRange {
+                base_sha: "revision-a".to_owned(),
+                head_sha: "revision-b".to_owned(),
+            })
+        );
+        assert_eq!(review.revision_round(&second.id), Some(2));
     }
 }

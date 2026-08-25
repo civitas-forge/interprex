@@ -21,7 +21,8 @@
                 "__typename": "Team",
                 "id": "T_kwDOMaintainers",
                 "slug": "maintainers",
-                "name": "Maintainers"
+                "name": "Maintainers",
+                "organization": { "login": "faictor" }
               }
             }
           ]

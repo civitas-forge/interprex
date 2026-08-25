@@ -481,6 +481,12 @@ async fn code_review_domain_reads_one_consistent_review_history() {
             .expect("GraphQL document")
             .contains("databaseId")
     );
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("subjectType")
+    );
     let (_, body) = requests[3].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
@@ -488,6 +494,12 @@ async fn code_review_domain_reads_one_consistent_review_history() {
             .as_str()
             .expect("GraphQL document")
             .contains("reviewRequests")
+    );
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("organization { login }")
     );
 }
 

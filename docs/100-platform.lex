@@ -68,27 +68,34 @@ The Development Platform
     identity, not the mutable login, determines whether two submissions belong
     to the same reviewer. When a platform no longer returns a reviewer's
     identity, Postel assigns a distinct unavailable identity to that submission
-    rather than combining unrelated deleted reviewers into one history.
+    rather than combining unrelated deleted reviewers into one history. If the
+    missing identity also prevents Postel from recognizing the change author,
+    the submission is retained rather than silently discarded.
 
-    Every inline thread remains in the result. It carries the file path, the
-    current line when its anchor still maps, the original line, an open or
-    resolved status, its initial comment and ordered replies. A thread begun by
-    a retained reviewer submission is a finding from that submission. A thread
-    begun by the change author remains visible without being classified as a
-    finding. Reviewer replies in that author-started thread remain replies; they
-    do not turn it into a reviewer submission. Likewise, a reply by the change
-    author does not make the author a reviewer or move a finding to a later
-    submission.
+    Every inline thread remains in the result. Its location distinguishes a
+    file anchor from a diff range. A diff range carries current and original
+    start and end lines, their diff sides, and whether newer changes made the
+    anchor outdated. The thread also carries an open or resolved status, its
+    initial comment and ordered replies. A thread begun by a retained reviewer
+    submission is a finding from that submission. A thread begun by the change
+    author remains visible without being classified as a finding. Reviewer
+    replies in that author-started thread remain replies; they do not turn it
+    into a reviewer submission. Likewise, a reply by the change author does not
+    make the author a reviewer or move a finding to a later submission.
+    A provider response that names a thread but supplies no initial comment is
+    incomplete, so the read refuses instead of silently deleting that thread.
 
     Requesting a reviewer uses a narrower input than reading an outstanding
     request. A caller supplies a user or bot login, or a team's canonical
     provider identifier. Read results also carry actor and team identities,
-    display names, team kind, code-owner status and unavailable targets; those
+    display names, team kind, a request identifier where that team can be
+    addressed by name, code-owner status and unavailable targets; those
     observed facts are not required to make a new request.
 
-    Rounds are derived rather than stored. All submissions against the same
-    head commit share a revision round. A reviewer's submissions, ordered by
-    submission time, form that reviewer's rounds. For every round after that
+    Rounds are derived rather than stored and do not depend on vector storage
+    order. All submissions against the same head commit share a revision round.
+    A reviewer's submissions, ordered by submission time, form that reviewer's
+    rounds. For every round after that
     reviewer's first, Postel derives the new-code range from the prior reviewed
     head to the new reviewed head. A pushed revision therefore starts a new
     revision round when it receives a submission, while a second submission

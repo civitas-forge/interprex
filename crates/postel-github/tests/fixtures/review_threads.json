@@ -7,9 +7,15 @@
           {
             "id": "PRRT_kwDOSCkZoc6LuYFt",
             "isResolved": true,
+            "isOutdated": false,
             "path": "docs/dev/architecture.lex",
+            "subjectType": "LINE",
+            "diffSide": "RIGHT",
+            "startDiffSide": "RIGHT",
             "line": 188,
+            "startLine": 184,
             "originalLine": 181,
+            "originalStartLine": 177,
             "comments": {
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
@@ -43,9 +49,15 @@
           {
             "id": "PRRT_kwDOSCkZoc6Copilot",
             "isResolved": false,
+            "isOutdated": false,
             "path": "docs/design/rendering.md",
+            "subjectType": "LINE",
+            "diffSide": "RIGHT",
+            "startDiffSide": null,
             "line": 42,
+            "startLine": null,
             "originalLine": 42,
+            "originalStartLine": null,
             "comments": {
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
@@ -67,9 +79,15 @@
           {
             "id": "PRRT_kwDOSCkZoc6Later",
             "isResolved": false,
+            "isOutdated": true,
             "path": "docs/dev/architecture.lex",
+            "subjectType": "LINE",
+            "diffSide": "RIGHT",
+            "startDiffSide": null,
             "line": null,
+            "startLine": null,
             "originalLine": 205,
+            "originalStartLine": null,
             "comments": {
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
@@ -91,9 +109,15 @@
           {
             "id": "PRRT_kwDOSCkZoc6Author",
             "isResolved": false,
+            "isOutdated": false,
             "path": "src/lib.rs",
-            "line": 27,
-            "originalLine": 27,
+            "subjectType": "FILE",
+            "diffSide": "RIGHT",
+            "startDiffSide": null,
+            "line": null,
+            "startLine": null,
+            "originalLine": null,
+            "originalStartLine": null,
             "comments": {
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [

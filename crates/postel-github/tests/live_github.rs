@@ -16,7 +16,7 @@ use std::{
 use fs2::FileExt;
 use postel::{
     CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
-    ReviewTarget,
+    ReviewAnchor, ReviewTarget,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -150,6 +150,18 @@ async fn configured_code_review_history_matches_current_provider_data() {
             .iter()
             .all(|submission| !submission.reviewer.id.as_str().is_empty())
     );
+    for submission in &review.submissions {
+        let reviewer_round = review
+            .reviewer_round(&submission.id)
+            .expect("every submission has a reviewer round");
+        assert!(review.revision_round(&submission.id).is_some());
+        assert_eq!(
+            review
+                .changes_since_previous_review(&submission.id)
+                .is_some(),
+            reviewer_round > 1
+        );
+    }
     let submission_ids = review
         .submissions
         .iter()
@@ -159,6 +171,14 @@ async fn configured_code_review_history_matches_current_provider_data() {
         assert!(!thread.id.as_str().is_empty());
         assert!(!thread.location.path.is_empty());
         assert!(!thread.comment.id.as_str().is_empty());
+        if let ReviewAnchor::DiffRange {
+            line,
+            original_line,
+            ..
+        } = &thread.location.anchor
+        {
+            assert!(line.is_some() || original_line.is_some());
+        }
         if let Some(origin) = &thread.originating_submission {
             assert!(submission_ids.contains(origin));
         }
@@ -168,7 +188,7 @@ async fn configured_code_review_history_matches_current_provider_data() {
         match &request.target {
             ReviewTarget::Actor(actor) => assert!(!actor.login.is_empty()),
             ReviewTarget::Team(team) => {
-                assert!(!team.id.is_empty());
+                assert!(!team.id.as_str().is_empty());
                 assert!(!team.slug.is_empty());
                 assert!(!team.name.is_empty());
             }

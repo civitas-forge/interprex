@@ -67,10 +67,11 @@ Verify
     - Captured Github responses exercise normalization without network access;
       the code review fixture includes several bots, repeated submissions on
       one revision, later revisions, reviewer and author-started threads,
-      findings, replies, resolved and outdated locations, submissions without
-      findings, distinct unavailable reviewers, and outstanding user, bot,
-      placeholder, unavailable, organization-team and enterprise-team requests.
-      Unknown vendor fields do not enter the model.
+      file and multiline diff anchors, findings, replies, resolved and outdated
+      locations, submissions without findings, distinct unavailable reviewers,
+      and outstanding user, bot, placeholder, unavailable, organization-team
+      and enterprise-team requests. Unknown vendor fields do not enter the
+      model.
     - Local transport tests run the real Octocrab adapter against a loopback
       server and assert the method, path, authentication and Postel-owned body
       for every domain.
