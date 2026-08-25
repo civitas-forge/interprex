@@ -16,7 +16,7 @@ use std::{
 use fs2::FileExt;
 use postel::{
     CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
-    ReviewAnchor, ReviewTarget,
+    ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadStatus,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -125,7 +125,7 @@ async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
 
 #[tokio::test]
 #[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
-async fn configured_code_review_history_matches_current_provider_data() {
+async fn configured_code_review_observation_matches_current_provider_data() {
     let (provider, repository) = live_provider();
     let number = std::env::var("POSTEL_E2E_CODE_REVIEW_NUMBER")
         .expect("POSTEL_E2E_CODE_REVIEW_NUMBER must name an existing code review")
@@ -140,49 +140,51 @@ async fn configured_code_review_history_matches_current_provider_data() {
         .expect("read configured code review");
 
     assert_eq!(review.number, number);
-    assert!(!review.current_range.base_sha.is_empty());
-    assert!(!review.current_range.head_sha.is_empty());
-    assert!(!review.submissions.is_empty());
+    assert!(!review.change.base_sha.is_empty());
+    assert!(!review.change.head_sha.is_empty());
+    assert!(!review.reviews.is_empty());
     assert!(!review.author.id.as_str().is_empty());
     assert!(
         review
-            .submissions
+            .reviews
             .iter()
-            .all(|submission| !submission.reviewer.id.as_str().is_empty())
+            .all(|item| !item.author.actor(&review.author).id.as_str().is_empty())
     );
-    for submission in &review.submissions {
-        let reviewer_round = review
-            .reviewer_round(&submission.id)
-            .expect("every submission has a reviewer round");
-        assert!(review.revision_round(&submission.id).is_some());
-        assert_eq!(
-            review
-                .changes_since_previous_review(&submission.id)
-                .is_some(),
-            reviewer_round > 1
-        );
-    }
-    let submission_ids = review
-        .submissions
+    assert!(review.reviews.iter().all(|item| match &item.author {
+        ReviewAuthor::ChangeAuthor => true,
+        ReviewAuthor::Other(actor) => actor.id != review.author.id,
+        ReviewAuthor::Unknown(_) => true,
+    }));
+    assert!(
+        review
+            .reviews
+            .iter()
+            .all(|submitted| !submitted.revision.head_sha.is_empty())
+    );
+    for thread in review
+        .reviews
         .iter()
-        .map(|submission| submission.id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    for thread in &review.threads {
+        .flat_map(|submitted| submitted.findings.iter())
+        .chain(review.discussions.iter())
+    {
         assert!(!thread.id.as_str().is_empty());
-        assert!(!thread.location.path.is_empty());
         assert!(!thread.comment.id.as_str().is_empty());
-        if let ReviewAnchor::DiffRange {
-            current, original, ..
-        } = &thread.location.anchor
-        {
-            assert!(original.end.get() > 0);
-            assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
-        }
-        if let Some(origin) = &thread.originating_submission {
-            assert!(submission_ids.contains(origin));
+        assert!(!thread.location.path.is_empty());
+        match &thread.location.anchor {
+            ReviewAnchor::File => {}
+            ReviewAnchor::Lines {
+                original, current, ..
+            } => {
+                assert!(original.end.get() > 0);
+                assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
+            }
         }
     }
-    for request in &review.outstanding_review_requests {
+    for comment in &review.conversation {
+        assert!(!comment.id.as_str().is_empty());
+        assert!(!comment.author.id.as_str().is_empty());
+    }
+    for request in &review.outstanding_requests {
         assert!(!request.id.as_str().is_empty());
         match &request.target {
             ReviewTarget::Actor(actor) => assert!(!actor.login.is_empty()),
@@ -194,12 +196,54 @@ async fn configured_code_review_history_matches_current_provider_data() {
             ReviewTarget::Unavailable => {}
         }
     }
+    let author_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::ChangeAuthor)
+        .count();
+    let other_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Other)
+        .count();
+    let unknown_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
+        .count();
+    let draft_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.state == postel::ReviewState::Draft)
+        .count();
+    let findings = review
+        .reviews
+        .iter()
+        .flat_map(|item| item.findings.iter())
+        .chain(review.discussions.iter())
+        .collect::<Vec<_>>();
+    let open_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Open)
+        .count();
+    let resolved_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Resolved)
+        .count();
+    assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "code review {}: {} submissions from {} reviewers, {} threads, {} outstanding requests",
+        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} discussions, {} conversation comments, {} outstanding requests",
         number.get(),
-        review.submissions.len(),
-        review.reviewers().len(),
-        review.threads.len(),
-        review.outstanding_review_requests.len()
+        review.reviews.len(),
+        author_review_count,
+        other_review_count,
+        unknown_review_count,
+        draft_review_count,
+        findings.len(),
+        open_finding_count,
+        resolved_finding_count,
+        review.discussions.len(),
+        review.conversation.len(),
+        review.outstanding_requests.len()
     );
 }

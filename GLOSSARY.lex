@@ -1,91 +1,65 @@
 Glossary
 
-    These words mean here what this repository says they mean, and a text using one
-    of them in another sense belongs somewhere else.
+    These definitions name the concepts in Postel's public interfaces.
 
     domain:
-        One area of the development platform under one contract — code
-        hosting, tracker (issue tracking), code review, jobs (ci) or releases.
-        Each names its own provider.
-    contract:
-        The trait stating a domain's operations in the tools' own vocabulary,
-        naming no provider.
-    operation:
-        One call a contract states: what is handed in, what comes back, and
-        the refusals it can raise.
-    refusal:
-        The structured error a provider raises for a fact it cannot express,
-        naming the provider and the fact, at the call that needs it.
+        One area of a development platform with its own provider interface:
+        code hosting, tracker, code review, jobs or releases.
     provider:
-        The implementation answering a contract against one system — the
-        github provider, the gcs provider. A deployment selects one per
-        domain. Never an agent cli.
+        An implementation of one or more domain interfaces for an external
+        system.
+    adapter:
+        A provider implementation that translates between Postel models and an
+        external system's transport and data formats.
     client:
-        The code inside a provider that reaches its system — one client per
-        system, holding its authentication, transport and retry, shared by
-        every tool that links it.
+        The provider-owned code that authenticates and communicates with its
+        external system.
     identity:
-        The platform principal under which a provider performs an operation —
-        a user or an app installation on github.
-    review submission:
-        One formal assessment by one reviewer of one exact head commit. It has
-        a disposition and may have a summary and any number of findings.
-    review thread:
-        One inline conversation attached to a file location. Its initial
-        comment and ordered replies remain visible whether a reviewer or the
-        change author began it.
+        The principal under which a provider authenticates an operation, such
+        as a GitHub user or app installation. A review actor and a provider
+        identity are different concepts.
+    code review:
+        One proposed change and its reviews, independent discussions, general
+        conversation and outstanding review requests. A GitHub pull request is
+        represented as a code review.
+    review:
+        One provider review record against one head commit. A review may be a
+        draft or submitted, may come from the change author, and may contain
+        findings.
+    review author:
+        The platform actor that owns a review record. The application that
+        produced the review is a separate fact.
+    review relationship:
+        What the provider establishes between the review author and change
+        author: change author, other or unknown. Unknown does not assert that
+        the actors differ.
+    draft review:
+        A review that has not been submitted. It has no disposition or
+        submission time.
+    submitted review:
+        A review carrying a disposition and submission time.
     finding:
-        A review thread begun by a formal review submission. The submission is
-        its origin; its current resolution status and replies belong to the
-        thread.
-    reply:
-        A later comment in any review thread. It does not become another
-        finding or change the thread's origin.
+        An inline review thread attached to the review in which it originated.
+        Its initial comment, replies, source location, resolution status and
+        outdated status remain together.
+    independent discussion:
+        An inline review thread with no originating review. Later replies do
+        not change its origin.
+    conversation comment:
+        A general comment on the proposed change with no source location.
     review request:
-        One currently outstanding request for a user, bot or team to review a
-        change. A deleted target remains as an unavailable target rather than
-        deleting the request. It is current state, not a history of request
-        and removal events, and it is not a review submission.
-    reviewer round:
-        The one-based position of a submission among the same reviewer's
-        submissions, ordered by submission time and then opaque submission
-        identity when times match.
-    revision round:
-        The one-based position of a reviewed head commit among the distinct
-        reviewed head commits, ordered by their first submission under the
-        same submission ordering.
-    installation:
-        The grant under which an app authenticates on the platform, carrying
-        its permissions and its tokens.
-    credentials:
-        The provider-specific values that authenticate an identity. A caller
-        supplies them through the project configuration or directly when it
-        constructs a provider.
-    token:
-        A credential opening one identity's access. A user token is supplied
-        as a credential; an app installation token is fetched, cached and
-        refreshed in-client. Neither is persisted by postel.
-    store:
-        One of the four places an entity lives: the platform, git, the bucket,
-        the host.
-    lookup:
-        A read answered by one exact address.
-    listing:
-        A read of everything under one path prefix.
-    scan:
-        A question a store answers only by reading and filtering, because it
-        cuts across the store's own order.
-    computed answer:
-        A result computed from records at query time and never written back.
-    snapshot:
-        A platform read captured as a record, so a later query answers from
-        the record rather than from the platform.
-    identifier:
-        The string naming one entity; identifier and path are one form under
-        one parser.
-    namespace:
-        The path an identifier is — one form under one parser; a prefix of
-        it is a query.
-    schema version:
-        The number in an object's name stating which schema its record
-        carries; one number covers a domain.
+        One currently outstanding request for an actor or team to review a
+        change. The observed target and the provider address that can request
+        it again are separate facts. It describes current state, not request
+        history.
+    review application:
+        The provider application through which an actor created or submitted a
+        review.
+        It is attribution, not the actor and not the provider's authentication
+        identity.
+    refusal:
+        A structured provider error returned when required data is missing,
+        inconsistent or cannot be represented by a Postel model.
+    record path:
+        A validated relative object-store path used for exact reads, creates and
+        prefix listings.

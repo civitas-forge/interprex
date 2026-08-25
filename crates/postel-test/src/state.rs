@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, sync::Arc};
 use bytes::Bytes;
 use postel::{
     AssetId, CheckOutcome, CodeReview, CodeReviewNumber, DispatchInputs, Issue, IssueNumber, Label,
-    ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, ReviewRequestTarget,
-    Ruleset, RunId, WorkflowRun,
+    ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, Ruleset, RunId,
+    WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -21,8 +21,6 @@ pub(crate) struct State {
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) code_reviews: BTreeMap<(Repository, CodeReviewNumber), CodeReview>,
-    pub(crate) requested_reviewers:
-        BTreeMap<(Repository, CodeReviewNumber), Vec<ReviewRequestTarget>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     pub(crate) runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -85,20 +83,6 @@ impl FakeProvider {
 
     pub async fn dispatches(&self) -> Vec<(Repository, String, String, DispatchInputs)> {
         self.state.read().await.dispatches.clone()
-    }
-
-    pub async fn requested_reviewers(
-        &self,
-        repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Vec<ReviewRequestTarget> {
-        self.state
-            .read()
-            .await
-            .requested_reviewers
-            .get(&(repository.clone(), number))
-            .cloned()
-            .unwrap_or_default()
     }
 }
 

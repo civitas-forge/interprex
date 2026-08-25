@@ -1,64 +1,94 @@
 Postel
 
-    Postel is a Rust library that abstracts development-platform apis into
-    high-level domains: code hosting, issue tracking, code review, ci jobs and
-    releases.
+    Postel is a Rust library for working with development platforms through
+    provider-neutral domain interfaces. Callers use code hosting, issue
+    tracking, code review, CI jobs and releases without depending on GitHub
+    response types or endpoint names.
 
-    Each domain may be served by a different platform, behind one api
-    interface — platforms coexist, and a domain can move to another platform
-    without its callers changing. The api sits above raw endpoints, in
-    operations a caller means: requesting a review, resolving a thread,
-    publishing a release asset.
-
-    The goal is easier integration with development platforms: portable
-    calling code, platform switches with partial adoption, and callers that
-    never grow specific to a single platform.
+    Postel is linked into a caller. It has no binary, server or command line.
+    A caller constructs providers at its composition root and may select a
+    different provider for each domain. The included GitHub provider implements
+    all five domains, and the in-memory provider implements the same interfaces
+    for consumer tests.
 
 1. Domains
 
     code hosting:
-        Configuring repositories, branches, access control, and merge
-        strategy and rules.
-    tracker — issue tracking:
-        Tracking issues, bugs and feature requests.
+        Read repository facts and merge settings, apply settings, read and
+        update rulesets, and write encrypted repository secrets.
+    tracker:
+        Read issues and read or update labels.
     code review:
-        Proposed changes, formal review submissions by users and apps, the
-        revisions they reviewed, all inline conversations and their replies,
-        findings, outstanding review requests, and review state.
-    jobs — ci:
-        Integrating with ci pipelines: triggering jobs and managing job
-        status.
+        Read proposed changes, reviews, findings, independent discussions,
+        general conversation and outstanding review requests;
+        resolve threads, request reviewers, mark a change ready and publish
+        check results.
+    jobs:
+        Dispatch jobs, read runs and cancel runs.
     releases:
-        Cutting releases and managing their assets, versions and notes.
+        Read and create releases, stream uploads and stream downloads.
 
-2. Providers
+2. Code Review Data
 
-    Each domain accepts providers — one per platform, all serving the same
-    interface — so several platforms combine behind one api. Github is the
-    first provider, and a new one slots in per domain without touching
-    callers.
+    A code review contains the proposed change's current base and head commits
+    and every review record returned by the provider. Reviews remain distinct
+    when the same actor reviews the same revision more than once.
 
-3. The Docs
+    Each review records its author, the application that produced it when
+    known, the reviewed head commit, its summary and its inline findings. Its
+    state distinguishes a draft from a submitted review; a submitted review
+    also carries its disposition and submission time.
+
+    The review author is one of change author, another known actor or an actor
+    whose relationship is unknown. The change-author variant refers to the
+    proposed change's author instead of storing a second, independently
+    writable copy. Unknown means the provider did not return enough identity
+    information to compare the actors; it does not mean other. Postel returns
+    this fact and leaves decisions about independent review evidence to the
+    caller.
+
+    A thread attached to a review is one of that review's findings, including a
+    self-review finding from the change author. A thread with no originating
+    review is an independent discussion. General conversation has no source
+    location. Postel does not derive rounds, stale reviewers, severity or next
+    actions from these records.
+
+3. Crates
+
+    `postel`:
+        Provider-neutral models, errors and asynchronous domain interfaces.
+    `postel-github`:
+        The GitHub adapter and its typed configuration.
+    `postel-test`:
+        A stateful in-memory provider for consumer tests.
+    `postel-bucket`:
+        An independent create-only record client over `ObjectStore`.
+
+4. Configuration
+
+    Construct the GitHub provider directly with `from_config`, or pass a
+    project root to `from_project` to read `.postel.toml`. The file form uses
+    `[provider.github]` for `GH_TOKEN` and
+    `[provider.github.apps.<name>]` for an app's `APP_ID`, `INSTALLATION_ID` and
+    `PRIVATE_KEY`. Missing credentials are reported when an operation first
+    needs them, and credential values do not appear in debug output or errors.
+
+    `ProviderSelections::from_lookup` reads independent provider names from
+    `POSTEL_CODE_HOSTING_PROVIDER`, `POSTEL_TRACKER_PROVIDER`,
+    `POSTEL_CODE_REVIEWS_PROVIDER`, `POSTEL_JOBS_PROVIDER` and
+    `POSTEL_RELEASES_PROVIDER`. An unset or blank value selects `github`.
+
+5. Documentation
 
     [./GLOSSARY.lex]:
-        The words this repository defines.
-    [./docs/architecture.lex]:
-        The shape: crates and clients, domains and refusals, deployment,
-        boundaries, and the tools that link it.
-    [./docs/interface.lex]:
-        What a consumer links, calls and tests against.
-    [./docs/verify.lex]:
-        The checkable assertions: interface, configuration, test tiers, build
-        outputs, runtime, siblings.
-    [./docs/100-platform.lex]:
-        The development platform and its five domains.
-    [./docs/110-data-access.lex]:
-        The four stores, what each answers, and the method for settling a
-        model and its access together.
-    [./docs/200-stack.lex]:
-        Bought and built: octocrab and the github client, the bucket, and
-        provider authentication.
-    [./docs/210-crates.lex]:
-        The crate layout.
+        The vocabulary used by the public models and documentation.
+    [./docs/design.lex]:
+        Domain ownership, provider construction and the complete code-review
+        model.
     [./docs/contracts/records.lex]:
-        The write discipline every record writer meets.
+        The behavior guaranteed by the create-only record client.
+
+6. Development
+
+    Run `scripts/quality` for formatting, Lex validation, Clippy, tests and
+    doctests. The pre-commit hook and GitHub Actions run the same command.
