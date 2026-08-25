@@ -1,31 +1,31 @@
 use async_trait::async_trait;
 use postel::{
-    CheckOutcome, PullRequest, PullRequestNumber, PullRequestsProvider, Repository, Result,
+    CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
     ReviewThread, ReviewThreadId,
 };
 
 use crate::state::{FakeProvider, missing};
 
 #[async_trait]
-impl PullRequestsProvider for FakeProvider {
-    async fn pull_request(
+impl CodeReviewsProvider for FakeProvider {
+    async fn code_review(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
-    ) -> Result<PullRequest> {
+        number: CodeReviewNumber,
+    ) -> Result<CodeReview> {
         self.state
             .read()
             .await
-            .pull_requests
+            .code_reviews
             .get(&(repository.clone(), number))
             .cloned()
-            .ok_or_else(|| missing(format!("pull request {number:?} in {repository}")))
+            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))
     }
 
     async fn review_threads(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
     ) -> Result<Vec<ReviewThread>> {
         Ok(self
             .state
@@ -40,14 +40,14 @@ impl PullRequestsProvider for FakeProvider {
     async fn resolve_thread(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
         let mut state = self.state.write().await;
         let threads = state
             .threads
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("review threads for pull request {number:?}")))?;
+            .ok_or_else(|| missing(format!("review threads for code review {number:?}")))?;
         if let Some(thread) = threads.iter_mut().find(|thread| &thread.id == thread_id) {
             thread.resolved = true;
             return Ok(());
@@ -58,7 +58,7 @@ impl PullRequestsProvider for FakeProvider {
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         reviewers: &[String],
     ) -> Result<()> {
         self.state
@@ -69,13 +69,13 @@ impl PullRequestsProvider for FakeProvider {
         Ok(())
     }
 
-    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()> {
+    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()> {
         let mut state = self.state.write().await;
-        let pull_request = state
-            .pull_requests
+        let code_review = state
+            .code_reviews
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("pull request {number:?} in {repository}")))?;
-        pull_request.draft = false;
+            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
+        code_review.draft = false;
         Ok(())
     }
 

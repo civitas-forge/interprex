@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{OpenClosed, Repository, Result};
 
-platform_number!(PullRequestNumber);
+platform_number!(CodeReviewNumber);
 
 /// Opaque provider identity for a review thread.
 ///
@@ -32,8 +32,8 @@ impl ReviewThreadId {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct PullRequest {
-    pub number: PullRequestNumber,
+pub struct CodeReview {
+    pub number: CodeReviewNumber,
     pub title: String,
     pub state: OpenClosed,
     pub draft: bool,
@@ -78,31 +78,31 @@ pub struct CheckOutcome {
 }
 
 #[async_trait]
-pub trait PullRequestsProvider: Send + Sync {
-    async fn pull_request(
+pub trait CodeReviewsProvider: Send + Sync {
+    async fn code_review(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
-    ) -> Result<PullRequest>;
+        number: CodeReviewNumber,
+    ) -> Result<CodeReview>;
     /// Returns every thread and its complete comment sequence in provider order.
     async fn review_threads(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
     ) -> Result<Vec<ReviewThread>>;
     async fn resolve_thread(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()>;
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         reviewers: &[String],
     ) -> Result<()>;
-    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()>;
+    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()>;
     async fn publish_check(
         &self,
         repository: &Repository,

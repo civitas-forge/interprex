@@ -1,17 +1,26 @@
 The Development Platform
 
-    A development platform is the hosted system carrying repos and their configuration, issues, pull requests, ci jobs and releases. The tools that read it run no server of their own. It holds the data, and a tool stores its own concepts as that platform's objects wherever one fits, rather than keeping a second copy under its own names — a pull request is a pull request, an epic is an issue.
+    A development platform is the hosted system carrying repos and their
+    configuration, issues, code reviews, ci jobs and releases. The tools that
+    read it run no server of their own. It holds the data, and a tool stores
+    its own concepts as that platform's objects wherever one fits, rather than
+    keeping a second copy under its own names — on Github, a code review is a
+    pull request and an epic is an issue.
 
 1. Domains
 
-    The platform is not one contract. It decomposes into five domains, each with its own contract and its own provider selection ([./architecture.lex]), so domains can live on different systems — the tracker in one, jobs in another, prs in a third.
+    The platform is not one contract. It decomposes into five domains, each
+    with its own contract and its own provider selection
+    ([./architecture.lex]), so domains can live on different systems — the
+    tracker in one, jobs in another, code reviews in a third.
 
     repo:
         A repo's existence and configuration: settings, merge requirements, required checks, secrets.
     tracker:
         Issues and the label taxonomy.
-    pr:
-        The pull request: its facts, reviews, threads, review requests, check results, the draft-ready flip.
+    code review:
+        A proposed change: its facts, reviews, threads, review requests, check
+        results and draft-ready transition.
     jobs:
         The ci runtime: the generated thin callers, dispatch, runs, runners, caches, and a run's own transport containers — each a named archive of any number of files, carrying its own expiry, holding whatever one job hands the next.
     releases:
@@ -26,10 +35,13 @@ The Development Platform
     particular app names that identity; the provider authenticates it. A
     domain that moves takes its new provider's identities with it.
 
-    The contract speaks the model's terms — jobs, not workflows; tracker, not an issues api. A provider that cannot express a required fact refuses ([./architecture.lex]).
+    The contract speaks the model's terms — jobs, not workflows; tracker, not
+    an issues api; code review, not pull request. A provider that cannot
+    express a required fact refuses ([./architecture.lex]).
 
 2. What The Contracts Do Not Cover
 
-    Agent acts — opening issues and pull requests, assigning labels, merges, branch pushes — cross no contract ([./architecture.lex]).
+    Agent acts — opening issues and Github pull requests, assigning labels,
+    merges and branch pushes — cross no contract ([./architecture.lex]).
 
     A domain holds configuration and work in flight both — a tracker's label taxonomy beside its issues, a repo's merge requirements beside its branches — and the two change on different cadences. The contracts carry both; which caller drives which of the two is no fact of this repo's.

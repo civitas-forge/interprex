@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use postel::{
-    AssetStreamError, AssetUpload, PullRequestNumber, PullRequestsProvider, Release, ReleaseId,
+    AssetStreamError, AssetUpload, CodeReviewNumber, CodeReviewsProvider, Release, ReleaseId,
     ReleasesProvider, Repository, RepositoryFacts, RepositoryProvider, RepositorySettings,
     ReviewComment, ReviewThread, ReviewThreadId,
 };
@@ -36,7 +36,7 @@ async fn consumer_observes_changes_through_the_same_contract() {
             .allow_squash_merge
     );
 
-    let number = PullRequestNumber::new(3).expect("number");
+    let number = CodeReviewNumber::new(3).expect("number");
     provider
         .request_reviewers(&repository, number, &["reviewer".to_owned()])
         .await
@@ -51,7 +51,7 @@ async fn consumer_observes_changes_through_the_same_contract() {
 async fn consumer_reads_complete_review_conversations_through_the_contract() {
     let provider = FakeProvider::new();
     let repository = Repository::new("faictor", "sandbox").expect("repository");
-    let number = PullRequestNumber::new(3).expect("number");
+    let number = CodeReviewNumber::new(3).expect("number");
     let thread = ReviewThread {
         id: ReviewThreadId::new("thread-1").expect("thread id"),
         resolved: false,

@@ -1,4 +1,4 @@
-//! Pull-request REST and GraphQL operations owned by the pull-requests domain.
+//! Code-review operations implemented with GitHub pull-request APIs.
 //!
 //! Ordinary pull-request facts use REST. Review threads, thread resolution,
 //! reviewer requests by login, and the draft-ready transition use hand-written
@@ -8,8 +8,8 @@
 
 use async_trait::async_trait;
 use postel::{
-    CheckConclusion, CheckOutcome, OpenClosed, ProviderError, PullRequest, PullRequestNumber,
-    PullRequestsProvider, Repository, Result, ReviewComment, ReviewThread, ReviewThreadId,
+    CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, OpenClosed,
+    ProviderError, Repository, Result, ReviewComment, ReviewThread, ReviewThreadId,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -97,11 +97,11 @@ struct GithubUser {
     login: String,
 }
 
-fn normalize_pull_request(value: GithubPullRequest) -> Result<PullRequest> {
-    Ok(PullRequest {
-        number: PullRequestNumber::new(value.number).map_err(|error| ProviderError::External {
+fn normalize_code_review(value: GithubPullRequest) -> Result<CodeReview> {
+    Ok(CodeReview {
+        number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
             provider: "github",
-            operation: "normalize pull request",
+            operation: "normalize code review",
             message: error.to_string(),
         })?,
         title: value.title,
@@ -246,7 +246,7 @@ impl GithubProvider {
     async fn github_pull_request(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
     ) -> Result<GithubPullRequest> {
         self.user()?
             .get(
@@ -256,8 +256,8 @@ impl GithubProvider {
             .await
             .map_err(|error| {
                 crate::client::read_error(
-                    "read pull request",
-                    format!("pull request {} in {repository}", number.get()),
+                    "read code review",
+                    format!("code review {} in {repository}", number.get()),
                     error,
                 )
             })
@@ -291,20 +291,20 @@ impl GithubProvider {
 }
 
 #[async_trait]
-impl PullRequestsProvider for GithubProvider {
-    async fn pull_request(
+impl CodeReviewsProvider for GithubProvider {
+    async fn code_review(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
-    ) -> Result<PullRequest> {
+        number: CodeReviewNumber,
+    ) -> Result<CodeReview> {
         let response = self.github_pull_request(repository, number).await?;
-        normalize_pull_request(response)
+        normalize_code_review(response)
     }
 
     async fn review_threads(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
     ) -> Result<Vec<ReviewThread>> {
         let mut cursor: Option<String> = None;
         let mut threads = Vec::new();
@@ -343,7 +343,7 @@ impl PullRequestsProvider for GithubProvider {
     async fn resolve_thread(
         &self,
         _repository: &Repository,
-        _number: PullRequestNumber,
+        _number: CodeReviewNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
         let _: serde_json::Value = self
@@ -360,7 +360,7 @@ impl PullRequestsProvider for GithubProvider {
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         reviewers: &[String],
     ) -> Result<()> {
         let pull_request = self.github_pull_request(repository, number).await?;
@@ -379,11 +379,11 @@ impl PullRequestsProvider for GithubProvider {
                 }
             }))
             .await
-            .map_err(|error| external("request pull request reviewers", error))?;
+            .map_err(|error| external("request code reviewers", error))?;
         Ok(())
     }
 
-    async fn mark_ready(&self, repository: &Repository, number: PullRequestNumber) -> Result<()> {
+    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()> {
         let pull_request = self.github_pull_request(repository, number).await?;
         let _: serde_json::Value = self
             .user()?
@@ -392,7 +392,7 @@ impl PullRequestsProvider for GithubProvider {
                 "variables": { "pullRequestId": pull_request.node_id }
             }))
             .await
-            .map_err(|error| external("mark pull request ready", error))?;
+            .map_err(|error| external("mark code review ready", error))?;
         Ok(())
     }
 
@@ -415,7 +415,7 @@ impl PullRequestsProvider for GithubProvider {
                 })),
             )
             .await
-            .map_err(|error| external("publish pull request check", error))?;
+            .map_err(|error| external("publish code review check", error))?;
         Ok(())
     }
 }
@@ -424,7 +424,7 @@ impl PullRequestsProvider for GithubProvider {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use postel::{CheckConclusion, CheckOutcome, PullRequestsProvider, Repository};
+    use postel::{CheckConclusion, CheckOutcome, CodeReviewsProvider, Repository};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -433,19 +433,19 @@ mod tests {
 
     use crate::GithubProvider;
 
-    use super::{GithubPullRequest, ThreadsData, normalize_pull_request, normalize_threads};
+    use super::{GithubPullRequest, ThreadsData, normalize_code_review, normalize_threads};
 
     #[test]
-    fn pull_request_fixture_preserves_review_revision_facts() {
+    fn github_pull_request_fixture_preserves_code_review_revision_facts() {
         let response: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
                 .expect("fixture");
-        let pull_request = normalize_pull_request(response).expect("normalizes");
+        let code_review = normalize_code_review(response).expect("normalizes");
         assert_eq!(
-            pull_request.head_sha,
+            code_review.head_sha,
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         );
-        assert!(pull_request.draft);
+        assert!(code_review.draft);
     }
 
     #[test]

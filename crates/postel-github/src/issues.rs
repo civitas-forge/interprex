@@ -2,7 +2,7 @@
 //!
 //! GitHub presents pull requests through its issues routes too, but this module
 //! intentionally models only issues and label taxonomy. Pull-request review
-//! facts remain in `pull_requests`, preventing a convenient vendor route from
+//! facts remain in `code_reviews`, preventing a convenient vendor route from
 //! moving ownership between contracts.
 
 use async_trait::async_trait;

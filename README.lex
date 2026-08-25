@@ -21,8 +21,8 @@ Postel
         strategy and rules.
     tracker — issue tracking:
         Tracking issues, bugs and feature requests.
-    pr — code review:
-        Review requests, review threads and findings, and a pull request's
+    code review:
+        Proposed changes, review requests, review threads and findings, and
         review state.
     jobs — ci:
         Integrating with ci pipelines: triggering jobs and managing job

@@ -21,7 +21,7 @@ Interface
 
     - repo — a repo's existence and configuration
     - tracker — issues and labels
-    - pr — the pull request and its review
+    - code review — a proposed change and its review
     - jobs — the ci runtime
     - releases — releases, assets and notes
 
@@ -32,8 +32,8 @@ Interface
             secret.
         tracker:
             Read one issue, list labels and upsert one label.
-        pr:
-            Read one pull request and every review thread with its complete,
+        code review:
+            Read one code review and every review thread with its complete,
             provider-ordered comment sequence; resolve a thread, request
             reviewers, mark a draft ready and publish an app-owned check
             outcome.

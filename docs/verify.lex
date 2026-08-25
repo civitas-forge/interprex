@@ -12,7 +12,7 @@ Verify
     - The workspace members are `postel`, `postel-github`, `postel-test` and
       `postel-bucket` ([./210-crates.lex]).
     - `postel` declares provider-neutral values and five interfaces in
-      `repository`, `issues`, `pull_requests`, `jobs` and `releases`; it depends
+      `repository`, `issues`, `code_reviews`, `jobs` and `releases`; it depends
       on no adapter ([./architecture.lex]).
     - `postel-github` implements all five interfaces with `client`, `config` and
       matching domain modules ([./210-crates.lex]).
@@ -97,7 +97,8 @@ Verify
 
 6. Siblings
 
-    - kent links `postel` and a selected adapter, then drives the pr domain
+    - kent links `postel` and a selected adapter, then drives the code review
+      domain
       ([./architecture.lex]).
     - edward links the repo and jobs domains and supplies their providers.
     - minsky and sam write records through the bucket client.

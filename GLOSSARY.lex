@@ -5,8 +5,8 @@ Glossary
 
     domain:
         One area of the development platform under one contract — repo
-        (code hosting), tracker (issue tracking), pr (code review), jobs
-        (ci) or releases. Each names its own provider.
+        (code hosting), tracker (issue tracking), code review, jobs (ci) or
+        releases. Each names its own provider.
     contract:
         The trait stating a domain's operations in the tools' own vocabulary,
         naming no provider.

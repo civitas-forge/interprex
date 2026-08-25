@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use postel::{
-    AssetId, CheckOutcome, DispatchInputs, Issue, IssueNumber, Label, ProviderError, PullRequest,
-    PullRequestNumber, Release, Repository, RepositoryFacts, RepositorySettings, ReviewThread,
-    Ruleset, RunId, WorkflowRun,
+    AssetId, CheckOutcome, CodeReview, CodeReviewNumber, DispatchInputs, Issue, IssueNumber, Label,
+    ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, ReviewThread, Ruleset,
+    RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -20,9 +20,9 @@ pub(crate) struct State {
     pub(crate) secret_names: BTreeMap<Repository, Vec<String>>,
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
-    pub(crate) pull_requests: BTreeMap<(Repository, PullRequestNumber), PullRequest>,
-    pub(crate) threads: BTreeMap<(Repository, PullRequestNumber), Vec<ReviewThread>>,
-    pub(crate) requested_reviewers: BTreeMap<(Repository, PullRequestNumber), Vec<String>>,
+    pub(crate) code_reviews: BTreeMap<(Repository, CodeReviewNumber), CodeReview>,
+    pub(crate) threads: BTreeMap<(Repository, CodeReviewNumber), Vec<ReviewThread>>,
+    pub(crate) requested_reviewers: BTreeMap<(Repository, CodeReviewNumber), Vec<String>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     pub(crate) runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -55,18 +55,18 @@ impl FakeProvider {
             .insert((repository, issue.number), issue);
     }
 
-    pub async fn seed_pull_request(&self, repository: Repository, pull_request: PullRequest) {
+    pub async fn seed_code_review(&self, repository: Repository, code_review: CodeReview) {
         self.state
             .write()
             .await
-            .pull_requests
-            .insert((repository, pull_request.number), pull_request);
+            .code_reviews
+            .insert((repository, code_review.number), code_review);
     }
 
     pub async fn seed_review_threads(
         &self,
         repository: Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
         threads: Vec<ReviewThread>,
     ) {
         self.state
@@ -103,7 +103,7 @@ impl FakeProvider {
     pub async fn requested_reviewers(
         &self,
         repository: &Repository,
-        number: PullRequestNumber,
+        number: CodeReviewNumber,
     ) -> Vec<String> {
         self.state
             .read()

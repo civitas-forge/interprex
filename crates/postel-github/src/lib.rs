@@ -3,10 +3,10 @@
 #![forbid(unsafe_code)]
 
 mod client;
+mod code_reviews;
 mod config;
 mod issues;
 mod jobs;
-mod pull_requests;
 mod releases;
 mod repository;
 
