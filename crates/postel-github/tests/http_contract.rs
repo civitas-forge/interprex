@@ -494,7 +494,7 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         .expect("code review after retry");
 
     assert_eq!(
-        review.current_revision.head_sha,
+        review.current_range.head_sha,
         "cccccccccccccccccccccccccccccccccccccccc"
     );
     assert_eq!(requests.await.expect("captured requests").len(), 8);

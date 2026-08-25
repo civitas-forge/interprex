@@ -393,7 +393,7 @@ fn normalize_code_review(
             OpenClosed::Closed
         },
         draft: value.draft,
-        current_revision: CommitRange {
+        current_range: CommitRange {
             base_sha,
             head_sha: value.head.sha,
         },

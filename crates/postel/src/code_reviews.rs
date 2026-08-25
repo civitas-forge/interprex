@@ -146,7 +146,7 @@ pub struct CodeReview {
     pub title: String,
     pub state: OpenClosed,
     pub draft: bool,
-    pub current_revision: CommitRange,
+    pub current_range: CommitRange,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     pub submissions: Vec<ReviewSubmission>,
@@ -299,7 +299,7 @@ mod tests {
             title: "Review history".to_owned(),
             state: OpenClosed::Open,
             draft: false,
-            current_revision: CommitRange {
+            current_range: CommitRange {
                 base_sha: "base".to_owned(),
                 head_sha: "revision-b".to_owned(),
             },

@@ -62,7 +62,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         login: "author".to_owned(),
         kind: ReviewActorKind::User,
     };
-    let revision = CommitRange {
+    let range = CommitRange {
         base_sha: "base".to_owned(),
         head_sha: "revision-1".to_owned(),
     };
@@ -71,7 +71,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         title: "Review conversation".to_owned(),
         state: OpenClosed::Open,
         draft: false,
-        current_revision: revision.clone(),
+        current_range: range.clone(),
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
         submissions: vec![ReviewSubmission {
@@ -79,7 +79,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
             reviewer: reviewer.clone(),
             app: None,
             revision: ReviewedRevision {
-                head_sha: revision.head_sha.clone(),
+                head_sha: range.head_sha.clone(),
             },
             disposition: ReviewDisposition::ChangesRequested,
             submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
