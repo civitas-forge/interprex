@@ -30,8 +30,8 @@ pub(crate) fn segment(
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ProviderError {
-    #[error("{provider} cannot express required fact: {fact}")]
-    Refused {
+    #[error("unrepresentable {provider} data: {fact}")]
+    Unrepresentable {
         provider: &'static str,
         fact: String,
     },
@@ -52,6 +52,13 @@ pub enum ProviderError {
         provider: &'static str,
         operation: &'static str,
         message: String,
+    },
+    /// The caller's request contradicts itself; correcting the request, not
+    /// retrying it, resolves this error.
+    #[error("invalid input for {provider}: {fact}")]
+    InvalidInput {
+        provider: &'static str,
+        fact: String,
     },
 }
 

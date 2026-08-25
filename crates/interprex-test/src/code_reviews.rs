@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use interprex::{
-    CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
+    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, Repository, Result,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewRequest, ReviewRequestId,
     ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
     ReviewThreadStatus,
@@ -10,39 +10,39 @@ use crate::state::{FakeProvider, missing};
 
 #[async_trait]
 impl CodeReviewsProvider for FakeProvider {
-    async fn code_review(
+    async fn change_request(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<CodeReview> {
+        number: ChangeRequestNumber,
+    ) -> Result<ChangeRequest> {
         self.state
             .read()
             .await
-            .code_reviews
+            .change_requests
             .get(&(repository.clone(), number))
             .cloned()
-            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))
     }
 
     async fn resolve_thread(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
         let mut state = self.state.write().await;
-        let code_review = state
-            .code_reviews
+        let change_request = state
+            .change_requests
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
-        let finding = code_review
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let finding = change_request
             .reviews
             .iter_mut()
             .flat_map(|review| review.findings.iter_mut())
             .find(|thread| &thread.id == thread_id);
         let thread = finding.or_else(|| {
-            code_review
-                .discussions
+            change_request
+                .standalone_threads
                 .iter_mut()
                 .find(|thread| &thread.id == thread_id)
         });
@@ -56,48 +56,48 @@ impl CodeReviewsProvider for FakeProvider {
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
         let mut state = self.state.write().await;
-        let code_review = state
-            .code_reviews
+        let change_request = state
+            .change_requests
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
         for target in reviewers {
-            if code_review
+            if change_request
                 .outstanding_requests
                 .iter()
                 .any(|request| request.request_target.as_ref() == Some(target))
             {
                 continue;
             }
-            code_review
+            change_request
                 .outstanding_requests
                 .push(fake_review_request(repository, number, target));
         }
         Ok(())
     }
 
-    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()> {
+    async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()> {
         let mut state = self.state.write().await;
-        let code_review = state
-            .code_reviews
+        let change_request = state
+            .change_requests
             .get_mut(&(repository.clone(), number))
-            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
-        code_review.draft = false;
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        change_request.draft = false;
         Ok(())
     }
 
     async fn publish_check(
         &self,
         repository: &Repository,
-        app_identity: &str,
+        app_name: &str,
         outcome: &CheckOutcome,
     ) -> Result<()> {
         self.state.write().await.published_checks.push((
             repository.clone(),
-            app_identity.to_owned(),
+            app_name.to_owned(),
             outcome.clone(),
         ));
         Ok(())
@@ -106,7 +106,7 @@ impl CodeReviewsProvider for FakeProvider {
 
 fn fake_review_request(
     repository: &Repository,
-    number: CodeReviewNumber,
+    number: ChangeRequestNumber,
     target: &ReviewRequestTarget,
 ) -> ReviewRequest {
     let request_target = target.clone();

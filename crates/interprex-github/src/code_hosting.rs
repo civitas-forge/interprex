@@ -69,10 +69,9 @@ impl TryFrom<GithubRepository> for (RepositoryFacts, RepositorySettings) {
 
     fn try_from(value: GithubRepository) -> Result<Self> {
         let repository = Repository::new(value.owner.login, value.name).map_err(|error| {
-            ProviderError::External {
+            ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize repository",
-                message: error.to_string(),
+                fact: error.to_string(),
             }
         })?;
         Ok((

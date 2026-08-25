@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use interprex::{
-    AssetId, CheckOutcome, CodeReview, CodeReviewNumber, DispatchInputs, Issue, IssueNumber, Label,
-    ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, Ruleset, RunId,
+    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, DispatchInputs, Issue, IssueNumber,
+    Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, Ruleset, RunId,
     WorkflowRun,
 };
 use tokio::sync::RwLock;
@@ -20,7 +20,7 @@ pub(crate) struct State {
     pub(crate) secret_names: BTreeMap<Repository, Vec<String>>,
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
-    pub(crate) code_reviews: BTreeMap<(Repository, CodeReviewNumber), CodeReview>,
+    pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     pub(crate) runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -53,12 +53,12 @@ impl FakeProvider {
             .insert((repository, issue.number), issue);
     }
 
-    pub async fn seed_code_review(&self, repository: Repository, code_review: CodeReview) {
+    pub async fn seed_change_request(&self, repository: Repository, change_request: ChangeRequest) {
         self.state
             .write()
             .await
-            .code_reviews
-            .insert((repository, code_review.number), code_review);
+            .change_requests
+            .insert((repository, change_request.number), change_request);
     }
 
     pub async fn seed_run(&self, repository: Repository, run: WorkflowRun) {

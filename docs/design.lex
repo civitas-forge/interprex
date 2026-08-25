@@ -2,13 +2,13 @@ Design
 
     Interprex is a set of Rust libraries between callers and development-platform
     providers. Its public models and asynchronous traits use domain language;
-    provider adapters own authentication, endpoint selection, pagination and
+    providers own authentication, endpoint selection, pagination and
     response normalization.
 
 1. Shape
 
     `interprex` defines provider-neutral values and five domain interfaces. It
-    depends on no adapter. `interprex-github` implements those interfaces with
+    depends on no provider. `interprex-github` implements those interfaces with
     GitHub REST and GraphQL. GitHub identifiers and response types remain
     private to that crate. `interprex-test` implements the same interfaces with
     state held in memory so consumer rules use the public interface without a
@@ -41,16 +41,19 @@ Design
     tracker:
         Issues and labels.
     code review:
-        Proposed changes, reviews and their findings, independent discussions,
-        general conversation, outstanding review requests, check results and
+        Change requests, reviews and their findings, standalone threads,
+        unanchored comments, outstanding review requests, check results and
         the draft-to-ready transition.
     jobs:
         Dispatch, run observation and cancellation.
     releases:
         Releases and streaming assets.
 
-    An adapter returns Interprex values or a structured refusal. It does not
-    return vendor response types or fill a required fact with an approximation.
+    A provider returns Interprex values or a structured error for
+    unrepresentable data. It does not return vendor response types or fill a
+    required fact with an approximation. A caller request that contradicts
+    itself returns `InvalidInput` for the caller to correct; transport and
+    operation failures return `External`.
 
 3. Provider Construction
 
@@ -67,15 +70,16 @@ Design
 
 4. Code Review Observation
 
-    `CodeReviewsProvider::code_review` returns one complete observation of the
-    collections declared by `CodeReview`. Every collection is fully paginated.
-    GitHub does not provide a transaction across its pull-request, review,
-    thread, conversation and request endpoints, so values may have changed
-    between those reads. When a thread names a review absent from the first
-    review response, the adapter rereads reviews and threads once. A relationship
-    that remains inconsistent is refused instead of being deleted or guessed.
+    `CodeReviewsProvider::change_request` returns one complete observation of
+    the collections declared by `ChangeRequest`. Every collection is fully
+    paginated. GitHub does not provide a transaction across its pull-request,
+    review, thread, unanchored-comment and request endpoints, so values may
+    have changed between those reads. When a thread names a review absent from the first review
+    response, the provider rereads reviews and threads once. A relationship
+    that remains inconsistent is returned as unrepresentable data instead of
+    being deleted or guessed.
 
-    The proposed change carries its current base and head commits. A review
+    The change request carries its current base and head commits. A review
     carries only the reviewed head commit because GitHub does not retain the
     historical base commit for each review. Interprex does not pair a historical
     head with the current base and present it as a historical range.
@@ -92,7 +96,7 @@ Design
 
     change author:
         The provider returned stable actor identifiers that match. This variant
-        refers to the proposed change's author rather than duplicating it.
+        refers to the change request's author rather than duplicating it.
     other:
         The provider returned stable actor identifiers that differ, and the
         variant contains the other actor.
@@ -101,10 +105,10 @@ Design
         compare them. The variant contains the observed or placeholder actor.
 
     `ReviewAuthor::relationship` returns the category and
-    `ReviewAuthor::actor` returns the actor, using the proposed change's author
-    for the change-author variant. `via_app` separately attributes the provider
-    application used to create the review. Neither the author nor the app is
-    the provider's authentication identity.
+    `ReviewAuthor::actor` returns the actor, using the change request's author
+    for the change-author variant. `via_app` separately attributes the
+    reviewing application. Neither the author nor the app is the
+    authentication identity.
 
     A caller may decide that only `other` reviews count as independent evidence.
     Interprex does not make that policy decision, and `unknown` never becomes
@@ -119,9 +123,9 @@ Design
 
     A thread whose initial comment names a review is nested under that review as
     a finding. This includes a change author's self-review and a draft review.
-    A thread with no originating review remains an independent discussion.
-    Replies do not move a thread or create another review. General conversation
-    remains separate because it has no source location.
+    A thread with no originating review remains a standalone thread. Replies
+    do not move a thread or create another review. Unanchored comments remain
+    separate because they have no source location.
 
     Outstanding review requests preserve their actor or team target, the
     provider address that can request that target again when available, and
@@ -140,8 +144,8 @@ Design
 
     Providers own transport behavior shared by every caller: authentication,
     pagination, provider retries, request encoding, response normalization,
-    secret encryption and asset streaming. The GitHub adapter uses Octocrab but
-    exposes no Octocrab type through a domain interface.
+    secret encryption and asset streaming. The GitHub provider uses Octocrab
+    but exposes no Octocrab type through a domain interface.
 
     Callers own why an operation occurs and what follows from its result. Interprex
     can request a reviewer, resolve a thread or publish a check; it does not

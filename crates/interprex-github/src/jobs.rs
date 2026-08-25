@@ -45,10 +45,9 @@ fn normalize_run(value: GithubRun) -> Result<WorkflowRun> {
         _ => RunConclusion::Unknown,
     });
     Ok(WorkflowRun {
-        id: RunId::new(value.id).map_err(|error| ProviderError::External {
+        id: RunId::new(value.id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize workflow run",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         workflow_name: value.name,
         head_sha: value.head_sha,

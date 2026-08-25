@@ -27,9 +27,9 @@ Record Client Contract
     returns validated paths under one prefix in sorted order. The client does
     not filter on record contents or compute cross-record answers.
 
-4. Adapters and Errors
+4. Stores and Errors
 
     `BucketClient::from_store` accepts any `ObjectStore` implementation.
-    `from_gcs_env` constructs the included Google Cloud Storage adapter from
-    environment configuration. Vendor errors become `BucketError` values, and
-    no Google Cloud Storage type appears in the record operations.
+    `from_gcs_env` constructs the included Google Cloud Storage `ObjectStore`
+    from environment configuration. Vendor errors become `BucketError` values,
+    and no Google Cloud Storage type appears in the record operations.

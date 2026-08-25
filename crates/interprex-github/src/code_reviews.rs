@@ -1,18 +1,18 @@
 //! Code-review operations implemented with GitHub pull-request APIs.
 //!
 //! The read combines pull-request facts, formal reviews, inline threads,
-//! general conversation and outstanding requests into one provider-neutral
+//! unanchored comments and outstanding requests into one provider-neutral
 //! observation. GitHub's REST review and issue-comment records identify
-//! reviews, apps and conversation comments; GraphQL supplies thread locations,
+//! reviews, apps and unanchored comments; GraphQL supplies thread locations,
 //! resolution, complete comment sequences and outstanding requests. The
-//! adapter joins them here so callers never correlate GitHub entities.
+//! provider joins them here so callers never correlate GitHub entities.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use interprex::{
-    CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
-    OpenClosed, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
+    ChangeRequest, ChangeRequestNumber, CheckConclusion, CheckOutcome, CodeReviewsProvider,
+    CommitRange, OpenClosed, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
     ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment,
     ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange,
     ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
@@ -152,12 +152,8 @@ struct GitRef {
 struct GithubUser {
     node_id: String,
     login: String,
-    #[serde(rename = "type", default = "default_user_kind")]
-    kind: String,
-}
-
-fn default_user_kind() -> String {
-    "User".to_owned()
+    #[serde(rename = "type")]
+    kind: Option<String>,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -179,7 +175,7 @@ struct GithubReview {
 }
 
 #[derive(Deserialize, PartialEq)]
-struct GithubConversationComment {
+struct GithubUnanchoredComment {
     node_id: String,
     user: Option<GithubUser>,
     body: String,
@@ -391,30 +387,35 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
         "Organization" => ReviewActorKind::Organization,
         "EnterpriseUserAccount" => ReviewActorKind::EnterpriseUser,
         other => {
-            return Err(ProviderError::External {
+            return Err(ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review actor",
-                message: format!("unknown review actor kind {other}"),
+                fact: format!("unknown review actor kind {other}"),
             });
         }
     };
     Ok(ReviewActor {
-        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review actor",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         login,
         kind,
     })
 }
 
+fn rest_actor(user: GithubUser) -> Result<ReviewActor> {
+    let kind = user.kind.ok_or_else(|| ProviderError::Unrepresentable {
+        provider: "github",
+        fact: format!("actor {} has no type", user.login),
+    })?;
+    actor(user.node_id, user.login, &kind)
+}
+
 fn ghost_actor(id: String) -> Result<ReviewActor> {
     Ok(ReviewActor {
-        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize unavailable review actor",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         login: "ghost".to_owned(),
         kind: ReviewActorKind::Placeholder,
@@ -427,19 +428,17 @@ fn normalize_disposition(value: &str) -> Result<ReviewDisposition> {
         "CHANGES_REQUESTED" => Ok(ReviewDisposition::ChangesRequested),
         "COMMENTED" => Ok(ReviewDisposition::Commented),
         "DISMISSED" => Ok(ReviewDisposition::Dismissed),
-        other => Err(ProviderError::External {
+        other => Err(ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review",
-            message: format!("unknown review state {other}"),
+            fact: format!("unknown review state {other}"),
         }),
     }
 }
 
-fn normalize_line(value: u64, operation: &'static str) -> Result<ReviewLine> {
-    ReviewLine::new(value).map_err(|error| ProviderError::External {
+fn normalize_line(value: u64) -> Result<ReviewLine> {
+    ReviewLine::new(value).map_err(|error| ProviderError::Unrepresentable {
         provider: "github",
-        operation,
-        message: error.to_string(),
+        fact: error.to_string(),
     })
 }
 
@@ -450,26 +449,19 @@ fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
     }
 }
 
-fn normalize_line_range(
-    end: Option<u64>,
-    start: Option<u64>,
-    operation: &'static str,
-) -> Result<Option<ReviewLineRange>> {
+fn normalize_line_range(end: Option<u64>, start: Option<u64>) -> Result<Option<ReviewLineRange>> {
     let Some(end) = end else {
         if start.is_some() {
-            return Err(ProviderError::External {
+            return Err(ProviderError::Unrepresentable {
                 provider: "github",
-                operation,
-                message: "review range has a start line without an end line".to_owned(),
+                fact: "review range has a start line without an end line".to_owned(),
             });
         }
         return Ok(None);
     };
     Ok(Some(ReviewLineRange {
-        start: start
-            .map(|line| normalize_line(line, operation))
-            .transpose()?,
-        end: normalize_line(end, operation)?,
+        start: start.map(normalize_line).transpose()?,
+        end: normalize_line(end)?,
     }))
 }
 
@@ -477,29 +469,21 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
     let anchor = match thread.subject_type {
         ThreadSubjectType::File => ReviewAnchor::File,
         ThreadSubjectType::Line => {
-            let side = thread.diff_side.ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review thread location",
-                message: format!("line thread {} has no diff side", thread.id),
-            })?;
-            let original = normalize_line_range(
-                thread.original_line,
-                thread.original_start_line,
-                "normalize review thread location",
-            )?
-            .ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review thread location",
-                message: format!("line thread {} has no original line", thread.id),
-            })?;
+            let side = thread
+                .diff_side
+                .ok_or_else(|| ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("line thread {} has no diff side", thread.id),
+                })?;
+            let original = normalize_line_range(thread.original_line, thread.original_start_line)?
+                .ok_or_else(|| ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("line thread {} has no original line", thread.id),
+                })?;
             ReviewAnchor::Lines {
                 side: normalize_diff_side(side),
                 original,
-                current: normalize_line_range(
-                    thread.line,
-                    thread.start_line,
-                    "normalize review thread location",
-                )?,
+                current: normalize_line_range(thread.line, thread.start_line)?,
             }
         }
     };
@@ -512,10 +496,11 @@ fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
 fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
     let comment_id = value.id;
     Ok(ReviewComment {
-        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize review comment",
-            message: error.to_string(),
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
         })?,
         author: match value.author {
             Some(author) => actor(author.id, author.login, &author.kind)?,
@@ -527,17 +512,20 @@ fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
     })
 }
 
-fn normalize_conversation_comment(value: GithubConversationComment) -> Result<ReviewComment> {
+fn normalize_unanchored_comment(value: GithubUnanchoredComment) -> Result<ReviewComment> {
     let comment_id = value.node_id;
     Ok(ReviewComment {
-        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize review conversation comment",
-            message: error.to_string(),
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
         })?,
         author: match value.user {
-            Some(author) => actor(author.node_id, author.login, &author.kind)?,
-            None => ghost_actor(format!("unavailable-conversation-author:{comment_id}"))?,
+            Some(author) => rest_actor(author)?,
+            None => ghost_actor(format!(
+                "unavailable-unanchored-comment-author:{comment_id}"
+            ))?,
         },
         body: value.body,
         created_at: value.created_at,
@@ -567,10 +555,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
             let request_identifier = format!("{}/{}", organization.login, slug);
             (
                 ReviewTarget::Team(ReviewTeam {
-                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::Unrepresentable {
                         provider: "github",
-                        operation: "normalize review request",
-                        message: error.to_string(),
+                        fact: error.to_string(),
                     })?,
                     slug,
                     name,
@@ -581,10 +568,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
         }
         Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => (
             ReviewTarget::Team(ReviewTeam {
-                id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                id: ReviewTeamId::new(id).map_err(|error| ProviderError::Unrepresentable {
                     provider: "github",
-                    operation: "normalize review request",
-                    message: error.to_string(),
+                    fact: error.to_string(),
                 })?,
                 slug,
                 name,
@@ -595,10 +581,9 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
         None => (ReviewTarget::Unavailable, None),
     };
     Ok(ReviewRequest {
-        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
+        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::Unrepresentable {
             provider: "github",
-            operation: "normalize review request",
-            message: error.to_string(),
+            fact: error.to_string(),
         })?,
         target,
         request_target,
@@ -606,16 +591,16 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
     })
 }
 
-fn normalize_code_review(
+fn normalize_change_request(
     value: GithubPullRequest,
     mut reviews: Vec<GithubReview>,
     threads: Vec<ThreadNode>,
     review_requests: Vec<ReviewRequestNode>,
-    conversation: Vec<GithubConversationComment>,
-) -> Result<CodeReview> {
+    unanchored_comments: Vec<GithubUnanchoredComment>,
+) -> Result<ChangeRequest> {
     let author_provider_id = value.user.as_ref().map(|user| user.node_id.clone());
     let author = match value.user {
-        Some(user) => actor(user.node_id, user.login, &user.kind)?,
+        Some(user) => rest_actor(user)?,
         None => ghost_actor(format!("unavailable-change-author:{}", value.node_id))?,
     };
     let base_sha = value.base.sha;
@@ -641,7 +626,7 @@ fn normalize_code_review(
             _ => ReviewRelationship::Unknown,
         };
         let review_author = match review.user {
-            Some(user) => actor(user.node_id, user.login, &user.kind)?,
+            Some(user) => rest_actor(user)?,
             None => ghost_actor(format!("unavailable-review-author:{}", review.node_id))?,
         };
         let review_author = match relationship {
@@ -651,30 +636,31 @@ fn normalize_code_review(
         };
         let state = if review.state == "PENDING" {
             if review.submitted_at.is_some() {
-                return Err(ProviderError::External {
+                return Err(ProviderError::Unrepresentable {
                     provider: "github",
-                    operation: "normalize review",
-                    message: format!("draft review {} has a submission time", review.node_id),
+                    fact: format!("draft review {} has a submission time", review.node_id),
                 });
             }
             ReviewState::Draft
         } else {
-            let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
-                provider: "github",
-                operation: "normalize review",
-                message: format!("submitted review {} has no submission time", review.node_id),
-            })?;
+            let submitted_at =
+                review
+                    .submitted_at
+                    .ok_or_else(|| ProviderError::Unrepresentable {
+                        provider: "github",
+                        fact: format!("submitted review {} has no submission time", review.node_id),
+                    })?;
             ReviewState::Submitted {
                 disposition: normalize_disposition(&review.state)?,
                 submitted_at,
             }
         };
-        let id =
-            ReviewId::new(review.node_id.clone()).map_err(|error| ProviderError::External {
+        let id = ReviewId::new(review.node_id.clone()).map_err(|error| {
+            ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review",
-                message: error.to_string(),
-            })?;
+                fact: error.to_string(),
+            }
+        })?;
         review_positions.insert(review.node_id, normalized_reviews.len());
         normalized_reviews.push(Review {
             id,
@@ -684,10 +670,9 @@ fn normalize_code_review(
                 .map(|app| {
                     Ok(ReviewApp {
                         id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
-                            ProviderError::External {
+                            ProviderError::Unrepresentable {
                                 provider: "github",
-                                operation: "normalize review app",
-                                message: error.to_string(),
+                                fact: error.to_string(),
                             }
                         })?,
                         slug: app.slug,
@@ -704,24 +689,24 @@ fn normalize_code_review(
         });
     }
 
-    let mut discussions = Vec::new();
+    let mut standalone_threads = Vec::new();
     for thread in threads {
         let location = normalize_review_location(&thread)?;
         let mut comments = thread.comments.nodes.into_iter();
-        let initial = comments.next().ok_or_else(|| ProviderError::External {
-            provider: "github",
-            operation: "normalize review thread",
-            message: format!("review thread {} has no comments", thread.id),
-        })?;
+        let initial = comments
+            .next()
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("review thread {} has no comments", thread.id),
+            })?;
         let review_position = match initial.pull_request_review.as_ref() {
             None => None,
             Some(review) => match review_positions.get(&review.id) {
                 Some(position) => Some(*position),
                 None => {
-                    return Err(ProviderError::External {
+                    return Err(ProviderError::Unrepresentable {
                         provider: "github",
-                        operation: "normalize review thread",
-                        message: format!(
+                        fact: format!(
                             "review thread {} references missing review {}",
                             thread.id, review.id
                         ),
@@ -730,10 +715,9 @@ fn normalize_code_review(
             },
         };
         let normalized = ReviewThread {
-            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
                 provider: "github",
-                operation: "normalize review thread",
-                message: error.to_string(),
+                fact: error.to_string(),
             })?,
             location,
             outdated: thread.outdated,
@@ -750,7 +734,7 @@ fn normalize_code_review(
         if let Some(position) = review_position {
             normalized_reviews[position].findings.push(normalized);
         } else {
-            discussions.push(normalized);
+            standalone_threads.push(normalized);
         }
     }
 
@@ -758,38 +742,44 @@ fn normalize_code_review(
         .into_iter()
         .map(normalize_review_request)
         .collect::<Result<Vec<_>>>()?;
-    let mut conversation = conversation
+    let mut unanchored_comments = unanchored_comments
         .into_iter()
-        .map(normalize_conversation_comment)
+        .map(normalize_unanchored_comment)
         .collect::<Result<Vec<_>>>()?;
-    conversation.sort_by(|left, right| {
+    unanchored_comments.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)
             .then_with(|| left.id.cmp(&right.id))
     });
 
-    Ok(CodeReview {
-        number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize code review",
-            message: error.to_string(),
+    Ok(ChangeRequest {
+        number: ChangeRequestNumber::new(value.number).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
         })?,
         title: value.title,
-        state: if value.state == "open" {
-            OpenClosed::Open
-        } else {
-            OpenClosed::Closed
+        state: match value.state.as_str() {
+            "open" => OpenClosed::Open,
+            "closed" => OpenClosed::Closed,
+            other => {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!("unknown change request state {other}"),
+                });
+            }
         },
         draft: value.draft,
-        change: CommitRange {
+        commit_range: CommitRange {
             base_sha,
             head_sha: value.head.sha,
         },
         author,
         updated_at: value.updated_at,
         reviews: normalized_reviews,
-        discussions,
-        conversation,
+        standalone_threads,
+        unanchored_comments,
         outstanding_requests,
     })
 }
@@ -821,10 +811,10 @@ fn conclusion(value: &CheckConclusion) -> &'static str {
 }
 
 impl GithubProvider {
-    async fn github_code_review(
+    async fn github_pull_request(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
     ) -> Result<GithubPullRequest> {
         self.user()?
             .get(
@@ -834,8 +824,8 @@ impl GithubProvider {
             .await
             .map_err(|error| {
                 crate::client::read_error(
-                    "read code review",
-                    format!("code review {} in {repository}", number.get()),
+                    "read change request",
+                    format!("change request {} in {repository}", number.get()),
                     error,
                 )
             })
@@ -844,7 +834,7 @@ impl GithubProvider {
     async fn github_reviews(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
     ) -> Result<Vec<GithubReview>> {
         let page: Page<GithubReview> = self
             .user()?
@@ -860,23 +850,23 @@ impl GithubProvider {
             .map_err(|error| external("read reviews", error))
     }
 
-    async fn github_conversation(
+    async fn github_unanchored_comments(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<Vec<GithubConversationComment>> {
-        let page: Page<GithubConversationComment> = self
+        number: ChangeRequestNumber,
+    ) -> Result<Vec<GithubUnanchoredComment>> {
+        let page: Page<GithubUnanchoredComment> = self
             .user()?
             .get(
                 format!("/repos/{repository}/issues/{}/comments", number.get()),
                 Some(&[("per_page", 100)]),
             )
             .await
-            .map_err(|error| external("read code review conversation", error))?;
+            .map_err(|error| external("read unanchored comments", error))?;
         self.user()?
             .all_pages(page)
             .await
-            .map_err(|error| external("read code review conversation", error))
+            .map_err(|error| external("read unanchored comments", error))
     }
 
     async fn complete_thread_comments(&self, thread: &mut ThreadNode) -> Result<()> {
@@ -908,7 +898,7 @@ impl GithubProvider {
     async fn github_review_threads(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
     ) -> Result<Vec<ThreadNode>> {
         let mut cursor: Option<String> = None;
         let mut threads = Vec::new();
@@ -947,7 +937,7 @@ impl GithubProvider {
     async fn github_review_requests(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
     ) -> Result<Vec<ReviewRequestNode>> {
         let mut cursor: Option<String> = None;
         let mut requests = Vec::new();
@@ -982,12 +972,12 @@ impl GithubProvider {
 
 #[async_trait]
 impl CodeReviewsProvider for GithubProvider {
-    async fn code_review(
+    async fn change_request(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<CodeReview> {
-        let code_review = self.github_code_review(repository, number).await?;
+        number: ChangeRequestNumber,
+    ) -> Result<ChangeRequest> {
+        let pull_request = self.github_pull_request(repository, number).await?;
         let mut reviews = self.github_reviews(repository, number).await?;
         let mut threads = self.github_review_threads(repository, number).await?;
         if thread_references_missing_review(&reviews, &threads) {
@@ -995,14 +985,20 @@ impl CodeReviewsProvider for GithubProvider {
             threads = self.github_review_threads(repository, number).await?;
         }
         let requests = self.github_review_requests(repository, number).await?;
-        let conversation = self.github_conversation(repository, number).await?;
-        normalize_code_review(code_review, reviews, threads, requests, conversation)
+        let unanchored_comments = self.github_unanchored_comments(repository, number).await?;
+        normalize_change_request(
+            pull_request,
+            reviews,
+            threads,
+            requests,
+            unanchored_comments,
+        )
     }
 
     async fn resolve_thread(
         &self,
         _repository: &Repository,
-        _number: CodeReviewNumber,
+        _number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
         let _: serde_json::Value = self
@@ -1019,10 +1015,10 @@ impl CodeReviewsProvider for GithubProvider {
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
-        let code_review = self.github_code_review(repository, number).await?;
+        let pull_request = self.github_pull_request(repository, number).await?;
         let mut user_logins = Vec::new();
         let mut bot_logins = Vec::new();
         let mut team_slugs = Vec::new();
@@ -1042,7 +1038,7 @@ impl CodeReviewsProvider for GithubProvider {
             .graphql(&json!({
                 "query": REQUEST_REVIEWS_BY_LOGIN,
                 "variables": {
-                    "pullRequestId": code_review.node_id,
+                    "pullRequestId": pull_request.node_id,
                     "userLogins": user_logins,
                     "botLogins": bot_logins,
                     "teamSlugs": team_slugs,
@@ -1053,27 +1049,27 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(())
     }
 
-    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()> {
-        let code_review = self.github_code_review(repository, number).await?;
+    async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()> {
+        let pull_request = self.github_pull_request(repository, number).await?;
         let _: serde_json::Value = self
             .user()?
             .graphql(&json!({
                 "query": MARK_READY,
-                "variables": { "pullRequestId": code_review.node_id }
+                "variables": { "pullRequestId": pull_request.node_id }
             }))
             .await
-            .map_err(|error| external("mark code review ready", error))?;
+            .map_err(|error| external("mark change request ready", error))?;
         Ok(())
     }
 
     async fn publish_check(
         &self,
         repository: &Repository,
-        app_identity: &str,
+        app_name: &str,
         outcome: &CheckOutcome,
     ) -> Result<()> {
         let _: serde_json::Value = self
-            .app(app_identity)?
+            .app(app_name)?
             .post(
                 format!("/repos/{repository}/check-runs"),
                 Some(&json!({
@@ -1085,7 +1081,7 @@ impl CodeReviewsProvider for GithubProvider {
                 })),
             )
             .await
-            .map_err(|error| external("publish code review check", error))?;
+            .map_err(|error| external("publish change request check", error))?;
         Ok(())
     }
 }
@@ -1108,15 +1104,15 @@ mod tests {
     use crate::GithubProvider;
 
     use super::{
-        GithubConversationComment, GithubPullRequest, GithubReview, ReviewRequestsData,
-        ThreadsData, normalize_code_review,
+        GithubPullRequest, GithubReview, GithubUnanchoredComment, ReviewRequestsData, ThreadsData,
+        normalize_change_request,
     };
 
     #[test]
-    fn github_fixtures_preserve_reviews_findings_discussions_and_conversation() {
-        let code_review: GithubPullRequest =
+    fn github_fixtures_preserve_reviews_findings_standalone_threads_and_unanchored_comments() {
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
@@ -1126,23 +1122,26 @@ mod tests {
         let requests: ReviewRequestsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_requests.json"))
                 .expect("review request fixture");
-        let conversation: Vec<GithubConversationComment> =
-            serde_json::from_str(include_str!("../tests/fixtures/conversation_comments.json"))
-                .expect("conversation fixture");
-        let review = normalize_code_review(
-            code_review,
+        let unanchored_comments: Vec<GithubUnanchoredComment> =
+            serde_json::from_str(include_str!("../tests/fixtures/unanchored_comments.json"))
+                .expect("unanchored comments fixture");
+        let change_request = normalize_change_request(
+            pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
             requests.repository.pull_request.review_requests.nodes,
-            conversation,
+            unanchored_comments,
         )
         .expect("normalizes");
 
-        assert_eq!(review.reviews.len(), 11);
-        assert_eq!(review.reviews[1].revision, review.reviews[3].revision);
-        assert_ne!(review.reviews[1].id, review.reviews[3].id);
-        assert!(review.reviews[0].id.as_str().starts_with("PRR_"));
-        let finding = &review.reviews[0].findings[0];
+        assert_eq!(change_request.reviews.len(), 11);
+        assert_eq!(
+            change_request.reviews[1].revision,
+            change_request.reviews[3].revision
+        );
+        assert_ne!(change_request.reviews[1].id, change_request.reviews[3].id);
+        assert!(change_request.reviews[0].id.as_str().starts_with("PRR_"));
+        let finding = &change_request.reviews[0].findings[0];
         assert_eq!(
             finding.location,
             ReviewLocation {
@@ -1165,21 +1164,21 @@ mod tests {
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
         assert_eq!(
-            review.reviews[0]
+            change_request.reviews[0]
                 .via_app
                 .as_ref()
                 .map(|app| app.slug.as_str()),
             Some("adr-review")
         );
         assert!(
-            review
+            change_request
                 .reviews
                 .last()
                 .expect("last review")
                 .findings
                 .is_empty()
         );
-        let author_review = review
+        let author_review = change_request
             .reviews
             .iter()
             .find(|item| item.author == ReviewAuthor::ChangeAuthor)
@@ -1189,7 +1188,7 @@ mod tests {
             interprex::ReviewRelationship::ChangeAuthor
         );
         assert_eq!(
-            author_review.author.actor(&review.author).login,
+            author_review.author.actor(&change_request.author).login,
             "arthur-debert"
         );
         assert!(matches!(
@@ -1197,33 +1196,33 @@ mod tests {
             interprex::ReviewState::Submitted { .. }
         ));
         assert_eq!(author_review.findings.len(), 1);
-        let draft_review = review
+        let draft_review = change_request
             .reviews
             .iter()
-            .find(|item| item.author.actor(&review.author).login == "draft-reviewer")
+            .find(|item| item.author.actor(&change_request.author).login == "draft-reviewer")
             .expect("draft review");
         assert_eq!(draft_review.state, interprex::ReviewState::Draft);
         assert_eq!(
             draft_review.summary.as_deref(),
             Some("This draft was never submitted.")
         );
-        let unavailable = review
+        let unavailable = change_request
             .reviews
             .iter()
             .filter(|item| item.author.relationship() == interprex::ReviewRelationship::Unknown)
             .collect::<Vec<_>>();
         assert_eq!(unavailable.len(), 2);
         assert_ne!(
-            unavailable[0].author.actor(&review.author).id,
-            unavailable[1].author.actor(&review.author).id
+            unavailable[0].author.actor(&change_request.author).id,
+            unavailable[1].author.actor(&change_request.author).id
         );
         assert_eq!(
-            review
+            change_request
                 .reviews
                 .iter()
                 .map(|submitted| submitted.findings.len())
                 .sum::<usize>()
-                + review.discussions.len(),
+                + change_request.standalone_threads.len(),
             4
         );
         let author_thread = author_review.findings.first().expect("author finding");
@@ -1236,89 +1235,120 @@ mod tests {
                 anchor: ReviewAnchor::File,
             }
         );
-        assert_eq!(review.outstanding_requests.len(), 6);
+        assert_eq!(change_request.outstanding_requests.len(), 6);
         assert!(matches!(
-            &review.outstanding_requests[0].target,
+            &change_request.outstanding_requests[0].target,
             ReviewTarget::Actor(actor)
                 if actor.kind == ReviewActorKind::Bot
                     && actor.login == "copilot-pull-request-reviewer"
         ));
-        assert!(review.outstanding_requests[1].as_code_owner);
+        assert!(change_request.outstanding_requests[1].as_code_owner);
         assert!(matches!(
-            &review.outstanding_requests[2].target,
+            &change_request.outstanding_requests[2].target,
             ReviewTarget::Team(team)
                 if team.slug == "maintainers"
                     && team.kind == ReviewTeamKind::Organization
         ));
         assert_eq!(
-            review.outstanding_requests[2].request_target,
+            change_request.outstanding_requests[2].request_target,
             Some(ReviewRequestTarget::Team(
                 "civitas-forge/maintainers".to_owned()
             ))
         );
         assert!(matches!(
-            &review.outstanding_requests[3].target,
+            &change_request.outstanding_requests[3].target,
             ReviewTarget::Actor(actor) if actor.kind == ReviewActorKind::Placeholder
         ));
         assert!(matches!(
-            &review.outstanding_requests[4].target,
+            &change_request.outstanding_requests[4].target,
             ReviewTarget::Team(team) if team.kind == interprex::ReviewTeamKind::Enterprise
         ));
         assert_eq!(
-            review.outstanding_requests[5].target,
+            change_request.outstanding_requests[5].target,
             ReviewTarget::Unavailable
         );
-        assert_eq!(review.conversation.len(), 1);
-        assert!(review.conversation[0].updated_at.is_some());
+        assert_eq!(change_request.unanchored_comments.len(), 1);
+        assert!(change_request.unanchored_comments[0].updated_at.is_some());
     }
 
     #[test]
-    fn reviews_refuse_unknown_actor_kinds() {
-        let code_review: GithubPullRequest =
+    fn unknown_actor_kinds_are_unrepresentable() {
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let mut reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
-        reviews[0].user.as_mut().expect("reviewer").kind = "Repository".to_owned();
+        reviews[0].user.as_mut().expect("reviewer").kind = Some("Repository".to_owned());
 
-        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
-            .expect_err("unknown actor kind must be refused");
+        let error =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect_err("unknown actor kind must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review actor",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown review actor kind")
+        ));
+    }
+
+    #[test]
+    fn actors_without_a_type_are_unrepresentable() {
+        let pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].user.as_mut().expect("reviewer").kind = None;
+
+        let error =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect_err("missing actor type must be unrepresentable");
+        assert!(matches!(
+            error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no type")
+        ));
+    }
+
+    #[test]
+    fn unknown_change_request_states_are_unrepresentable() {
+        let mut pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        pull_request.state = "reopening".to_owned();
+
+        let error =
+            normalize_change_request(pull_request, Vec::new(), Vec::new(), Vec::new(), Vec::new())
+                .expect_err("unknown state must be unrepresentable");
+        assert!(matches!(
+            error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown change request state")
         ));
     }
 
     #[test]
     fn submitted_reviews_require_a_submission_time() {
-        let code_review: GithubPullRequest =
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let mut reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
         reviews[0].submitted_at = None;
 
-        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
-            .expect_err("submitted review without time must be refused");
+        let error =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect_err("submitted review without time must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no submission time")
         ));
     }
 
     #[test]
     fn review_threads_require_an_initial_comment() {
-        let code_review: GithubPullRequest =
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
@@ -1330,28 +1360,25 @@ mod tests {
             .nodes
             .clear();
 
-        let error = normalize_code_review(
-            code_review,
+        let error = normalize_change_request(
+            pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("thread without an initial comment must be refused");
+        .expect_err("thread without an initial comment must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review thread",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no comments")
         ));
     }
 
     #[test]
-    fn missing_thread_review_is_not_misclassified_as_an_independent_discussion() {
-        let code_review: GithubPullRequest =
+    fn missing_thread_review_is_not_misclassified_as_a_standalone_thread() {
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
@@ -1365,28 +1392,25 @@ mod tests {
             id: "PRR_missing".to_owned(),
         });
 
-        let error = normalize_code_review(
-            code_review,
+        let error = normalize_change_request(
+            pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
             Vec::new(),
             Vec::new(),
         )
-        .expect_err("missing originating submission must be refused");
+        .expect_err("missing originating submission must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review thread",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("references missing review")
         ));
     }
 
     #[test]
-    fn thread_without_an_originating_review_becomes_an_independent_discussion() {
-        let code_review: GithubPullRequest =
+    fn thread_without_an_originating_review_becomes_a_standalone_thread() {
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
@@ -1408,68 +1432,69 @@ mod tests {
             .expect("initial comment")
             .pull_request_review = None;
 
-        let review = normalize_code_review(
-            code_review,
+        let change_request = normalize_change_request(
+            pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
             Vec::new(),
             Vec::new(),
         )
-        .expect("normalizes independent discussion");
+        .expect("normalizes standalone thread");
 
-        assert_eq!(review.discussions.len(), 1);
-        assert_eq!(review.discussions[0].id.as_str(), expected_id);
+        assert_eq!(change_request.standalone_threads.len(), 1);
         assert_eq!(
-            review
+            change_request.standalone_threads[0].id.as_str(),
+            expected_id
+        );
+        assert_eq!(
+            change_request
                 .reviews
                 .iter()
                 .map(|item| item.findings.len())
                 .sum::<usize>()
-                + review.discussions.len(),
+                + change_request.standalone_threads.len(),
             4
         );
     }
 
     #[test]
     fn deleted_change_author_remains_an_unavailable_actor() {
-        let mut code_review: GithubPullRequest =
+        let mut pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
-        code_review.user = None;
+                .expect("pull request fixture");
+        pull_request.user = None;
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
 
-        let review =
-            normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
+        let change_request =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
                 .expect("deleted author remains readable");
-        assert_eq!(review.author.kind, ReviewActorKind::Placeholder);
-        assert_eq!(review.author.login, "ghost");
+        assert_eq!(change_request.author.kind, ReviewActorKind::Placeholder);
+        assert_eq!(change_request.author.login, "ghost");
         assert!(
-            review.reviews.iter().all(|item| {
+            change_request.reviews.iter().all(|item| {
                 item.author.relationship() == interprex::ReviewRelationship::Unknown
             })
         );
     }
 
     #[test]
-    fn draft_reviews_refuse_a_submission_time() {
-        let code_review: GithubPullRequest =
+    fn draft_reviews_with_a_submission_time_are_unrepresentable() {
+        let pull_request: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("code review fixture");
+                .expect("pull request fixture");
         let mut reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
         reviews[10].submitted_at = Some("2026-06-23T22:10:00Z".parse().expect("submission time"));
 
-        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
-            .expect_err("draft review with a submission time must be refused");
+        let error =
+            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect_err("draft review with a submission time must be unrepresentable");
         assert!(matches!(
             error,
-            ProviderError::External {
-                operation: "normalize review",
-                ..
-            }
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has a submission time")
         ));
     }
 

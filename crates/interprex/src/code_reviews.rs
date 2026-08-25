@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{OpenClosed, Repository, Result};
 
-platform_number!(CodeReviewNumber);
+platform_number!(ChangeRequestNumber);
 platform_number!(ReviewLine);
 
 macro_rules! opaque_review_id {
@@ -145,7 +145,7 @@ pub enum ReviewDisposition {
 }
 
 /// What the provider can establish about a review author's relationship to
-/// the proposed change.
+/// the change request.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewRelationship {
@@ -155,7 +155,7 @@ pub enum ReviewRelationship {
 }
 
 /// The author of a review and the provider's knowledge of that actor's
-/// relationship to the proposed change.
+/// relationship to the change request.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewAuthor {
@@ -225,7 +225,7 @@ pub enum ReviewDiffSide {
 }
 
 /// The stable source anchor within the file containing an inline review
-/// thread. A line range records the location at which the conversation began.
+/// thread. A line range records the location at which the thread began.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewAnchor {
@@ -244,11 +244,11 @@ pub struct ReviewLocation {
     pub anchor: ReviewAnchor,
 }
 
-/// One complete inline conversation on the code review.
+/// One complete inline thread on the change request.
 ///
 /// When nested in [`Review::findings`], this is a finding made in that review.
-/// When nested in [`CodeReview::discussions`], it is an inline conversation
-/// that did not originate in a review. Replies never change that placement.
+/// When nested in [`ChangeRequest::standalone_threads`], it is a standalone
+/// thread that did not originate in a review. Replies never change that placement.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {
     pub id: ReviewThreadId,
@@ -275,26 +275,26 @@ pub struct Review {
     pub findings: Vec<ReviewThread>,
 }
 
-/// One complete observation of a proposed change and its code-review data.
+/// One complete observation of a change request and its code-review data.
 ///
 /// The provider completely paginates every declared collection and never
 /// silently drops an entity it cannot normalize. Platforms need not provide a
 /// transactional snapshot across independently mutable collections.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct CodeReview {
-    pub number: CodeReviewNumber,
+pub struct ChangeRequest {
+    pub number: ChangeRequestNumber,
     pub title: String,
     pub state: OpenClosed,
     pub draft: bool,
-    pub change: CommitRange,
+    pub commit_range: CommitRange,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     /// Platform reviews. Collection order carries no policy meaning.
     pub reviews: Vec<Review>,
-    /// Inline conversations that did not originate in a review.
-    pub discussions: Vec<ReviewThread>,
-    /// General, non-inline conversation in chronological order.
-    pub conversation: Vec<ReviewComment>,
+    /// Inline threads that did not originate in a review.
+    pub standalone_threads: Vec<ReviewThread>,
+    /// Comments with no source location, in chronological order.
+    pub unanchored_comments: Vec<ReviewComment>,
     /// The currently outstanding reviewer requests.
     pub outstanding_requests: Vec<ReviewRequest>,
 }
@@ -320,16 +320,16 @@ pub struct CheckOutcome {
 
 #[async_trait]
 pub trait CodeReviewsProvider: Send + Sync {
-    /// Reads one complete observation of the code review.
-    async fn code_review(
+    /// Reads one complete observation of the change request.
+    async fn change_request(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<CodeReview>;
+        number: ChangeRequestNumber,
+    ) -> Result<ChangeRequest>;
     async fn resolve_thread(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()>;
     /// Adds each target to the outstanding reviewer set.
@@ -339,14 +339,14 @@ pub trait CodeReviewsProvider: Send + Sync {
     async fn request_reviewers(
         &self,
         repository: &Repository,
-        number: CodeReviewNumber,
+        number: ChangeRequestNumber,
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()>;
-    async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()>;
+    async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()>;
     async fn publish_check(
         &self,
         repository: &Repository,
-        app_identity: &str,
+        app_name: &str,
         outcome: &CheckOutcome,
     ) -> Result<()>;
 }
@@ -417,19 +417,19 @@ mod tests {
     }
 
     #[test]
-    fn findings_and_independent_discussions_remain_structurally_distinct() {
+    fn findings_and_standalone_threads_remain_structurally_distinct() {
         let reviewer = actor("reviewer");
         let author = ReviewActor {
             id: ReviewActorId::new("actor-author").expect("actor id"),
             login: "author".to_owned(),
             kind: ReviewActorKind::User,
         };
-        let code_review = CodeReview {
-            number: CodeReviewNumber::new(1).expect("number"),
-            title: "Author conversation".to_owned(),
+        let change_request = ChangeRequest {
+            number: ChangeRequestNumber::new(1).expect("number"),
+            title: "Author threads".to_owned(),
             state: OpenClosed::Open,
             draft: false,
-            change: CommitRange {
+            commit_range: CommitRange {
                 base_sha: "base".to_owned(),
                 head_sha: "head".to_owned(),
             },
@@ -440,13 +440,13 @@ mod tests {
                 reviewer.clone(),
                 vec![thread("finding", reviewer)],
             )],
-            discussions: vec![thread("discussion", author)],
-            conversation: Vec::new(),
+            standalone_threads: vec![thread("standalone", author)],
+            unanchored_comments: Vec::new(),
             outstanding_requests: Vec::new(),
         };
 
-        assert_eq!(code_review.reviews[0].findings.len(), 1);
-        assert_eq!(code_review.discussions.len(), 1);
+        assert_eq!(change_request.reviews[0].findings.len(), 1);
+        assert_eq!(change_request.standalone_threads.len(), 1);
     }
 
     #[test]

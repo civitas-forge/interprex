@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
+    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, CodeHostingProvider,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
     RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
     ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
@@ -39,16 +39,16 @@ async fn consumer_observes_changes_through_the_same_contract() {
             .allow_squash_merge
     );
 
-    let number = CodeReviewNumber::new(3).expect("number");
+    let number = ChangeRequestNumber::new(3).expect("number");
     provider
-        .seed_code_review(
+        .seed_change_request(
             repository.clone(),
-            CodeReview {
+            ChangeRequest {
                 number,
                 title: "Review requests".to_owned(),
                 state: OpenClosed::Open,
                 draft: true,
-                change: CommitRange {
+                commit_range: CommitRange {
                     base_sha: "base".to_owned(),
                     head_sha: "head".to_owned(),
                 },
@@ -59,8 +59,8 @@ async fn consumer_observes_changes_through_the_same_contract() {
                 },
                 updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
                 reviews: Vec::new(),
-                discussions: Vec::new(),
-                conversation: Vec::new(),
+                standalone_threads: Vec::new(),
+                unanchored_comments: Vec::new(),
                 outstanding_requests: Vec::new(),
             },
         )
@@ -78,7 +78,7 @@ async fn consumer_observes_changes_through_the_same_contract() {
         .await
         .expect("requesting the same reviewers is idempotent");
     let observed = provider
-        .code_review(&repository, number)
+        .change_request(&repository, number)
         .await
         .expect("read requested reviewers");
     assert_eq!(
@@ -95,21 +95,21 @@ async fn consumer_observes_changes_through_the_same_contract() {
         .iter()
         .map(|request| request.id.clone())
         .collect::<Vec<_>>();
-    let other_number = CodeReviewNumber::new(4).expect("number");
-    let mut other_code_review = observed.clone();
-    other_code_review.number = other_number;
-    other_code_review.outstanding_requests.clear();
+    let other_number = ChangeRequestNumber::new(4).expect("number");
+    let mut other_change_request = observed.clone();
+    other_change_request.number = other_number;
+    other_change_request.outstanding_requests.clear();
     provider
-        .seed_code_review(repository.clone(), other_code_review)
+        .seed_change_request(repository.clone(), other_change_request)
         .await;
     provider
         .request_reviewers(&repository, other_number, &targets)
         .await
-        .expect("request same reviewers on another code review");
+        .expect("request same reviewers on another change request");
     let other_request_ids = provider
-        .code_review(&repository, other_number)
+        .change_request(&repository, other_number)
         .await
-        .expect("other code review")
+        .expect("other change request")
         .outstanding_requests
         .into_iter()
         .map(|request| request.id)
@@ -118,23 +118,23 @@ async fn consumer_observes_changes_through_the_same_contract() {
         first_request_ids
             .iter()
             .all(|id| !other_request_ids.contains(id)),
-        "fake review request ids must be scoped to their code review"
+        "fake review request ids must be scoped to their change request"
     );
 
     let other_repository = Repository::new("other", "sandbox").expect("repository");
     let mut other_repository_review = observed;
     other_repository_review.outstanding_requests.clear();
     provider
-        .seed_code_review(other_repository.clone(), other_repository_review)
+        .seed_change_request(other_repository.clone(), other_repository_review)
         .await;
     provider
         .request_reviewers(&other_repository, number, &targets)
         .await
         .expect("request same reviewers in another repository");
     let other_repository_ids = provider
-        .code_review(&other_repository, number)
+        .change_request(&other_repository, number)
         .await
-        .expect("other repository code review")
+        .expect("other repository change request")
         .outstanding_requests
         .into_iter()
         .map(|request| request.id)
@@ -148,10 +148,10 @@ async fn consumer_observes_changes_through_the_same_contract() {
 }
 
 #[tokio::test]
-async fn consumer_reads_complete_review_conversations_through_the_contract() {
+async fn consumer_reads_complete_review_threads_through_the_contract() {
     let provider = FakeProvider::new();
     let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
-    let number = CodeReviewNumber::new(3).expect("number");
+    let number = ChangeRequestNumber::new(3).expect("number");
     let reviewer = ReviewActor {
         id: ReviewActorId::new("actor-reviewer").expect("actor id"),
         login: "reviewer".to_owned(),
@@ -166,12 +166,12 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         base_sha: "base".to_owned(),
         head_sha: "revision-1".to_owned(),
     };
-    let code_review = CodeReview {
+    let change_request = ChangeRequest {
         number,
-        title: "Review conversation".to_owned(),
+        title: "Review threads".to_owned(),
         state: OpenClosed::Open,
         draft: false,
-        change: range.clone(),
+        commit_range: range.clone(),
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
         reviews: vec![Review {
@@ -220,7 +220,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                 }],
             }],
         }],
-        discussions: vec![ReviewThread {
+        standalone_threads: vec![ReviewThread {
             id: ReviewThreadId::new("thread-2").expect("thread id"),
             location: ReviewLocation {
                 path: "README.lex".to_owned(),
@@ -243,7 +243,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
                 updated_at: Some("2026-08-25T09:20:00Z".parse().expect("timestamp")),
             }],
         }],
-        conversation: vec![ReviewComment {
+        unanchored_comments: vec![ReviewComment {
             id: ReviewCommentId::new("comment-5").expect("comment id"),
             author,
             body: "Ready for review".to_owned(),
@@ -253,15 +253,15 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         outstanding_requests: Vec::new(),
     };
     provider
-        .seed_code_review(repository.clone(), code_review.clone())
+        .seed_change_request(repository.clone(), change_request.clone())
         .await;
 
     assert_eq!(
         provider
-            .code_review(&repository, number)
+            .change_request(&repository, number)
             .await
             .expect("review"),
-        code_review
+        change_request
     );
     provider
         .resolve_thread(
@@ -273,7 +273,7 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
         .expect("resolve thread");
     assert!(
         provider
-            .code_review(&repository, number)
+            .change_request(&repository, number)
             .await
             .expect("review")
             .reviews[0]
