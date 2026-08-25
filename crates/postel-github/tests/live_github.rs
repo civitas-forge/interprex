@@ -14,7 +14,10 @@ use std::{
 };
 
 use fs2::FileExt;
-use postel::{CodeHostingProvider, IssuesProvider, Repository};
+use postel::{
+    CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
+    ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadStatus,
+};
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
 
@@ -118,4 +121,129 @@ async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
         .await
         .expect("read sandbox labels");
     assert!(labels.iter().all(|label| !label.name.is_empty()));
+}
+
+#[tokio::test]
+#[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
+async fn configured_code_review_observation_matches_current_provider_data() {
+    let (provider, repository) = live_provider();
+    let number = std::env::var("POSTEL_E2E_CODE_REVIEW_NUMBER")
+        .expect("POSTEL_E2E_CODE_REVIEW_NUMBER must name an existing code review")
+        .parse()
+        .expect("POSTEL_E2E_CODE_REVIEW_NUMBER must be a positive integer");
+    let number = CodeReviewNumber::new(number).expect("positive code review number");
+
+    let _throttle = GlobalThrottle::acquire();
+    let review = provider
+        .code_review(&repository, number)
+        .await
+        .expect("read configured code review");
+
+    assert_eq!(review.number, number);
+    assert!(!review.change.base_sha.is_empty());
+    assert!(!review.change.head_sha.is_empty());
+    assert!(!review.reviews.is_empty());
+    assert!(!review.author.id.as_str().is_empty());
+    assert!(
+        review
+            .reviews
+            .iter()
+            .all(|item| !item.author.actor(&review.author).id.as_str().is_empty())
+    );
+    assert!(review.reviews.iter().all(|item| match &item.author {
+        ReviewAuthor::ChangeAuthor => true,
+        ReviewAuthor::Other(actor) => actor.id != review.author.id,
+        ReviewAuthor::Unknown(_) => true,
+    }));
+    assert!(
+        review
+            .reviews
+            .iter()
+            .all(|submitted| !submitted.revision.head_sha.is_empty())
+    );
+    for thread in review
+        .reviews
+        .iter()
+        .flat_map(|submitted| submitted.findings.iter())
+        .chain(review.discussions.iter())
+    {
+        assert!(!thread.id.as_str().is_empty());
+        assert!(!thread.comment.id.as_str().is_empty());
+        assert!(!thread.location.path.is_empty());
+        match &thread.location.anchor {
+            ReviewAnchor::File => {}
+            ReviewAnchor::Lines {
+                original, current, ..
+            } => {
+                assert!(original.end.get() > 0);
+                assert!(current.as_ref().is_none_or(|range| range.end.get() > 0));
+            }
+        }
+    }
+    for comment in &review.conversation {
+        assert!(!comment.id.as_str().is_empty());
+        assert!(!comment.author.id.as_str().is_empty());
+    }
+    for request in &review.outstanding_requests {
+        assert!(!request.id.as_str().is_empty());
+        match &request.target {
+            ReviewTarget::Actor(actor) => assert!(!actor.login.is_empty()),
+            ReviewTarget::Team(team) => {
+                assert!(!team.id.as_str().is_empty());
+                assert!(!team.slug.is_empty());
+                assert!(!team.name.is_empty());
+            }
+            ReviewTarget::Unavailable => {}
+        }
+    }
+    let author_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::ChangeAuthor)
+        .count();
+    let other_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Other)
+        .count();
+    let unknown_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
+        .count();
+    let draft_review_count = review
+        .reviews
+        .iter()
+        .filter(|item| item.state == postel::ReviewState::Draft)
+        .count();
+    let findings = review
+        .reviews
+        .iter()
+        .flat_map(|item| item.findings.iter())
+        .chain(review.discussions.iter())
+        .collect::<Vec<_>>();
+    let open_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Open)
+        .count();
+    let resolved_finding_count = findings
+        .iter()
+        .filter(|thread| thread.status == ReviewThreadStatus::Resolved)
+        .count();
+    assert_eq!(open_finding_count + resolved_finding_count, findings.len());
+    eprintln!(
+        "code review {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} discussions, {} conversation comments, {} outstanding requests",
+        number.get(),
+        review.reviews.len(),
+        author_review_count,
+        other_review_count,
+        unknown_review_count,
+        draft_review_count,
+        findings.len(),
+        open_finding_count,
+        resolved_finding_count,
+        review.discussions.len(),
+        review.conversation.len(),
+        review.outstanding_requests.len()
+    );
 }

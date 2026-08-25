@@ -1,0 +1,160 @@
+[
+  {
+    "id": 4557176716,
+    "node_id": "PRR_4557176716",
+    "user": {
+      "node_id": "BOT_kwDOCodex",
+      "login": "adr-codex-review",
+      "type": "Bot"
+    },
+    "body": "Agent: codex\n\nOne source citation needs attention.",
+    "state": "COMMENTED",
+    "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+    "submitted_at": "2026-06-23T21:19:41Z",
+    "performed_via_github_app": {
+      "id": 101,
+      "slug": "adr-review",
+      "name": "ADR Review"
+    }
+  },
+  {
+    "id": 4557187406,
+    "node_id": "PRR_4557187406",
+    "user": {
+      "node_id": "BOT_kwDOAgy",
+      "login": "adr-agy-review",
+      "type": "Bot"
+    },
+    "body": "Agent: agy\n\nSeveral syntax corrections are needed.",
+    "state": "COMMENTED",
+    "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+    "submitted_at": "2026-06-23T21:21:48Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557191672,
+    "node_id": "PRR_4557191672",
+    "user": {
+      "node_id": "BOT_kwDOCopilot",
+      "login": "copilot-pull-request-reviewer",
+      "type": "Bot"
+    },
+    "body": "Copilot reviewed all changed files and generated comments.",
+    "state": "COMMENTED",
+    "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+    "submitted_at": "2026-06-23T21:22:43Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557204543,
+    "node_id": "PRR_4557204543",
+    "user": {
+      "node_id": "BOT_kwDOAgy",
+      "login": "adr-agy-review",
+      "type": "Bot"
+    },
+    "body": "Agent: agy\n\nA second submission on the same revision.",
+    "state": "COMMENTED",
+    "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+    "submitted_at": "2026-06-23T21:24:52Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557215507,
+    "node_id": "PRR_4557215507",
+    "user": {
+      "node_id": "U_kwDOArthur",
+      "login": "arthur-debert",
+      "type": "User"
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+    "submitted_at": "2026-06-23T21:26:34Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557227857,
+    "node_id": "PRR_4557227857",
+    "user": {
+      "node_id": "BOT_kwDOCodex",
+      "login": "adr-codex-review",
+      "type": "Bot"
+    },
+    "body": "Agent: codex\n\nOne finding remains after the update.",
+    "state": "COMMENTED",
+    "commit_id": "b402aa2de5bc0000000000000000000000000000",
+    "submitted_at": "2026-06-23T21:40:00Z",
+    "performed_via_github_app": {
+      "id": 101,
+      "slug": "adr-review",
+      "name": "ADR Review"
+    }
+  },
+  {
+    "id": 4557243595,
+    "node_id": "PRR_4557243595",
+    "user": {
+      "node_id": "BOT_kwDOAgy",
+      "login": "adr-agy-review",
+      "type": "Bot"
+    },
+    "body": "Agent: agy\n\nThree findings remain after the update.",
+    "state": "COMMENTED",
+    "commit_id": "b402aa2de5bc0000000000000000000000000000",
+    "submitted_at": "2026-06-23T21:42:00Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557264593,
+    "node_id": "PRR_4557264593",
+    "user": {
+      "node_id": "BOT_kwDOCodex",
+      "login": "adr-codex-review",
+      "type": "Bot"
+    },
+    "body": "Agent: codex\n\nNo findings.",
+    "state": "COMMENTED",
+    "commit_id": "0bf2f376e4568ca4d8a704330894e86712e78a0c",
+    "submitted_at": "2026-06-23T22:00:00Z",
+    "performed_via_github_app": {
+      "id": 101,
+      "slug": "adr-review",
+      "name": "ADR Review"
+    }
+  },
+  {
+    "id": 4557265001,
+    "node_id": "PRR_4557265001",
+    "user": null,
+    "body": "A review whose author account is unavailable.",
+    "state": "COMMENTED",
+    "commit_id": "0bf2f376e4568ca4d8a704330894e86712e78a0c",
+    "submitted_at": "2026-06-23T22:05:00Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557265002,
+    "node_id": "PRR_4557265002",
+    "user": null,
+    "body": "Another review whose author account is unavailable.",
+    "state": "COMMENTED",
+    "commit_id": "0bf2f376e4568ca4d8a704330894e86712e78a0c",
+    "submitted_at": "2026-06-23T22:06:00Z",
+    "performed_via_github_app": null
+  },
+  {
+    "id": 4557269999,
+    "node_id": "PRR_4557269999",
+    "user": {
+      "node_id": "U_kwDODraft",
+      "login": "draft-reviewer",
+      "type": "User"
+    },
+    "body": "This draft was never submitted.",
+    "state": "PENDING",
+    "commit_id": "0bf2f376e4568ca4d8a704330894e86712e78a0c",
+    "submitted_at": null,
+    "performed_via_github_app": null
+  }
+]

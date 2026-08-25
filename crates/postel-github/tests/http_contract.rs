@@ -11,7 +11,7 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
     CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
-    ReleasesProvider, Repository, RepositorySettings, ReviewThreadId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -112,7 +112,11 @@ async fn rest_pages(
     (base_uri, receiver)
 }
 
-async fn json_responses(bodies: Vec<&'static str>) -> (String, oneshot::Receiver<Vec<String>>) {
+async fn json_responses<T>(bodies: Vec<T>) -> (String, oneshot::Receiver<Vec<String>>)
+where
+    T: Into<String> + Send + 'static,
+{
+    let bodies = bodies.into_iter().map(Into::into).collect::<Vec<String>>();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test server");
@@ -349,7 +353,7 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
 }
 
 #[tokio::test]
-async fn code_review_domain_requests_copilot_through_the_login_mutation() {
+async fn code_review_domain_requests_users_bots_and_teams_through_the_login_mutation() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
@@ -360,8 +364,9 @@ async fn code_review_domain_requests_copilot_through_the_login_mutation() {
             &repository(),
             CodeReviewNumber::new(5).expect("number"),
             &[
-                "alice".to_owned(),
-                "copilot-pull-request-reviewer[bot]".to_owned(),
+                ReviewRequestTarget::User("alice".to_owned()),
+                ReviewRequestTarget::Bot("copilot-pull-request-reviewer".to_owned()),
+                ReviewRequestTarget::Team("faictor/maintainers".to_owned()),
             ],
         )
         .await
@@ -389,10 +394,14 @@ async fn code_review_domain_requests_copilot_through_the_login_mutation() {
         body["variables"]["botLogins"],
         serde_json::json!(["copilot-pull-request-reviewer[bot]"])
     );
+    assert_eq!(
+        body["variables"]["teamSlugs"],
+        serde_json::json!(["faictor/maintainers"])
+    );
 }
 
 #[tokio::test]
-async fn code_review_domain_resolves_github_identity_before_marking_ready() {
+async fn code_review_domain_resolves_the_review_handle_before_marking_ready() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"PR_kwDOExample","isDraft":false}}}}"#,
@@ -434,58 +443,166 @@ async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
 }
 
 #[tokio::test]
-async fn code_review_domain_returns_review_threads_from_every_graphql_page() {
+async fn code_review_domain_reads_one_complete_observation() {
     let (uri, requests) = json_responses(vec![
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+        include_str!("fixtures/pull_request.json"),
+        include_str!("fixtures/code_review_reviews.json"),
+        include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/conversation_comments.json"),
     ])
     .await;
-    let threads = provider(uri)
-        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
         .await
-        .expect("review threads");
-    assert_eq!(
-        threads
-            .iter()
-            .map(|thread| thread.id.as_str())
-            .collect::<Vec<_>>(),
-        ["thread-1", "thread-2"]
-    );
-    assert!(requests.await.expect("captured requests")[1].contains("\"cursor\":\"cursor-1\""));
-}
+        .expect("code review");
 
-#[tokio::test]
-async fn code_review_domain_returns_every_comment_and_preserves_empty_threads() {
-    let (uri, requests) = json_responses(vec![
-        r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"conversation","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-cursor-1"}}},{"id":"empty","isResolved":false,"path":"src/empty.rs","line":7,"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
-        r#"{"data":{"node":{"comments":{"nodes":[{"body":"reply","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#,
-    ])
-    .await;
-    let threads = provider(uri)
-        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
-        .await
-        .expect("review threads");
-    assert_eq!(threads.len(), 2);
+    assert_eq!(review.reviews.len(), 11);
     assert_eq!(
-        threads[0]
-            .comments
+        review
+            .reviews
             .iter()
-            .map(|comment| comment.body.as_str())
-            .collect::<Vec<_>>(),
-        ["first", "reply"]
+            .filter(|item| item.state == postel::ReviewState::Draft)
+            .count(),
+        1
     );
-    assert!(threads[1].comments.is_empty());
+    assert_eq!(
+        review
+            .reviews
+            .iter()
+            .filter(|item| {
+                item.author.relationship() == postel::ReviewRelationship::ChangeAuthor
+            })
+            .count(),
+        1
+    );
+    assert_eq!(
+        review
+            .reviews
+            .iter()
+            .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
+            .count(),
+        2
+    );
+    assert_eq!(review.reviews[0].findings[0].replies.len(), 1);
+    assert!(
+        review
+            .reviews
+            .last()
+            .expect("last review")
+            .findings
+            .is_empty()
+    );
+    assert_eq!(review.outstanding_requests.len(), 2);
+    assert_eq!(review.conversation.len(), 1);
     let requests = requests.await.expect("captured requests");
-    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    assert_user_request(&requests[0], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(
+        &requests[1],
+        "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
+    );
+    assert_user_request(&requests[2], "POST /graphql ");
+    assert_user_request(&requests[3], "POST /graphql ");
+    assert_user_request(
+        &requests[4],
+        "GET /repos/faictor/postel-sandbox/issues/5/comments?per_page=100 ",
+    );
+    let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
         body["query"]
             .as_str()
             .expect("GraphQL document")
-            .contains("ReviewThreadComments")
+            .contains("pullRequestReview { id }")
     );
-    assert_eq!(body["variables"]["threadId"], "conversation");
-    assert_eq!(body["variables"]["cursor"], "comment-cursor-1");
+    assert!(
+        !body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("databaseId")
+    );
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("subjectType")
+    );
+    let (_, body) = requests[3].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("reviewRequests")
+    );
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("organization { login }")
+    );
+}
+
+#[tokio::test]
+async fn code_review_domain_preserves_an_independent_discussion() {
+    let mut threads: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/review_threads_response.json"))
+            .expect("thread fixture");
+    threads["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["nodes"]
+        [0]["pullRequestReview"] = serde_json::Value::Null;
+    let threads = serde_json::to_string(&threads).expect("thread response");
+    let (uri, _) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        threads,
+        include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/conversation_comments.json").to_owned(),
+    ])
+    .await;
+
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review");
+
+    assert_eq!(review.discussions.len(), 1);
+    assert_eq!(review.discussions[0].id.as_str(), "PRRT_kwDOSCkZoc6LuYFt");
+    assert!(review.reviews.iter().all(|item| item.findings.is_empty()));
+}
+
+#[tokio::test]
+async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
+    let mut lagging_reviews: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("fixtures/code_review_reviews.json"))
+            .expect("review fixture");
+    lagging_reviews.remove(0);
+    let lagging_reviews = serde_json::to_string(&lagging_reviews).expect("review response");
+
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        lagging_reviews,
+        include_str!("fixtures/review_threads_response.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        include_str!("fixtures/review_threads_response.json").to_owned(),
+        include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/conversation_comments.json").to_owned(),
+    ])
+    .await;
+
+    let review = provider(uri)
+        .code_review(&repository(), CodeReviewNumber::new(5).expect("number"))
+        .await
+        .expect("code review");
+
+    assert_eq!(review.reviews.len(), 11);
+    assert_eq!(review.reviews[0].findings.len(), 1);
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 7);
+    assert_user_request(
+        &requests[3],
+        "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
+    );
+    assert_user_request(&requests[4], "POST /graphql ");
 }
 
 #[tokio::test]

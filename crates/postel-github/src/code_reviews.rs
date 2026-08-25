@@ -1,15 +1,24 @@
 //! Code-review operations implemented with GitHub pull-request APIs.
 //!
-//! Ordinary pull-request facts use REST. Review threads, thread resolution,
-//! reviewer requests by login, and the draft-ready transition use hand-written
-//! GraphQL because GitHub exposes provider-specific capabilities on those
-//! routes. The documents live here, beside their normalization, so callers
-//! never assemble GitHub requests or distinguish bot logins from user logins.
+//! The read combines pull-request facts, formal reviews, inline threads,
+//! general conversation and outstanding requests into one provider-neutral
+//! observation. GitHub's REST review and issue-comment records identify
+//! reviews, apps and conversation comments; GraphQL supplies thread locations,
+//! resolution, complete comment sequences and outstanding requests. The
+//! adapter joins them here so callers never correlate GitHub entities.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
+use octocrab::Page;
 use postel::{
-    CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, OpenClosed,
-    ProviderError, Repository, Result, ReviewComment, ReviewThread, ReviewThreadId,
+    CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
+    OpenClosed, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
+    ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange,
+    ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
+    ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -22,9 +31,21 @@ query ReviewThreads($owner: String!, $name: String!, $number: Int!, $cursor: Str
     pullRequest(number: $number) {
       reviewThreads(first: 100, after: $cursor) {
         nodes {
-          id isResolved path line
+          id isResolved isOutdated path subjectType diffSide
+          line startLine originalLine originalStartLine
           comments(first: 100) {
-            nodes { body author { login } }
+            nodes {
+              id body createdAt updatedAt
+              author {
+                login __typename
+                ... on Bot { id }
+                ... on EnterpriseUserAccount { id }
+                ... on Mannequin { id }
+                ... on Organization { id }
+                ... on User { id }
+              }
+              pullRequestReview { id }
+            }
             pageInfo { hasNextPage endCursor }
           }
         }
@@ -39,7 +60,40 @@ query ReviewThreadComments($threadId: ID!, $cursor: String) {
   node(id: $threadId) {
     ... on PullRequestReviewThread {
       comments(first: 100, after: $cursor) {
-        nodes { body author { login } }
+        nodes {
+          id body createdAt updatedAt
+          author {
+            login __typename
+            ... on Bot { id }
+            ... on EnterpriseUserAccount { id }
+            ... on Mannequin { id }
+            ... on Organization { id }
+            ... on User { id }
+          }
+          pullRequestReview { id }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"#;
+
+const REVIEW_REQUESTS: &str = r#"
+query ReviewRequests($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewRequests(first: 100, after: $cursor) {
+        nodes {
+          id asCodeOwner
+          requestedReviewer {
+            __typename
+            ... on User { id login }
+            ... on Bot { id login }
+            ... on Mannequin { id login }
+            ... on Team { id slug name organization { login } }
+            ... on EnterpriseTeam { id slug name }
+          }
+        }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -63,11 +117,13 @@ mutation RequestReviewsByLogin(
   $pullRequestId: ID!
   $userLogins: [String!]
   $botLogins: [String!]
+  $teamSlugs: [String!]
 ) {
   requestReviewsByLogin(input: {
     pullRequestId: $pullRequestId
     userLogins: $userLogins
     botLogins: $botLogins
+    teamSlugs: $teamSlugs
     union: true
   }) {
     pullRequest { id }
@@ -83,7 +139,7 @@ struct GithubPullRequest {
     draft: bool,
     head: GitRef,
     base: GitRef,
-    user: GithubUser,
+    user: Option<GithubUser>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -92,30 +148,43 @@ struct GitRef {
     sha: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct GithubUser {
+    node_id: String,
     login: String,
+    #[serde(rename = "type", default = "default_user_kind")]
+    kind: String,
 }
 
-fn normalize_code_review(value: GithubPullRequest) -> Result<CodeReview> {
-    Ok(CodeReview {
-        number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
-            provider: "github",
-            operation: "normalize code review",
-            message: error.to_string(),
-        })?,
-        title: value.title,
-        state: if value.state == "open" {
-            OpenClosed::Open
-        } else {
-            OpenClosed::Closed
-        },
-        draft: value.draft,
-        head_sha: value.head.sha,
-        base_sha: value.base.sha,
-        author: value.user.login,
-        updated_at: value.updated_at,
-    })
+fn default_user_kind() -> String {
+    "User".to_owned()
+}
+
+#[derive(Deserialize, PartialEq)]
+struct GithubApp {
+    id: u64,
+    slug: String,
+    name: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct GithubReview {
+    node_id: String,
+    user: Option<GithubUser>,
+    body: String,
+    state: String,
+    commit_id: String,
+    submitted_at: Option<chrono::DateTime<chrono::Utc>>,
+    performed_via_github_app: Option<GithubApp>,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct GithubConversationComment {
+    node_id: String,
+    user: Option<GithubUser>,
+    body: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Deserialize)]
@@ -142,7 +211,7 @@ struct ThreadConnection {
     page_info: PageInfo,
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Default, Deserialize, PartialEq)]
 struct PageInfo {
     #[serde(rename = "hasNextPage")]
     has_next_page: bool,
@@ -150,27 +219,73 @@ struct PageInfo {
     end_cursor: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct ThreadNode {
     id: String,
     #[serde(rename = "isResolved")]
     resolved: bool,
-    path: Option<String>,
+    #[serde(rename = "isOutdated")]
+    outdated: bool,
+    path: String,
+    #[serde(rename = "subjectType")]
+    subject_type: ThreadSubjectType,
+    #[serde(rename = "diffSide")]
+    diff_side: Option<GithubDiffSide>,
     line: Option<u64>,
+    #[serde(rename = "startLine")]
+    start_line: Option<u64>,
+    #[serde(rename = "originalLine")]
+    original_line: Option<u64>,
+    #[serde(rename = "originalStartLine")]
+    original_start_line: Option<u64>,
     comments: CommentConnection,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum ThreadSubjectType {
+    File,
+    Line,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum GithubDiffSide {
+    Left,
+    Right,
+}
+
+#[derive(Deserialize, PartialEq)]
 struct CommentConnection {
     nodes: Vec<CommentNode>,
     #[serde(rename = "pageInfo")]
     page_info: PageInfo,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq)]
 struct CommentNode {
+    id: String,
     body: String,
-    author: Option<GithubUser>,
+    #[serde(rename = "createdAt")]
+    created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(rename = "updatedAt")]
+    updated_at: chrono::DateTime<chrono::Utc>,
+    author: Option<GraphqlActor>,
+    #[serde(rename = "pullRequestReview")]
+    pull_request_review: Option<CommentReview>,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct GraphqlActor {
+    id: String,
+    login: String,
+    #[serde(rename = "__typename")]
+    kind: String,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct CommentReview {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -181,6 +296,72 @@ struct ThreadCommentsData {
 #[derive(Deserialize)]
 struct ThreadCommentsNode {
     comments: CommentConnection,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestsData {
+    repository: ReviewRequestsRepository,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestsRepository {
+    #[serde(rename = "pullRequest")]
+    pull_request: ReviewRequestsPullRequest,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestsPullRequest {
+    #[serde(rename = "reviewRequests")]
+    review_requests: ReviewRequestConnection,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestConnection {
+    nodes: Vec<ReviewRequestNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Deserialize, PartialEq)]
+struct ReviewRequestNode {
+    id: String,
+    #[serde(rename = "asCodeOwner")]
+    as_code_owner: bool,
+    #[serde(rename = "requestedReviewer")]
+    requested_reviewer: Option<RequestedReviewerNode>,
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(tag = "__typename")]
+enum RequestedReviewerNode {
+    User {
+        id: String,
+        login: String,
+    },
+    Bot {
+        id: String,
+        login: String,
+    },
+    Mannequin {
+        id: String,
+        login: String,
+    },
+    Team {
+        id: String,
+        slug: String,
+        name: String,
+        organization: RequestedReviewerOrganization,
+    },
+    EnterpriseTeam {
+        id: String,
+        slug: String,
+        name: String,
+    },
+}
+
+#[derive(Deserialize, PartialEq)]
+struct RequestedReviewerOrganization {
+    login: String,
 }
 
 fn continuation_cursor(
@@ -202,33 +383,430 @@ fn continuation_cursor(
         })
 }
 
-fn normalize_threads(nodes: Vec<ThreadNode>) -> Result<Vec<ReviewThread>> {
-    nodes
-        .into_iter()
-        .map(|thread| {
-            Ok(ReviewThread {
-                id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
+    let kind = match kind {
+        "User" => ReviewActorKind::User,
+        "Bot" => ReviewActorKind::Bot,
+        "Mannequin" => ReviewActorKind::Placeholder,
+        "Organization" => ReviewActorKind::Organization,
+        "EnterpriseUserAccount" => ReviewActorKind::EnterpriseUser,
+        other => {
+            return Err(ProviderError::External {
+                provider: "github",
+                operation: "normalize review actor",
+                message: format!("unknown review actor kind {other}"),
+            });
+        }
+    };
+    Ok(ReviewActor {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review actor",
+            message: error.to_string(),
+        })?,
+        login,
+        kind,
+    })
+}
+
+fn ghost_actor(id: String) -> Result<ReviewActor> {
+    Ok(ReviewActor {
+        id: ReviewActorId::new(id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize unavailable review actor",
+            message: error.to_string(),
+        })?,
+        login: "ghost".to_owned(),
+        kind: ReviewActorKind::Placeholder,
+    })
+}
+
+fn normalize_disposition(value: &str) -> Result<ReviewDisposition> {
+    match value {
+        "APPROVED" => Ok(ReviewDisposition::Approved),
+        "CHANGES_REQUESTED" => Ok(ReviewDisposition::ChangesRequested),
+        "COMMENTED" => Ok(ReviewDisposition::Commented),
+        "DISMISSED" => Ok(ReviewDisposition::Dismissed),
+        other => Err(ProviderError::External {
+            provider: "github",
+            operation: "normalize review",
+            message: format!("unknown review state {other}"),
+        }),
+    }
+}
+
+fn normalize_line(value: u64, operation: &'static str) -> Result<ReviewLine> {
+    ReviewLine::new(value).map_err(|error| ProviderError::External {
+        provider: "github",
+        operation,
+        message: error.to_string(),
+    })
+}
+
+fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
+    match value {
+        GithubDiffSide::Left => ReviewDiffSide::Left,
+        GithubDiffSide::Right => ReviewDiffSide::Right,
+    }
+}
+
+fn normalize_line_range(
+    end: Option<u64>,
+    start: Option<u64>,
+    operation: &'static str,
+) -> Result<Option<ReviewLineRange>> {
+    let Some(end) = end else {
+        if start.is_some() {
+            return Err(ProviderError::External {
+                provider: "github",
+                operation,
+                message: "review range has a start line without an end line".to_owned(),
+            });
+        }
+        return Ok(None);
+    };
+    Ok(Some(ReviewLineRange {
+        start: start
+            .map(|line| normalize_line(line, operation))
+            .transpose()?,
+        end: normalize_line(end, operation)?,
+    }))
+}
+
+fn normalize_review_location(thread: &ThreadNode) -> Result<ReviewLocation> {
+    let anchor = match thread.subject_type {
+        ThreadSubjectType::File => ReviewAnchor::File,
+        ThreadSubjectType::Line => {
+            let side = thread.diff_side.ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread location",
+                message: format!("line thread {} has no diff side", thread.id),
+            })?;
+            let original = normalize_line_range(
+                thread.original_line,
+                thread.original_start_line,
+                "normalize review thread location",
+            )?
+            .ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread location",
+                message: format!("line thread {} has no original line", thread.id),
+            })?;
+            ReviewAnchor::Lines {
+                side: normalize_diff_side(side),
+                original,
+                current: normalize_line_range(
+                    thread.line,
+                    thread.start_line,
+                    "normalize review thread location",
+                )?,
+            }
+        }
+    };
+    Ok(ReviewLocation {
+        path: thread.path.clone(),
+        anchor,
+    })
+}
+
+fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
+    let comment_id = value.id;
+    Ok(ReviewComment {
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review comment",
+            message: error.to_string(),
+        })?,
+        author: match value.author {
+            Some(author) => actor(author.id, author.login, &author.kind)?,
+            None => ghost_actor(format!("unavailable-comment-author:{comment_id}"))?,
+        },
+        body: value.body,
+        created_at: value.created_at,
+        updated_at: Some(value.updated_at),
+    })
+}
+
+fn normalize_conversation_comment(value: GithubConversationComment) -> Result<ReviewComment> {
+    let comment_id = value.node_id;
+    Ok(ReviewComment {
+        id: ReviewCommentId::new(comment_id.clone()).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review conversation comment",
+            message: error.to_string(),
+        })?,
+        author: match value.user {
+            Some(author) => actor(author.node_id, author.login, &author.kind)?,
+            None => ghost_actor(format!("unavailable-conversation-author:{comment_id}"))?,
+        },
+        body: value.body,
+        created_at: value.created_at,
+        updated_at: Some(value.updated_at),
+    })
+}
+
+fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
+    let (target, request_target) = match value.requested_reviewer {
+        Some(RequestedReviewerNode::User { id, login }) => (
+            ReviewTarget::Actor(actor(id, login.clone(), "User")?),
+            Some(ReviewRequestTarget::User(login)),
+        ),
+        Some(RequestedReviewerNode::Bot { id, login }) => (
+            ReviewTarget::Actor(actor(id, login.clone(), "Bot")?),
+            Some(ReviewRequestTarget::Bot(login)),
+        ),
+        Some(RequestedReviewerNode::Mannequin { id, login }) => {
+            (ReviewTarget::Actor(actor(id, login, "Mannequin")?), None)
+        }
+        Some(RequestedReviewerNode::Team {
+            id,
+            slug,
+            name,
+            organization,
+        }) => {
+            let request_identifier = format!("{}/{}", organization.login, slug);
+            (
+                ReviewTarget::Team(ReviewTeam {
+                    id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
+                        provider: "github",
+                        operation: "normalize review request",
+                        message: error.to_string(),
+                    })?,
+                    slug,
+                    name,
+                    kind: ReviewTeamKind::Organization,
+                }),
+                Some(ReviewRequestTarget::Team(request_identifier)),
+            )
+        }
+        Some(RequestedReviewerNode::EnterpriseTeam { id, slug, name }) => (
+            ReviewTarget::Team(ReviewTeam {
+                id: ReviewTeamId::new(id).map_err(|error| ProviderError::External {
                     provider: "github",
-                    operation: "normalize review thread",
+                    operation: "normalize review request",
                     message: error.to_string(),
                 })?,
-                resolved: thread.resolved,
-                path: thread.path,
-                line: thread.line,
-                comments: thread
-                    .comments
-                    .nodes
-                    .into_iter()
-                    .map(|comment| ReviewComment {
-                        body: comment.body,
-                        author: comment
-                            .author
-                            .map_or_else(|| "ghost".to_owned(), |user| user.login),
+                slug,
+                name,
+                kind: ReviewTeamKind::Enterprise,
+            }),
+            None,
+        ),
+        None => (ReviewTarget::Unavailable, None),
+    };
+    Ok(ReviewRequest {
+        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review request",
+            message: error.to_string(),
+        })?,
+        target,
+        request_target,
+        as_code_owner: value.as_code_owner,
+    })
+}
+
+fn normalize_code_review(
+    value: GithubPullRequest,
+    mut reviews: Vec<GithubReview>,
+    threads: Vec<ThreadNode>,
+    review_requests: Vec<ReviewRequestNode>,
+    conversation: Vec<GithubConversationComment>,
+) -> Result<CodeReview> {
+    let author_provider_id = value.user.as_ref().map(|user| user.node_id.clone());
+    let author = match value.user {
+        Some(user) => actor(user.node_id, user.login, &user.kind)?,
+        None => ghost_actor(format!("unavailable-change-author:{}", value.node_id))?,
+    };
+    let base_sha = value.base.sha;
+    let mut review_positions = BTreeMap::new();
+    let mut normalized_reviews = Vec::new();
+
+    reviews.sort_by(|left, right| {
+        left.submitted_at
+            .is_none()
+            .cmp(&right.submitted_at.is_none())
+            .then_with(|| left.submitted_at.cmp(&right.submitted_at))
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    for review in reviews {
+        let relationship = match (
+            author_provider_id.as_deref(),
+            review.user.as_ref().map(|user| user.node_id.as_str()),
+        ) {
+            (Some(author), Some(review_author)) if author == review_author => {
+                ReviewRelationship::ChangeAuthor
+            }
+            (Some(_), Some(_)) => ReviewRelationship::Other,
+            _ => ReviewRelationship::Unknown,
+        };
+        let review_author = match review.user {
+            Some(user) => actor(user.node_id, user.login, &user.kind)?,
+            None => ghost_actor(format!("unavailable-review-author:{}", review.node_id))?,
+        };
+        let review_author = match relationship {
+            ReviewRelationship::ChangeAuthor => ReviewAuthor::ChangeAuthor,
+            ReviewRelationship::Other => ReviewAuthor::Other(review_author),
+            ReviewRelationship::Unknown => ReviewAuthor::Unknown(review_author),
+        };
+        let state = if review.state == "PENDING" {
+            if review.submitted_at.is_some() {
+                return Err(ProviderError::External {
+                    provider: "github",
+                    operation: "normalize review",
+                    message: format!("draft review {} has a submission time", review.node_id),
+                });
+            }
+            ReviewState::Draft
+        } else {
+            let submitted_at = review.submitted_at.ok_or_else(|| ProviderError::External {
+                provider: "github",
+                operation: "normalize review",
+                message: format!("submitted review {} has no submission time", review.node_id),
+            })?;
+            ReviewState::Submitted {
+                disposition: normalize_disposition(&review.state)?,
+                submitted_at,
+            }
+        };
+        let id =
+            ReviewId::new(review.node_id.clone()).map_err(|error| ProviderError::External {
+                provider: "github",
+                operation: "normalize review",
+                message: error.to_string(),
+            })?;
+        review_positions.insert(review.node_id, normalized_reviews.len());
+        normalized_reviews.push(Review {
+            id,
+            author: review_author,
+            via_app: review
+                .performed_via_github_app
+                .map(|app| {
+                    Ok(ReviewApp {
+                        id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
+                            ProviderError::External {
+                                provider: "github",
+                                operation: "normalize review app",
+                                message: error.to_string(),
+                            }
+                        })?,
+                        slug: app.slug,
+                        name: app.name,
                     })
-                    .collect(),
-            })
-        })
-        .collect()
+                })
+                .transpose()?,
+            revision: ReviewedRevision {
+                head_sha: review.commit_id,
+            },
+            state,
+            summary: (!review.body.trim().is_empty()).then_some(review.body),
+            findings: Vec::new(),
+        });
+    }
+
+    let mut discussions = Vec::new();
+    for thread in threads {
+        let location = normalize_review_location(&thread)?;
+        let mut comments = thread.comments.nodes.into_iter();
+        let initial = comments.next().ok_or_else(|| ProviderError::External {
+            provider: "github",
+            operation: "normalize review thread",
+            message: format!("review thread {} has no comments", thread.id),
+        })?;
+        let review_position = match initial.pull_request_review.as_ref() {
+            None => None,
+            Some(review) => match review_positions.get(&review.id) {
+                Some(position) => Some(*position),
+                None => {
+                    return Err(ProviderError::External {
+                        provider: "github",
+                        operation: "normalize review thread",
+                        message: format!(
+                            "review thread {} references missing review {}",
+                            thread.id, review.id
+                        ),
+                    });
+                }
+            },
+        };
+        let normalized = ReviewThread {
+            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+                provider: "github",
+                operation: "normalize review thread",
+                message: error.to_string(),
+            })?,
+            location,
+            outdated: thread.outdated,
+            status: if thread.resolved {
+                ReviewThreadStatus::Resolved
+            } else {
+                ReviewThreadStatus::Open
+            },
+            comment: normalize_comment(initial)?,
+            replies: comments
+                .map(normalize_comment)
+                .collect::<Result<Vec<_>>>()?,
+        };
+        if let Some(position) = review_position {
+            normalized_reviews[position].findings.push(normalized);
+        } else {
+            discussions.push(normalized);
+        }
+    }
+
+    let outstanding_requests = review_requests
+        .into_iter()
+        .map(normalize_review_request)
+        .collect::<Result<Vec<_>>>()?;
+    let mut conversation = conversation
+        .into_iter()
+        .map(normalize_conversation_comment)
+        .collect::<Result<Vec<_>>>()?;
+    conversation.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+
+    Ok(CodeReview {
+        number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize code review",
+            message: error.to_string(),
+        })?,
+        title: value.title,
+        state: if value.state == "open" {
+            OpenClosed::Open
+        } else {
+            OpenClosed::Closed
+        },
+        draft: value.draft,
+        change: CommitRange {
+            base_sha,
+            head_sha: value.head.sha,
+        },
+        author,
+        updated_at: value.updated_at,
+        reviews: normalized_reviews,
+        discussions,
+        conversation,
+        outstanding_requests,
+    })
+}
+
+fn thread_references_missing_review(reviews: &[GithubReview], threads: &[ThreadNode]) -> bool {
+    let review_ids = reviews
+        .iter()
+        .map(|review| review.node_id.as_str())
+        .collect::<BTreeSet<_>>();
+    threads.iter().any(|thread| {
+        thread
+            .comments
+            .nodes
+            .first()
+            .and_then(|comment| comment.pull_request_review.as_ref())
+            .is_some_and(|review| !review_ids.contains(review.id.as_str()))
+    })
 }
 
 fn conclusion(value: &CheckConclusion) -> &'static str {
@@ -243,7 +821,7 @@ fn conclusion(value: &CheckConclusion) -> &'static str {
 }
 
 impl GithubProvider {
-    async fn github_pull_request(
+    async fn github_code_review(
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
@@ -261,6 +839,44 @@ impl GithubProvider {
                     error,
                 )
             })
+    }
+
+    async fn github_reviews(
+        &self,
+        repository: &Repository,
+        number: CodeReviewNumber,
+    ) -> Result<Vec<GithubReview>> {
+        let page: Page<GithubReview> = self
+            .user()?
+            .get(
+                format!("/repos/{repository}/pulls/{}/reviews", number.get()),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(|error| external("read reviews", error))?;
+        self.user()?
+            .all_pages(page)
+            .await
+            .map_err(|error| external("read reviews", error))
+    }
+
+    async fn github_conversation(
+        &self,
+        repository: &Repository,
+        number: CodeReviewNumber,
+    ) -> Result<Vec<GithubConversationComment>> {
+        let page: Page<GithubConversationComment> = self
+            .user()?
+            .get(
+                format!("/repos/{repository}/issues/{}/comments", number.get()),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(|error| external("read code review conversation", error))?;
+        self.user()?
+            .all_pages(page)
+            .await
+            .map_err(|error| external("read code review conversation", error))
     }
 
     async fn complete_thread_comments(&self, thread: &mut ThreadNode) -> Result<()> {
@@ -288,37 +904,25 @@ impl GithubProvider {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl CodeReviewsProvider for GithubProvider {
-    async fn code_review(
+    async fn github_review_threads(
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-    ) -> Result<CodeReview> {
-        let response = self.github_pull_request(repository, number).await?;
-        normalize_code_review(response)
-    }
-
-    async fn review_threads(
-        &self,
-        repository: &Repository,
-        number: CodeReviewNumber,
-    ) -> Result<Vec<ReviewThread>> {
+    ) -> Result<Vec<ThreadNode>> {
         let mut cursor: Option<String> = None;
         let mut threads = Vec::new();
         loop {
             let data: ThreadsData = self
                 .user()?
                 .graphql(&json!({
-                        "query": REVIEW_THREADS,
-                        "variables": {
-                            "owner": repository.owner(),
-                            "name": repository.name(),
-                            "number": number.get(),
-                            "cursor": cursor,
-                        }
+                    "query": REVIEW_THREADS,
+                    "variables": {
+                        "owner": repository.owner(),
+                        "name": repository.name(),
+                        "number": number.get(),
+                        "cursor": cursor,
+                    }
                 }))
                 .await
                 .map_err(|error| external("read review threads", error))?;
@@ -332,12 +936,67 @@ impl CodeReviewsProvider for GithubProvider {
             for thread in &mut page {
                 self.complete_thread_comments(thread).await?;
             }
-            threads.extend(normalize_threads(page)?);
+            threads.append(&mut page);
             let Some(next_cursor) = next_cursor else {
                 return Ok(threads);
             };
             cursor = Some(next_cursor);
         }
+    }
+
+    async fn github_review_requests(
+        &self,
+        repository: &Repository,
+        number: CodeReviewNumber,
+    ) -> Result<Vec<ReviewRequestNode>> {
+        let mut cursor: Option<String> = None;
+        let mut requests = Vec::new();
+        loop {
+            let data: ReviewRequestsData = self
+                .user()?
+                .graphql(&json!({
+                    "query": REVIEW_REQUESTS,
+                    "variables": {
+                        "owner": repository.owner(),
+                        "name": repository.name(),
+                        "number": number.get(),
+                        "cursor": cursor,
+                    }
+                }))
+                .await
+                .map_err(|error| external("read review requests", error))?;
+            let connection = data.repository.pull_request.review_requests;
+            let next_cursor = continuation_cursor(
+                &connection.page_info,
+                "read review requests",
+                "review requests",
+            )?;
+            requests.extend(connection.nodes);
+            let Some(next_cursor) = next_cursor else {
+                return Ok(requests);
+            };
+            cursor = Some(next_cursor);
+        }
+    }
+}
+
+#[async_trait]
+impl CodeReviewsProvider for GithubProvider {
+    async fn code_review(
+        &self,
+        repository: &Repository,
+        number: CodeReviewNumber,
+    ) -> Result<CodeReview> {
+        let code_review = self.github_code_review(repository, number).await?;
+        let mut reviews = self.github_reviews(repository, number).await?;
+        let mut threads = self.github_review_threads(repository, number).await?;
+        if thread_references_missing_review(&reviews, &threads) {
+            reviews = self.github_reviews(repository, number).await?;
+            threads = self.github_review_threads(repository, number).await?;
+        }
+        let requests = self.github_review_requests(repository, number).await?;
+        let conversation = self.github_conversation(repository, number).await?;
+        normalize_code_review(code_review, reviews, threads, requests, conversation)
     }
 
     async fn resolve_thread(
@@ -361,21 +1020,32 @@ impl CodeReviewsProvider for GithubProvider {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[String],
+        reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
-        let pull_request = self.github_pull_request(repository, number).await?;
-        let (bot_logins, user_logins): (Vec<&str>, Vec<&str>) = reviewers
-            .iter()
-            .map(String::as_str)
-            .partition(|login| login.ends_with("[bot]"));
+        let code_review = self.github_code_review(repository, number).await?;
+        let mut user_logins = Vec::new();
+        let mut bot_logins = Vec::new();
+        let mut team_slugs = Vec::new();
+        for reviewer in reviewers {
+            match reviewer {
+                ReviewRequestTarget::User(login) => user_logins.push(login.as_str()),
+                ReviewRequestTarget::Bot(login) => bot_logins.push(if login.ends_with("[bot]") {
+                    login.clone()
+                } else {
+                    format!("{login}[bot]")
+                }),
+                ReviewRequestTarget::Team(identifier) => team_slugs.push(identifier.as_str()),
+            }
+        }
         let _: serde_json::Value = self
             .user()?
             .graphql(&json!({
                 "query": REQUEST_REVIEWS_BY_LOGIN,
                 "variables": {
-                    "pullRequestId": pull_request.node_id,
+                    "pullRequestId": code_review.node_id,
                     "userLogins": user_logins,
                     "botLogins": bot_logins,
+                    "teamSlugs": team_slugs,
                 }
             }))
             .await
@@ -384,12 +1054,12 @@ impl CodeReviewsProvider for GithubProvider {
     }
 
     async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()> {
-        let pull_request = self.github_pull_request(repository, number).await?;
+        let code_review = self.github_code_review(repository, number).await?;
         let _: serde_json::Value = self
             .user()?
             .graphql(&json!({
                 "query": MARK_READY,
-                "variables": { "pullRequestId": pull_request.node_id }
+                "variables": { "pullRequestId": code_review.node_id }
             }))
             .await
             .map_err(|error| external("mark code review ready", error))?;
@@ -424,7 +1094,11 @@ impl CodeReviewsProvider for GithubProvider {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use postel::{CheckConclusion, CheckOutcome, CodeReviewsProvider, Repository};
+    use postel::{
+        CheckConclusion, CheckOutcome, CodeReviewsProvider, ProviderError, Repository,
+        ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget,
+        ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -433,34 +1107,369 @@ mod tests {
 
     use crate::GithubProvider;
 
-    use super::{GithubPullRequest, ThreadsData, normalize_code_review, normalize_threads};
+    use super::{
+        GithubConversationComment, GithubPullRequest, GithubReview, ReviewRequestsData,
+        ThreadsData, normalize_code_review,
+    };
 
     #[test]
-    fn github_pull_request_fixture_preserves_code_review_revision_facts() {
-        let response: GithubPullRequest =
+    fn github_fixtures_preserve_reviews_findings_discussions_and_conversation() {
+        let code_review: GithubPullRequest =
             serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
-                .expect("fixture");
-        let code_review = normalize_code_review(response).expect("normalizes");
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        let requests: ReviewRequestsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_requests.json"))
+                .expect("review request fixture");
+        let conversation: Vec<GithubConversationComment> =
+            serde_json::from_str(include_str!("../tests/fixtures/conversation_comments.json"))
+                .expect("conversation fixture");
+        let review = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            requests.repository.pull_request.review_requests.nodes,
+            conversation,
+        )
+        .expect("normalizes");
+
+        assert_eq!(review.reviews.len(), 11);
+        assert_eq!(review.reviews[1].revision, review.reviews[3].revision);
+        assert_ne!(review.reviews[1].id, review.reviews[3].id);
+        assert!(review.reviews[0].id.as_str().starts_with("PRR_"));
+        let finding = &review.reviews[0].findings[0];
         assert_eq!(
-            code_review.head_sha,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            finding.location,
+            ReviewLocation {
+                path: "docs/dev/architecture.lex".to_owned(),
+                anchor: ReviewAnchor::Lines {
+                    side: postel::ReviewDiffSide::Right,
+                    original: postel::ReviewLineRange {
+                        start: Some(postel::ReviewLine::new(177).expect("line")),
+                        end: postel::ReviewLine::new(181).expect("line"),
+                    },
+                    current: Some(postel::ReviewLineRange {
+                        start: Some(postel::ReviewLine::new(184).expect("line")),
+                        end: postel::ReviewLine::new(188).expect("line"),
+                    }),
+                },
+            }
         );
-        assert!(code_review.draft);
+        assert!(finding.comment.id.as_str().starts_with("PRRC_"));
+        assert_eq!(finding.replies.len(), 1);
+        assert_eq!(finding.replies[0].author.login, "arthur-debert");
+        assert_eq!(finding.status, ReviewThreadStatus::Resolved);
+        assert_eq!(
+            review.reviews[0]
+                .via_app
+                .as_ref()
+                .map(|app| app.slug.as_str()),
+            Some("adr-review")
+        );
+        assert!(
+            review
+                .reviews
+                .last()
+                .expect("last review")
+                .findings
+                .is_empty()
+        );
+        let author_review = review
+            .reviews
+            .iter()
+            .find(|item| item.author == ReviewAuthor::ChangeAuthor)
+            .expect("author review");
+        assert_eq!(
+            author_review.author.relationship(),
+            postel::ReviewRelationship::ChangeAuthor
+        );
+        assert_eq!(
+            author_review.author.actor(&review.author).login,
+            "arthur-debert"
+        );
+        assert!(matches!(
+            author_review.state,
+            postel::ReviewState::Submitted { .. }
+        ));
+        assert_eq!(author_review.findings.len(), 1);
+        let draft_review = review
+            .reviews
+            .iter()
+            .find(|item| item.author.actor(&review.author).login == "draft-reviewer")
+            .expect("draft review");
+        assert_eq!(draft_review.state, postel::ReviewState::Draft);
+        assert_eq!(
+            draft_review.summary.as_deref(),
+            Some("This draft was never submitted.")
+        );
+        let unavailable = review
+            .reviews
+            .iter()
+            .filter(|item| item.author.relationship() == postel::ReviewRelationship::Unknown)
+            .collect::<Vec<_>>();
+        assert_eq!(unavailable.len(), 2);
+        assert_ne!(
+            unavailable[0].author.actor(&review.author).id,
+            unavailable[1].author.actor(&review.author).id
+        );
+        assert_eq!(
+            review
+                .reviews
+                .iter()
+                .map(|submitted| submitted.findings.len())
+                .sum::<usize>()
+                + review.discussions.len(),
+            4
+        );
+        let author_thread = author_review.findings.first().expect("author finding");
+        assert_eq!(author_thread.comment.author.login, "arthur-debert");
+        assert_eq!(author_thread.replies[0].author.login, "adr-agy-review");
+        assert_eq!(
+            author_thread.location,
+            ReviewLocation {
+                path: "src/lib.rs".to_owned(),
+                anchor: ReviewAnchor::File,
+            }
+        );
+        assert_eq!(review.outstanding_requests.len(), 6);
+        assert!(matches!(
+            &review.outstanding_requests[0].target,
+            ReviewTarget::Actor(actor)
+                if actor.kind == ReviewActorKind::Bot
+                    && actor.login == "copilot-pull-request-reviewer"
+        ));
+        assert!(review.outstanding_requests[1].as_code_owner);
+        assert!(matches!(
+            &review.outstanding_requests[2].target,
+            ReviewTarget::Team(team)
+                if team.slug == "maintainers"
+                    && team.kind == ReviewTeamKind::Organization
+        ));
+        assert_eq!(
+            review.outstanding_requests[2].request_target,
+            Some(ReviewRequestTarget::Team("faictor/maintainers".to_owned()))
+        );
+        assert!(matches!(
+            &review.outstanding_requests[3].target,
+            ReviewTarget::Actor(actor) if actor.kind == ReviewActorKind::Placeholder
+        ));
+        assert!(matches!(
+            &review.outstanding_requests[4].target,
+            ReviewTarget::Team(team) if team.kind == postel::ReviewTeamKind::Enterprise
+        ));
+        assert_eq!(
+            review.outstanding_requests[5].target,
+            ReviewTarget::Unavailable
+        );
+        assert_eq!(review.conversation.len(), 1);
+        assert!(review.conversation[0].updated_at.is_some());
     }
 
     #[test]
-    fn graphql_fixture_normalizes_review_threads() {
-        let response: ThreadsData =
+    fn reviews_refuse_unknown_actor_kinds() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].user.as_mut().expect("reviewer").kind = "Repository".to_owned();
+
+        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
+            .expect_err("unknown actor kind must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review actor",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn submitted_reviews_require_a_submission_time() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[0].submitted_at = None;
+
+        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
+            .expect_err("submitted review without time must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn review_threads_require_an_initial_comment() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
-                .expect("fixture");
-        let threads = normalize_threads(response.repository.pull_request.review_threads.nodes)
-            .expect("normalize threads");
-        assert_eq!(threads.len(), 2);
-        assert_eq!(threads[0].id.as_str(), "PRRT_kwDOExample");
-        assert_eq!(threads[0].comments.len(), 2);
-        assert_eq!(threads[0].comments[0].author, "reviewer-bot");
-        assert_eq!(threads[0].comments[1].author, "author");
-        assert!(threads[1].comments.is_empty());
+                .expect("thread fixture");
+        threads.repository.pull_request.review_threads.nodes[0]
+            .comments
+            .nodes
+            .clear();
+
+        let error = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("thread without an initial comment must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review thread",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn missing_thread_review_is_not_misclassified_as_an_independent_discussion() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        threads.repository.pull_request.review_threads.nodes[0]
+            .comments
+            .nodes[0]
+            .pull_request_review = Some(super::CommentReview {
+            id: "PRR_missing".to_owned(),
+        });
+
+        let error = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("missing originating submission must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review thread",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn thread_without_an_originating_review_becomes_an_independent_discussion() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        let thread = threads
+            .repository
+            .pull_request
+            .review_threads
+            .nodes
+            .first_mut()
+            .expect("captured thread");
+        let expected_id = thread.id.clone();
+        thread
+            .comments
+            .nodes
+            .first_mut()
+            .expect("initial comment")
+            .pull_request_review = None;
+
+        let review = normalize_code_review(
+            code_review,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("normalizes independent discussion");
+
+        assert_eq!(review.discussions.len(), 1);
+        assert_eq!(review.discussions[0].id.as_str(), expected_id);
+        assert_eq!(
+            review
+                .reviews
+                .iter()
+                .map(|item| item.findings.len())
+                .sum::<usize>()
+                + review.discussions.len(),
+            4
+        );
+    }
+
+    #[test]
+    fn deleted_change_author_remains_an_unavailable_actor() {
+        let mut code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        code_review.user = None;
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+
+        let review =
+            normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
+                .expect("deleted author remains readable");
+        assert_eq!(review.author.kind, ReviewActorKind::Placeholder);
+        assert_eq!(review.author.login, "ghost");
+        assert!(
+            review
+                .reviews
+                .iter()
+                .all(|item| { item.author.relationship() == postel::ReviewRelationship::Unknown })
+        );
+    }
+
+    #[test]
+    fn draft_reviews_refuse_a_submission_time() {
+        let code_review: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("code review fixture");
+        let mut reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        reviews[10].submitted_at = Some("2026-06-23T22:10:00Z".parse().expect("submission time"));
+
+        let error = normalize_code_review(code_review, reviews, Vec::new(), Vec::new(), Vec::new())
+            .expect_err("draft review with a submission time must be refused");
+        assert!(matches!(
+            error,
+            ProviderError::External {
+                operation: "normalize review",
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
