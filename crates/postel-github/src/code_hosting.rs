@@ -1,4 +1,4 @@
-//! Repository settings, rules, and secret transport owned by the repo domain.
+//! Repository settings, rules, and secret transport owned by code hosting.
 //!
 //! Settings use GitHub's typed repository response. Rulesets use the raw REST
 //! route because Octocrab does not type their policy structure; normalization
@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use crypto_box::{PublicKey, aead::OsRng};
 use octocrab::Page;
 use postel::{
-    ProviderError, Repository, RepositoryFacts, RepositoryProvider, RepositorySettings,
+    CodeHostingProvider, ProviderError, Repository, RepositoryFacts, RepositorySettings,
     RequiredCheck, Result, Ruleset,
 };
 use secrecy::{ExposeSecret, SecretString};
@@ -190,7 +190,7 @@ fn ruleset_body(ruleset: &Ruleset) -> serde_json::Value {
 }
 
 #[async_trait]
-impl RepositoryProvider for GithubProvider {
+impl CodeHostingProvider for GithubProvider {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts> {
         let response: GithubRepository = self
             .user()?

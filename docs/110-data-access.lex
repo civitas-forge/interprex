@@ -4,7 +4,7 @@ Data Access
 
 1. The Coupling
 
-    Where a tool owns a database, the model settles first and access follows: any field can be indexed, any query added later. Neither holds here. A model whose questions the platform cannot answer is not implementable, and the set of questions it will answer, examined after the fact, is examined once the schema already sits in every repo. Model and access settle together, per domain.
+    Where a tool owns a database, the model settles first and access follows: any field can be indexed, any query added later. Neither holds here. A model whose questions the platform cannot answer is not implementable, and the set of questions it will answer, examined after the fact, is examined once the schema already sits in every repository. Model and access settle together, per domain.
 
 2. The Stores
 
@@ -16,7 +16,7 @@ Data Access
     Stores:
         | Store | Holds | Answers cheaply | Answers by scan, index, or not at all |
         | github | releases and their assets, issues, pull requests, workflow runs, packages | an exact address; one hop down its hierarchy | anything spanning repos; anything off the hierarchy |
-        | git | a repo's declarations | the whole set at a ref | nothing else is asked of it |
+        | git | a repository's declarations | the whole set at a ref | nothing else is asked of it |
         | bucket | what is neither code nor platform state: session records, access events, the build cache | a lookup or a prefix listing by path | anything off the path, which is read and computed ([#5]) |
         | host | live sessions, workspaces, environments | a lookup by path | anything else |
 

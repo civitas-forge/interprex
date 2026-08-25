@@ -19,9 +19,9 @@ Architecture
 
 2. Domains and Refusals
 
-    The development platform decomposes into five domains — repo, tracker,
-    code review, jobs, releases — each stating its operations in the tools'
-    vocabulary and naming no provider. Each is defined in
+    The development platform decomposes into five domains — code hosting,
+    tracker, code review, jobs, releases — each stating its operations in the
+    tools' vocabulary and naming no provider. Each is defined in
     [./100-platform.lex].
 
     A fact two domains both name is answered by the domain that owns it,
@@ -92,8 +92,9 @@ Architecture
         Links `postel` and a selected adapter, then drives the code review
         domain; every platform read and write in a review uses that interface.
     edward:
-        Links the repo and jobs domains for derived repo state and the ci
-        runtime, and supplies their providers at its composition root.
+        Links the code hosting and jobs domains for derived repository state
+        and the ci runtime, and supplies their providers at its composition
+        root.
     minsky, sam:
         Write their records — sessions, events, access — through the bucket
         client, under the write discipline of [./contracts/records.lex];

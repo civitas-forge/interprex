@@ -1,12 +1,12 @@
 Glossary
 
-    These words mean here what this repo says they mean, and a text using one
+    These words mean here what this repository says they mean, and a text using one
     of them in another sense belongs somewhere else.
 
     domain:
-        One area of the development platform under one contract — repo
-        (code hosting), tracker (issue tracking), code review, jobs (ci) or
-        releases. Each names its own provider.
+        One area of the development platform under one contract — code
+        hosting, tracker (issue tracking), code review, jobs (ci) or releases.
+        Each names its own provider.
     contract:
         The trait stating a domain's operations in the tools' own vocabulary,
         naming no provider.

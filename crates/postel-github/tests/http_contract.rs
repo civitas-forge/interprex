@@ -9,9 +9,9 @@ use std::{collections::BTreeMap, time::Duration};
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use postel::{
-    AssetId, AssetStreamError, AssetUpload, CodeReviewNumber, CodeReviewsProvider, DispatchInputs,
-    IssueNumber, IssuesProvider, JobsProvider, ReleaseId, ReleasesProvider, Repository,
-    RepositoryProvider, RepositorySettings, ReviewThreadId,
+    AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
+    CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -224,7 +224,7 @@ fn assert_user_request(request: &str, method_and_path: &str) {
 }
 
 #[tokio::test]
-async fn repo_domain_sends_the_canonical_repository_address() {
+async fn code_hosting_domain_sends_the_canonical_repository_address() {
     let (uri, request) = server(
         "200 OK",
         "application/json",
@@ -243,7 +243,7 @@ async fn repo_domain_sends_the_canonical_repository_address() {
 }
 
 #[tokio::test]
-async fn repo_domain_maps_settings_into_the_github_request_body() {
+async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
     let (uri, request) = server(
         "200 OK",
         "application/json",
@@ -278,7 +278,7 @@ async fn repo_domain_maps_settings_into_the_github_request_body() {
 }
 
 #[tokio::test]
-async fn repo_domain_returns_rulesets_from_every_rest_page() {
+async fn code_hosting_domain_returns_rulesets_from_every_rest_page() {
     let route = "/repos/faictor/postel-sandbox/rulesets";
     let (uri, requests) = rest_pages(
         route,

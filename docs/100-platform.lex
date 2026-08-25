@@ -1,6 +1,6 @@
 The Development Platform
 
-    A development platform is the hosted system carrying repos and their
+    A development platform is the hosted system carrying repositories and their
     configuration, issues, code reviews, ci jobs and releases. The tools that
     read it run no server of their own. It holds the data, and a tool stores
     its own concepts as that platform's objects wherever one fits, rather than
@@ -14,8 +14,9 @@ The Development Platform
     ([./architecture.lex]), so domains can live on different systems — the
     tracker in one, jobs in another, code reviews in a third.
 
-    repo:
-        A repo's existence and configuration: settings, merge requirements, required checks, secrets.
+    code hosting:
+        A repository's existence and configuration: settings, merge
+        requirements, required checks and secrets.
     tracker:
         Issues and the label taxonomy.
     code review:
@@ -44,4 +45,7 @@ The Development Platform
     Agent acts — opening issues and Github pull requests, assigning labels,
     merges and branch pushes — cross no contract ([./architecture.lex]).
 
-    A domain holds configuration and work in flight both — a tracker's label taxonomy beside its issues, a repo's merge requirements beside its branches — and the two change on different cadences. The contracts carry both; which caller drives which of the two is no fact of this repo's.
+    A domain holds configuration and work in flight both — a tracker's label
+    taxonomy beside its issues, a repository's merge requirements beside its
+    branches — and the two change on different cadences. The contracts carry
+    both; which caller drives which of the two is no fact of this repository's.

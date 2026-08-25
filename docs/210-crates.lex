@@ -25,20 +25,20 @@ Crate Layout
     `postel`:
         Provider-neutral models, structured errors, provider selection and five
         object-safe asynchronous interfaces. Its source is organized as
-        `error`, `provider`, `repository`, `issues`, `code_reviews`, `jobs` and
+        `error`, `provider`, `code_hosting`, `issues`, `code_reviews`, `jobs` and
         `releases`. The crate root reexports the public types and full interface
-        names for convenient imports. Compatibility aliases retain the former
-        short trait names.
+        names for convenient imports. Domain aliases provide the same five
+        names with a `Domain` suffix.
     `postel-github`:
         The Github adapter. `client.rs` constructs and stores Octocrab clients,
         reports provider errors and reads `.postel.toml` with Tokio filesystem
         access. `config.rs` owns typed credentials and pure TOML parsing. The
-        `repository`, `issues`, `code_reviews`, `jobs` and `releases` modules
+        `code_hosting`, `issues`, `code_reviews`, `jobs` and `releases` modules
         implement the corresponding `postel` interfaces. Octocrab and Github
         response types are private to this crate.
     `postel-test`:
         A stateful in-memory provider for consumer tests. `state.rs` stores
-        observable domain state and seed data. Separate `repository`, `issues`,
+        observable domain state and seed data. Separate `code_hosting`, `issues`,
         `code_reviews`, `jobs` and `releases` modules implement the same
         interfaces as the Github adapter. Tests can execute consumer rules
         without a network or third-party account.

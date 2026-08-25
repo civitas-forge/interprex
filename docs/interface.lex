@@ -9,7 +9,7 @@ Interface
     then links the adapter it selects at its own composition root. It constructs
     that provider from exactly one configuration source ([#3]). Consumer rules
     are tested against `postel-test`'s stateful in-memory provider: no network,
-    no third-party account, and nothing left behind in a real repo.
+    no third-party account, and nothing left behind in a real repository.
 
     `postel` groups values and interfaces in domain modules. Adapter crates use
     matching domain modules, while named client, configuration and state files
@@ -19,14 +19,14 @@ Interface
 
     Five, each defined in [./100-platform.lex]:
 
-    - repo — a repo's existence and configuration
+    - code hosting — a repository's existence and configuration
     - tracker — issues and labels
     - code review — a proposed change and its review
     - jobs — the ci runtime
     - releases — releases, assets and notes
 
     The first complete operation set:
-        repo:
+        code hosting:
             Read repository facts and merge settings, apply merge settings,
             list and upsert rulesets, and encrypt then write one repository
             secret.

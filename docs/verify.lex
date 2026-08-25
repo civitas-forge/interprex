@@ -7,12 +7,12 @@ Verify
 
 1. Interface
 
-    - The repo builds as crates only; no target produces a binary
+    - The repository builds as crates only; no target produces a binary
       ([./210-crates.lex]).
     - The workspace members are `postel`, `postel-github`, `postel-test` and
       `postel-bucket` ([./210-crates.lex]).
     - `postel` declares provider-neutral values and five interfaces in
-      `repository`, `issues`, `code_reviews`, `jobs` and `releases`; it depends
+      `code_hosting`, `issues`, `code_reviews`, `jobs` and `releases`; it depends
       on no adapter ([./architecture.lex]).
     - `postel-github` implements all five interfaces with `client`, `config` and
       matching domain modules ([./210-crates.lex]).
@@ -56,7 +56,7 @@ Verify
 
     - Rules that use a platform interface run against `postel-test`'s
       `FakeProvider`: no network, no third-party account, nothing left behind in
-      a real repo ([./interface.lex]).
+      a real repository ([./interface.lex]).
     - `FakeProvider` implements all five interfaces and records observable
       domain outcomes rather than expectations about consumer implementation.
     - Provider tests construct equivalent clients from project and direct
@@ -100,6 +100,7 @@ Verify
     - kent links `postel` and a selected adapter, then drives the code review
       domain
       ([./architecture.lex]).
-    - edward links the repo and jobs domains and supplies their providers.
+    - edward links the code hosting and jobs domains and supplies their
+      providers.
     - minsky and sam write records through the bucket client.
     - Postel links no sibling tool.

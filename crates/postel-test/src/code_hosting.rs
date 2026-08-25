@@ -1,13 +1,13 @@
 use async_trait::async_trait;
 use postel::{
-    Repository, RepositoryFacts, RepositoryProvider, RepositorySettings, Result, Ruleset,
+    CodeHostingProvider, Repository, RepositoryFacts, RepositorySettings, Result, Ruleset,
 };
 use secrecy::SecretString;
 
 use crate::state::{FakeProvider, missing};
 
 #[async_trait]
-impl RepositoryProvider for FakeProvider {
+impl CodeHostingProvider for FakeProvider {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts> {
         self.state
             .read()

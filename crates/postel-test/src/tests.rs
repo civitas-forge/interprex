@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use postel::{
-    AssetStreamError, AssetUpload, CodeReviewNumber, CodeReviewsProvider, Release, ReleaseId,
-    ReleasesProvider, Repository, RepositoryFacts, RepositoryProvider, RepositorySettings,
+    AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider,
+    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings,
     ReviewComment, ReviewThread, ReviewThreadId,
 };
 

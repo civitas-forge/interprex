@@ -14,7 +14,7 @@ use std::{
 };
 
 use fs2::FileExt;
-use postel::{IssuesProvider, Repository, RepositoryProvider};
+use postel::{CodeHostingProvider, IssuesProvider, Repository};
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
 

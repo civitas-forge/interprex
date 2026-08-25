@@ -1,8 +1,8 @@
 Postel
 
     Postel is a Rust library that abstracts development-platform apis into
-    high-level domains: code hosting, code review, ci jobs, releases and
-    issue tracking.
+    high-level domains: code hosting, issue tracking, code review, ci jobs and
+    releases.
 
     Each domain may be served by a different platform, behind one api
     interface — platforms coexist, and a domain can move to another platform
@@ -16,7 +16,7 @@ Postel
 
 1. Domains
 
-    repo — code hosting:
+    code hosting:
         Configuring repositories, branches, access control, and merge
         strategy and rules.
     tracker — issue tracking:
@@ -40,7 +40,7 @@ Postel
 3. The Docs
 
     [./GLOSSARY.lex]:
-        The words this repo defines.
+        The words this repository defines.
     [./docs/architecture.lex]:
         The shape: crates and clients, domains and refusals, deployment,
         boundaries, and the tools that link it.
