@@ -34,10 +34,11 @@ Interface
             Read one issue, list labels and upsert one label.
         code review:
             Read one coherent code review result containing every formal
-            submission, its reviewed revision, findings and ordered replies;
-            derive the commit range between a reviewer's submissions; resolve
-            a finding's thread, request reviewers, mark a draft ready and
-            publish an app-owned check outcome.
+            submission, its reviewed revision, every inline thread and each
+            outstanding review request; identify which threads are findings
+            from each submission; derive the commit range between a reviewer's
+            submissions; resolve a review thread, request users, bots or teams,
+            mark a draft ready and publish an app-owned check outcome.
         jobs:
             Dispatch a workflow with inputs, read one run and cancel one run.
         releases:

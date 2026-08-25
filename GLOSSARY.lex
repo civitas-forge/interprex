@@ -30,12 +30,21 @@ Glossary
     review submission:
         One formal assessment by one reviewer of one exact head commit. It has
         a disposition and may have a summary and any number of findings.
+    review thread:
+        One inline conversation attached to a file location. Its initial
+        comment and ordered replies remain visible whether a reviewer or the
+        change author began it.
     finding:
-        The initial inline comment attached to a file location by a review
-        submission, together with its current resolution status and replies.
+        A review thread begun by a formal review submission. The submission is
+        its origin; its current resolution status and replies belong to the
+        thread.
     reply:
         A later comment in a finding's thread. It does not become another
         finding or change which submission created the finding.
+    review request:
+        One currently outstanding request for a user, bot or team to review a
+        change. It is current state, not a history of request and removal
+        events, and it is not a review submission.
     reviewer round:
         The one-based position of a submission among the same reviewer's
         submissions, ordered by submission time.

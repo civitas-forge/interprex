@@ -13,8 +13,9 @@ use octocrab::Page;
 use postel::{
     CheckConclusion, CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, CommitRange,
     OpenClosed, ProviderError, Repository, Result, ReviewActor, ReviewActorKind, ReviewApp,
-    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewFinding, ReviewFindingStatus,
-    ReviewLocation, ReviewSubmission, ReviewSubmissionId, ReviewThreadId, ReviewedRevision,
+    ReviewComment, ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewRequest,
+    ReviewRequestId, ReviewSubmission, ReviewSubmissionId, ReviewTarget, ReviewTeam, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -59,6 +60,28 @@ query ReviewThreadComments($threadId: ID!, $cursor: String) {
   }
 }"#;
 
+const REVIEW_REQUESTS: &str = r#"
+query ReviewRequests($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewRequests(first: 100, after: $cursor) {
+        nodes {
+          id asCodeOwner
+          requestedReviewer {
+            __typename
+            ... on User { id login }
+            ... on Bot { id login }
+            ... on Mannequin { id login }
+            ... on Team { id slug name }
+            ... on EnterpriseTeam { id slug name }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"#;
+
 const RESOLVE_THREAD: &str = r#"
 mutation ResolveReviewThread($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
@@ -76,11 +99,13 @@ mutation RequestReviewsByLogin(
   $pullRequestId: ID!
   $userLogins: [String!]
   $botLogins: [String!]
+  $teamSlugs: [String!]
 ) {
   requestReviewsByLogin(input: {
     pullRequestId: $pullRequestId
     userLogins: $userLogins
     botLogins: $botLogins
+    teamSlugs: $teamSlugs
     union: true
   }) {
     pullRequest { id }
@@ -222,6 +247,69 @@ struct ThreadCommentsNode {
     comments: CommentConnection,
 }
 
+#[derive(Deserialize)]
+struct ReviewRequestsData {
+    repository: ReviewRequestsRepository,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestsRepository {
+    #[serde(rename = "pullRequest")]
+    pull_request: ReviewRequestsPullRequest,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestsPullRequest {
+    #[serde(rename = "reviewRequests")]
+    review_requests: ReviewRequestConnection,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestConnection {
+    nodes: Vec<ReviewRequestNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+#[derive(Deserialize)]
+struct ReviewRequestNode {
+    id: String,
+    #[serde(rename = "asCodeOwner")]
+    as_code_owner: bool,
+    #[serde(rename = "requestedReviewer")]
+    requested_reviewer: Option<RequestedReviewerNode>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum RequestedReviewerNode {
+    User {
+        #[serde(rename = "id")]
+        _id: String,
+        login: String,
+    },
+    Bot {
+        #[serde(rename = "id")]
+        _id: String,
+        login: String,
+    },
+    Mannequin {
+        #[serde(rename = "id")]
+        _id: String,
+        login: String,
+    },
+    Team {
+        id: String,
+        slug: String,
+        name: String,
+    },
+    EnterpriseTeam {
+        id: String,
+        slug: String,
+        name: String,
+    },
+}
+
 fn continuation_cursor(
     page_info: &PageInfo,
     operation: &'static str,
@@ -244,10 +332,10 @@ fn continuation_cursor(
 fn actor(login: String, kind: &str) -> ReviewActor {
     ReviewActor {
         login,
-        kind: if kind == "Bot" {
-            ReviewActorKind::Bot
-        } else {
-            ReviewActorKind::User
+        kind: match kind {
+            "Bot" => ReviewActorKind::Bot,
+            "Mannequin" => ReviewActorKind::Placeholder,
+            _ => ReviewActorKind::User,
         },
     }
 }
@@ -291,10 +379,48 @@ fn normalize_comment(value: CommentNode) -> Result<ReviewComment> {
     })
 }
 
+fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
+    let requested_reviewer = value
+        .requested_reviewer
+        .ok_or_else(|| ProviderError::External {
+            provider: "github",
+            operation: "normalize review request",
+            message: format!("review request {} has no target", value.id),
+        })?;
+    let target = match requested_reviewer {
+        RequestedReviewerNode::User { login, .. } => ReviewTarget::Actor(ReviewActor {
+            login,
+            kind: ReviewActorKind::User,
+        }),
+        RequestedReviewerNode::Bot { login, .. } => ReviewTarget::Actor(ReviewActor {
+            login,
+            kind: ReviewActorKind::Bot,
+        }),
+        RequestedReviewerNode::Mannequin { login, .. } => ReviewTarget::Actor(ReviewActor {
+            login,
+            kind: ReviewActorKind::Placeholder,
+        }),
+        RequestedReviewerNode::Team { id, slug, name }
+        | RequestedReviewerNode::EnterpriseTeam { id, slug, name } => {
+            ReviewTarget::Team(ReviewTeam { id, slug, name })
+        }
+    };
+    Ok(ReviewRequest {
+        id: ReviewRequestId::new(value.id).map_err(|error| ProviderError::External {
+            provider: "github",
+            operation: "normalize review request",
+            message: error.to_string(),
+        })?,
+        target,
+        as_code_owner: value.as_code_owner,
+    })
+}
+
 fn normalize_code_review(
     value: GithubPullRequest,
     mut reviews: Vec<GithubReview>,
     threads: Vec<ThreadNode>,
+    review_requests: Vec<ReviewRequestNode>,
 ) -> Result<CodeReview> {
     let author = actor(value.user.login, &value.user.kind);
     let base_sha = value.base.sha;
@@ -337,48 +463,51 @@ fn normalize_code_review(
             disposition: normalize_disposition(&review.state)?,
             submitted_at,
             summary: (!review.body.trim().is_empty()).then_some(review.body),
-            findings: Vec::new(),
         });
     }
 
+    let mut normalized_threads = Vec::with_capacity(threads.len());
     for thread in threads {
         let mut comments = thread.comments.nodes.into_iter();
-        let Some(initial) = comments.next() else {
-            continue;
-        };
-        let Some(review_id) = initial
+        let initial = comments.next().ok_or_else(|| ProviderError::External {
+            provider: "github",
+            operation: "normalize review thread",
+            message: format!("review thread {} has no comments", thread.id),
+        })?;
+        let originating_submission = initial
             .pull_request_review
             .as_ref()
             .map(|review| review.database_id)
-        else {
-            continue;
-        };
-        let Some(position) = review_positions.get(&review_id).copied() else {
-            continue;
-        };
-        let finding = ReviewFinding {
-            thread_id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
+            .and_then(|review_id| review_positions.get(&review_id))
+            .map(|position| submissions[*position].id.clone());
+        normalized_threads.push(ReviewThread {
+            id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::External {
                 provider: "github",
-                operation: "normalize review finding",
+                operation: "normalize review thread",
                 message: error.to_string(),
             })?,
+            originating_submission,
             location: ReviewLocation {
                 path: thread.path,
                 line: thread.line,
                 original_line: thread.original_line,
             },
             status: if thread.resolved {
-                ReviewFindingStatus::Resolved
+                ReviewThreadStatus::Resolved
             } else {
-                ReviewFindingStatus::Open
+                ReviewThreadStatus::Open
             },
             comment: normalize_comment(initial)?,
             replies: comments
                 .map(normalize_comment)
                 .collect::<Result<Vec<_>>>()?,
-        };
-        submissions[position].findings.push(finding);
+        });
     }
+
+    let outstanding_review_requests = review_requests
+        .into_iter()
+        .map(normalize_review_request)
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(CodeReview {
         number: CodeReviewNumber::new(value.number).map_err(|error| ProviderError::External {
@@ -400,6 +529,8 @@ fn normalize_code_review(
         author,
         updated_at: value.updated_at,
         submissions,
+        threads: normalized_threads,
+        outstanding_review_requests,
     })
 }
 
@@ -524,6 +655,41 @@ impl GithubProvider {
             cursor = Some(next_cursor);
         }
     }
+
+    async fn github_review_requests(
+        &self,
+        repository: &Repository,
+        number: CodeReviewNumber,
+    ) -> Result<Vec<ReviewRequestNode>> {
+        let mut cursor: Option<String> = None;
+        let mut requests = Vec::new();
+        loop {
+            let data: ReviewRequestsData = self
+                .user()?
+                .graphql(&json!({
+                    "query": REVIEW_REQUESTS,
+                    "variables": {
+                        "owner": repository.owner(),
+                        "name": repository.name(),
+                        "number": number.get(),
+                        "cursor": cursor,
+                    }
+                }))
+                .await
+                .map_err(|error| external("read review requests", error))?;
+            let connection = data.repository.pull_request.review_requests;
+            let next_cursor = continuation_cursor(
+                &connection.page_info,
+                "read review requests",
+                "review requests",
+            )?;
+            requests.extend(connection.nodes);
+            let Some(next_cursor) = next_cursor else {
+                return Ok(requests);
+            };
+            cursor = Some(next_cursor);
+        }
+    }
 }
 
 #[async_trait]
@@ -537,9 +703,10 @@ impl CodeReviewsProvider for GithubProvider {
         for _ in 0..2 {
             let reviews = self.github_reviews(repository, number).await?;
             let threads = self.github_review_threads(repository, number).await?;
+            let requests = self.github_review_requests(repository, number).await?;
             let after = self.github_code_review(repository, number).await?;
             if same_code_review_version(&before, &after) {
-                return normalize_code_review(after, reviews, threads);
+                return normalize_code_review(after, reviews, threads, requests);
             }
             before = after;
         }
@@ -574,13 +741,23 @@ impl CodeReviewsProvider for GithubProvider {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[String],
+        reviewers: &[ReviewTarget],
     ) -> Result<()> {
         let code_review = self.github_code_review(repository, number).await?;
-        let (bot_logins, user_logins): (Vec<&str>, Vec<&str>) = reviewers
-            .iter()
-            .map(String::as_str)
-            .partition(|login| login.ends_with("[bot]"));
+        let mut user_logins = Vec::new();
+        let mut bot_logins = Vec::new();
+        let mut team_slugs = Vec::new();
+        for reviewer in reviewers {
+            match reviewer {
+                ReviewTarget::Actor(actor) => match actor.kind {
+                    ReviewActorKind::Bot => bot_logins.push(actor.login.as_str()),
+                    ReviewActorKind::User | ReviewActorKind::Placeholder => {
+                        user_logins.push(actor.login.as_str());
+                    }
+                },
+                ReviewTarget::Team(team) => team_slugs.push(team.slug.as_str()),
+            }
+        }
         let _: serde_json::Value = self
             .user()?
             .graphql(&json!({
@@ -589,6 +766,7 @@ impl CodeReviewsProvider for GithubProvider {
                     "pullRequestId": code_review.node_id,
                     "userLogins": user_logins,
                     "botLogins": bot_logins,
+                    "teamSlugs": team_slugs,
                 }
             }))
             .await
@@ -637,7 +815,10 @@ impl CodeReviewsProvider for GithubProvider {
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use postel::{CheckConclusion, CheckOutcome, CodeReviewsProvider, Repository};
+    use postel::{
+        CheckConclusion, CheckOutcome, CodeReviewsProvider, Repository, ReviewActorKind,
+        ReviewTarget, ReviewThreadStatus,
+    };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -646,7 +827,9 @@ mod tests {
 
     use crate::GithubProvider;
 
-    use super::{GithubPullRequest, GithubReview, ThreadsData, normalize_code_review};
+    use super::{
+        GithubPullRequest, GithubReview, ReviewRequestsData, ThreadsData, normalize_code_review,
+    };
 
     #[test]
     fn github_fixtures_preserve_reviewers_rounds_findings_and_replies() {
@@ -659,10 +842,14 @@ mod tests {
         let threads: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("thread fixture");
+        let requests: ReviewRequestsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_requests.json"))
+                .expect("review request fixture");
         let review = normalize_code_review(
             code_review,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
+            requests.repository.pull_request.review_requests.nodes,
         )
         .expect("normalizes");
 
@@ -684,14 +871,16 @@ mod tests {
             review.submissions[3].revision
         );
         assert_ne!(review.submissions[1].id, review.submissions[3].id);
-        assert_eq!(review.submissions[0].findings.len(), 1);
-        let finding = &review.submissions[0].findings[0];
+        let finding = review
+            .findings_for(&review.submissions[0].id)
+            .next()
+            .expect("first submission finding");
         assert_eq!(finding.location.path, "docs/dev/architecture.lex");
         assert_eq!(finding.location.line, Some(188));
         assert_eq!(finding.location.original_line, Some(181));
         assert_eq!(finding.replies.len(), 1);
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
-        assert_eq!(finding.status, postel::ReviewFindingStatus::Resolved);
+        assert_eq!(finding.status, ReviewThreadStatus::Resolved);
         assert_eq!(
             review.submissions[0]
                 .app
@@ -699,14 +888,33 @@ mod tests {
                 .map(|app| app.slug.as_str()),
             Some("adr-review")
         );
-        assert!(
-            review
-                .submissions
-                .last()
-                .expect("last review")
-                .findings
-                .is_empty()
-        );
+        let last_submission = review.submissions.last().expect("last review");
+        assert!(review.findings_for(&last_submission.id).next().is_none());
+        assert_eq!(review.threads.len(), 4);
+        let author_thread = review
+            .threads
+            .iter()
+            .find(|thread| thread.id.as_str() == "PRRT_kwDOSCkZoc6Author")
+            .expect("author-started thread");
+        assert!(author_thread.originating_submission.is_none());
+        assert_eq!(author_thread.comment.author.login, "arthur-debert");
+        assert_eq!(author_thread.replies[0].author.login, "adr-agy-review");
+        assert_eq!(review.outstanding_review_requests.len(), 4);
+        assert!(matches!(
+            &review.outstanding_review_requests[0].target,
+            ReviewTarget::Actor(actor)
+                if actor.kind == ReviewActorKind::Bot
+                    && actor.login == "copilot-pull-request-reviewer"
+        ));
+        assert!(review.outstanding_review_requests[1].as_code_owner);
+        assert!(matches!(
+            &review.outstanding_review_requests[2].target,
+            ReviewTarget::Team(team) if team.slug == "maintainers"
+        ));
+        assert!(matches!(
+            &review.outstanding_review_requests[3].target,
+            ReviewTarget::Actor(actor) if actor.kind == ReviewActorKind::Placeholder
+        ));
     }
 
     #[tokio::test]

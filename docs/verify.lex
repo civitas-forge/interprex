@@ -66,17 +66,21 @@ Verify
       for the other.
     - Captured Github responses exercise normalization without network access;
       the code review fixture includes several bots, repeated submissions on
-      one revision, later revisions, findings, replies, resolved and outdated
-      locations, and submissions without findings. Unknown vendor fields do not
-      enter the model.
+      one revision, later revisions, reviewer and author-started threads,
+      findings, replies, resolved and outdated locations, submissions without
+      findings, and outstanding user, bot, placeholder and team requests.
+      Unknown vendor fields do not enter the model.
     - Local transport tests run the real Octocrab adapter against a loopback
       server and assert the method, path, authentication and Postel-owned body
       for every domain.
     - Code review transport tests prove that pull request facts, formal
-      submissions and review threads become one result, and that the adapter
-      retries when the revision changes while it is assembling that result.
-    - One ignored, read-only live test reads repository facts and labels from
-      `faictor/postel-sandbox`. It assumes no issue, pull request, label or
+      submissions, review threads and outstanding review requests become one
+      result, and that the adapter retries when the revision changes while it
+      is assembling that result.
+    - Ignored, read-only live tests read repository facts and labels from
+      `faictor/postel-sandbox`, and can read a configured code review to check
+      its submissions, threads and outstanding requests against current
+      provider data. The sandbox test assumes no issue, code review, label or
       branch state.
     - The live workflow runs manually or for an explicitly named
       `codex/live-e2e-*` branch, shares one concurrency group across branches

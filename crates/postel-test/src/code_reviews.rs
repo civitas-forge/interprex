@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use postel::{
     CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
-    ReviewFindingStatus, ReviewThreadId,
+    ReviewTarget, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -33,15 +33,13 @@ impl CodeReviewsProvider for FakeProvider {
             .code_reviews
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
-        for submission in &mut code_review.submissions {
-            if let Some(finding) = submission
-                .findings
-                .iter_mut()
-                .find(|finding| &finding.thread_id == thread_id)
-            {
-                finding.status = ReviewFindingStatus::Resolved;
-                return Ok(());
-            }
+        if let Some(thread) = code_review
+            .threads
+            .iter_mut()
+            .find(|thread| &thread.id == thread_id)
+        {
+            thread.status = ReviewThreadStatus::Resolved;
+            return Ok(());
         }
         Err(missing(format!("review thread {}", thread_id.as_str())))
     }
@@ -50,7 +48,7 @@ impl CodeReviewsProvider for FakeProvider {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[String],
+        reviewers: &[ReviewTarget],
     ) -> Result<()> {
         self.state
             .write()

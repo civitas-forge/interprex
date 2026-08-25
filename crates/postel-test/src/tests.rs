@@ -4,8 +4,8 @@ use postel::{
     AssetStreamError, AssetUpload, CodeHostingProvider, CodeReview, CodeReviewNumber,
     CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
     RepositoryFacts, RepositorySettings, ReviewActor, ReviewActorKind, ReviewComment,
-    ReviewCommentId, ReviewDisposition, ReviewFinding, ReviewFindingStatus, ReviewLocation,
-    ReviewSubmission, ReviewSubmissionId, ReviewThreadId, ReviewedRevision,
+    ReviewCommentId, ReviewDisposition, ReviewLocation, ReviewSubmission, ReviewSubmissionId,
+    ReviewTarget, ReviewTeam, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -39,13 +39,24 @@ async fn consumer_observes_changes_through_the_same_contract() {
     );
 
     let number = CodeReviewNumber::new(3).expect("number");
+    let targets = vec![
+        ReviewTarget::Actor(ReviewActor {
+            login: "reviewer".to_owned(),
+            kind: ReviewActorKind::User,
+        }),
+        ReviewTarget::Team(ReviewTeam {
+            id: "team-1".to_owned(),
+            slug: "maintainers".to_owned(),
+            name: "Maintainers".to_owned(),
+        }),
+    ];
     provider
-        .request_reviewers(&repository, number, &["reviewer".to_owned()])
+        .request_reviewers(&repository, number, &targets)
         .await
         .expect("request reviewers");
     assert_eq!(
         provider.requested_reviewers(&repository, number).await,
-        ["reviewer"]
+        targets
     );
 }
 
@@ -84,30 +95,32 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
             disposition: ReviewDisposition::ChangesRequested,
             submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
             summary: Some("One concern".to_owned()),
-            findings: vec![ReviewFinding {
-                thread_id: ReviewThreadId::new("thread-1").expect("thread id"),
-                location: ReviewLocation {
-                    path: "src/lib.rs".to_owned(),
-                    line: Some(12),
-                    original_line: Some(10),
-                },
-                status: ReviewFindingStatus::Open,
-                comment: ReviewComment {
-                    id: ReviewCommentId::new("comment-1").expect("comment id"),
-                    author: reviewer,
-                    body: "question".to_owned(),
-                    created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
-                    updated_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
-                },
-                replies: vec![ReviewComment {
-                    id: ReviewCommentId::new("comment-2").expect("comment id"),
-                    author,
-                    body: "answer".to_owned(),
-                    created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
-                    updated_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
-                }],
+        }],
+        threads: vec![ReviewThread {
+            id: ReviewThreadId::new("thread-1").expect("thread id"),
+            originating_submission: Some(ReviewSubmissionId::new("review-1").expect("review id")),
+            location: ReviewLocation {
+                path: "src/lib.rs".to_owned(),
+                line: Some(12),
+                original_line: Some(10),
+            },
+            status: ReviewThreadStatus::Open,
+            comment: ReviewComment {
+                id: ReviewCommentId::new("comment-1").expect("comment id"),
+                author: reviewer,
+                body: "question".to_owned(),
+                created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                updated_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+            },
+            replies: vec![ReviewComment {
+                id: ReviewCommentId::new("comment-2").expect("comment id"),
+                author,
+                body: "answer".to_owned(),
+                created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                updated_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
             }],
         }],
+        outstanding_review_requests: Vec::new(),
     };
     provider
         .seed_code_review(repository.clone(), code_review.clone())
@@ -133,10 +146,9 @@ async fn consumer_reads_complete_review_conversations_through_the_contract() {
             .code_review(&repository, number)
             .await
             .expect("review")
-            .submissions[0]
-            .findings[0]
+            .threads[0]
             .status
-            == ReviewFindingStatus::Resolved
+            == ReviewThreadStatus::Resolved
     );
 }
 

@@ -43,6 +43,7 @@ opaque_review_id!(
 );
 opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
 opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
+opaque_review_id!(ReviewRequestId, "review request id", "review request");
 
 /// Two commit endpoints whose relationship is meaningful to the caller.
 ///
@@ -67,12 +68,35 @@ pub struct ReviewedRevision {
 pub enum ReviewActorKind {
     User,
     Bot,
+    Placeholder,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ReviewActor {
     pub login: String,
     pub kind: ReviewActorKind,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewTeam {
+    pub id: String,
+    pub slug: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewTarget {
+    Actor(ReviewActor),
+    Team(ReviewTeam),
+}
+
+/// One outstanding request for a user, bot or team to review the change.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewRequest {
+    pub id: ReviewRequestId,
+    pub target: ReviewTarget,
+    pub as_code_owner: bool,
 }
 
 /// The GitHub App or equivalent provider application that produced a review.
@@ -94,7 +118,7 @@ pub enum ReviewDisposition {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ReviewFindingStatus {
+pub enum ReviewThreadStatus {
     Open,
     Resolved,
 }
@@ -119,15 +143,18 @@ pub struct ReviewLocation {
     pub original_line: Option<u64>,
 }
 
-/// One inline concern raised by a review submission.
+/// One complete inline conversation on the code review.
 ///
-/// The initial comment is the finding. Later comments are replies in the same
-/// thread and do not become additional findings or review submissions.
+/// A thread associated with a formal reviewer submission is a finding from
+/// that submission. A thread without that association remains visible, which
+/// preserves conversations initiated by the change author. Later comments are
+/// replies and do not change the thread's origin.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ReviewFinding {
-    pub thread_id: ReviewThreadId,
+pub struct ReviewThread {
+    pub id: ReviewThreadId,
+    pub originating_submission: Option<ReviewSubmissionId>,
     pub location: ReviewLocation,
-    pub status: ReviewFindingStatus,
+    pub status: ReviewThreadStatus,
     pub comment: ReviewComment,
     pub replies: Vec<ReviewComment>,
 }
@@ -136,7 +163,8 @@ pub struct ReviewFinding {
 ///
 /// Multiple submissions by the same reviewer are retained independently,
 /// including multiple submissions against the same revision and submissions
-/// without inline findings.
+/// without inline findings. Use [`CodeReview::findings_for`] to read the
+/// threads that originated in a submission.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewSubmission {
     pub id: ReviewSubmissionId,
@@ -146,7 +174,6 @@ pub struct ReviewSubmission {
     pub disposition: ReviewDisposition,
     pub submitted_at: DateTime<Utc>,
     pub summary: Option<String>,
-    pub findings: Vec<ReviewFinding>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -159,6 +186,8 @@ pub struct CodeReview {
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     pub submissions: Vec<ReviewSubmission>,
+    pub threads: Vec<ReviewThread>,
+    pub outstanding_review_requests: Vec<ReviewRequest>,
 }
 
 impl CodeReview {
@@ -173,6 +202,16 @@ impl CodeReview {
                     .then_some(&submission.reviewer)
             })
             .collect()
+    }
+
+    /// Findings created by one formal review submission, in provider order.
+    pub fn findings_for<'a>(
+        &'a self,
+        id: &'a ReviewSubmissionId,
+    ) -> impl Iterator<Item = &'a ReviewThread> + 'a {
+        self.threads
+            .iter()
+            .filter(move |thread| thread.originating_submission.as_ref() == Some(id))
     }
 
     /// The one-based submission number for this reviewer.
@@ -263,7 +302,7 @@ pub trait CodeReviewsProvider: Send + Sync {
         &self,
         repository: &Repository,
         number: CodeReviewNumber,
-        reviewers: &[String],
+        reviewers: &[ReviewTarget],
     ) -> Result<()>;
     async fn mark_ready(&self, repository: &Repository, number: CodeReviewNumber) -> Result<()>;
     async fn publish_check(
@@ -298,7 +337,6 @@ mod tests {
             disposition: ReviewDisposition::Commented,
             submitted_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
             summary: None,
-            findings: Vec::new(),
         }
     }
 
@@ -325,6 +363,8 @@ mod tests {
                 submission("review-4", "codex", "revision-b"),
                 submission("review-5", "agy", "revision-b"),
             ],
+            threads: Vec::new(),
+            outstanding_review_requests: Vec::new(),
         };
 
         assert_eq!(
@@ -354,5 +394,60 @@ mod tests {
                 head_sha: "revision-b".to_owned(),
             })
         );
+    }
+
+    #[test]
+    fn author_threads_remain_visible_without_becoming_review_findings() {
+        let reviewer = actor("reviewer");
+        let author = ReviewActor {
+            login: "author".to_owned(),
+            kind: ReviewActorKind::User,
+        };
+        let review_id = ReviewSubmissionId::new("review-1").expect("review id");
+        let comment = |id: &str, actor: ReviewActor| ReviewComment {
+            id: ReviewCommentId::new(id).expect("comment id"),
+            author: actor,
+            body: "comment".to_owned(),
+            created_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
+            updated_at: Utc.timestamp_opt(1, 0).single().expect("timestamp"),
+        };
+        let thread = |id: &str, origin, initial| ReviewThread {
+            id: ReviewThreadId::new(id).expect("thread id"),
+            originating_submission: origin,
+            location: ReviewLocation {
+                path: "src/lib.rs".to_owned(),
+                line: Some(10),
+                original_line: Some(10),
+            },
+            status: ReviewThreadStatus::Open,
+            comment: initial,
+            replies: Vec::new(),
+        };
+        let review = CodeReview {
+            number: CodeReviewNumber::new(1).expect("number"),
+            title: "Author conversation".to_owned(),
+            state: OpenClosed::Open,
+            draft: false,
+            current_range: CommitRange {
+                base_sha: "base".to_owned(),
+                head_sha: "head".to_owned(),
+            },
+            author: author.clone(),
+            updated_at: Utc.timestamp_opt(2, 0).single().expect("timestamp"),
+            submissions: vec![submission("review-1", "reviewer", "head")],
+            threads: vec![
+                thread(
+                    "reviewer-thread",
+                    Some(review_id.clone()),
+                    comment("comment-1", reviewer),
+                ),
+                thread("author-thread", None, comment("comment-2", author)),
+            ],
+            outstanding_review_requests: Vec::new(),
+        };
+
+        assert_eq!(review.threads.len(), 2);
+        assert_eq!(review.findings_for(&review_id).count(), 1);
+        assert!(review.threads[1].originating_submission.is_none());
     }
 }

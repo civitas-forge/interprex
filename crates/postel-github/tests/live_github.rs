@@ -14,7 +14,10 @@ use std::{
 };
 
 use fs2::FileExt;
-use postel::{CodeHostingProvider, IssuesProvider, Repository};
+use postel::{
+    CodeHostingProvider, CodeReviewNumber, CodeReviewsProvider, IssuesProvider, Repository,
+    ReviewTarget,
+};
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
 
@@ -118,4 +121,49 @@ async fn sandbox_repository_and_label_reads_follow_the_real_consumer_path() {
         .await
         .expect("read sandbox labels");
     assert!(labels.iter().all(|label| !label.name.is_empty()));
+}
+
+#[tokio::test]
+#[ignore = "contacts the real GitHub API; run only through the serialized live workflow"]
+async fn configured_code_review_history_matches_current_provider_data() {
+    let (provider, repository) = live_provider();
+    let number = std::env::var("POSTEL_E2E_CODE_REVIEW_NUMBER")
+        .expect("POSTEL_E2E_CODE_REVIEW_NUMBER must name an existing code review")
+        .parse()
+        .expect("POSTEL_E2E_CODE_REVIEW_NUMBER must be a positive integer");
+    let number = CodeReviewNumber::new(number).expect("positive code review number");
+
+    let _throttle = GlobalThrottle::acquire();
+    let review = provider
+        .code_review(&repository, number)
+        .await
+        .expect("read configured code review");
+
+    assert_eq!(review.number, number);
+    assert!(!review.current_range.base_sha.is_empty());
+    assert!(!review.current_range.head_sha.is_empty());
+    let submission_ids = review
+        .submissions
+        .iter()
+        .map(|submission| submission.id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    for thread in &review.threads {
+        assert!(!thread.id.as_str().is_empty());
+        assert!(!thread.location.path.is_empty());
+        assert!(!thread.comment.id.as_str().is_empty());
+        if let Some(origin) = &thread.originating_submission {
+            assert!(submission_ids.contains(origin));
+        }
+    }
+    for request in &review.outstanding_review_requests {
+        assert!(!request.id.as_str().is_empty());
+        match &request.target {
+            ReviewTarget::Actor(actor) => assert!(!actor.login.is_empty()),
+            ReviewTarget::Team(team) => {
+                assert!(!team.id.is_empty());
+                assert!(!team.slug.is_empty());
+                assert!(!team.name.is_empty());
+            }
+        }
+    }
 }

@@ -1,0 +1,32 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewRequests": {
+          "pageInfo": { "hasNextPage": false, "endCursor": null },
+          "nodes": [
+            {
+              "id": "PRR_kwDORequestBot",
+              "asCodeOwner": false,
+              "requestedReviewer": {
+                "__typename": "Bot",
+                "id": "BOT_kwDOReviewer",
+                "login": "copilot-pull-request-reviewer"
+              }
+            },
+            {
+              "id": "PRR_kwDORequestTeam",
+              "asCodeOwner": true,
+              "requestedReviewer": {
+                "__typename": "Team",
+                "id": "T_kwDOMaintainers",
+                "slug": "maintainers",
+                "name": "Maintainers"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -21,8 +21,8 @@ The Development Platform
         Issues and the label taxonomy.
     code review:
         A proposed change: its facts, reviewed revisions, formal review
-        submissions, findings and replies, review requests, check results and
-        draft-ready transition.
+        submissions, all inline conversations, findings and replies,
+        outstanding review requests, check results and draft-ready transition.
     jobs:
         The ci runtime: the generated thin callers, dispatch, runs, runners, caches, and a run's own transport containers — each a named archive of any number of files, carrying its own expiry, holding whatever one job hands the next.
     releases:
@@ -44,25 +44,32 @@ The Development Platform
 2. Code Review History
 
     Reading a code review returns one result containing its current change
-    range and its formal review submissions. A submission records one reviewer,
-    an optional provider app, the exact reviewed head commit, its disposition,
-    submission time, summary and zero or more findings. The current code review
-    result separately carries its base and head commits. Github does not
-    retain the historical base commit on a review submission, so Postel does
-    not fill it with the current base and present an invented historical range.
+    range, formal review submissions, inline threads and currently outstanding
+    review requests. A submission records one reviewer, an optional provider
+    app, the exact reviewed head commit, its disposition, submission time and
+    summary. The current code review result separately carries its base and
+    head commits. Github does not retain the historical base commit on a review
+    submission, so Postel does not fill it with the current base and present an
+    invented historical range.
 
     Submissions are never combined. Two reviewers on one revision are two
     submissions, and one reviewer submitting twice on that revision is also two
     submissions. A submission with no findings remains in the history because
     the reviewer still reviewed that revision. The reviewer set is derived from
     those submissions; a requested reviewer has not reviewed until a submission
-    exists. A check result is not a reviewer.
+    exists. Outstanding requests name users, bots and teams and say whether
+    Github requested them as code owners. They describe current state rather
+    than request and removal history. A check result is not a reviewer.
 
-    A finding is the initial inline comment in a review thread. It carries the
-    file path, the current line when its anchor still maps, the original line,
-    and an open or resolved status. Later comments are ordered replies on that
-    finding. A reply by the change author does not make the author a reviewer or
-    move the finding to a later submission.
+    Every inline thread remains in the result. It carries the file path, the
+    current line when its anchor still maps, the original line, an open or
+    resolved status, its initial comment and ordered replies. A thread begun by
+    a retained reviewer submission is a finding from that submission. A thread
+    begun by the change author remains visible without being classified as a
+    finding. Reviewer replies in that author-started thread remain replies; they
+    do not turn it into a reviewer submission. Likewise, a reply by the change
+    author does not make the author a reviewer or move a finding to a later
+    submission.
 
     Rounds are derived rather than stored. All submissions against the same
     head commit share a revision round. A reviewer's submissions, ordered by

@@ -11,7 +11,8 @@ use futures_util::{TryStreamExt, stream};
 use postel::{
     AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
     CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
-    ReleasesProvider, Repository, RepositorySettings, ReviewThreadId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewActor, ReviewActorKind, ReviewTarget,
+    ReviewTeam, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -349,7 +350,7 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
 }
 
 #[tokio::test]
-async fn code_review_domain_requests_copilot_through_the_login_mutation() {
+async fn code_review_domain_requests_users_bots_and_teams_through_the_login_mutation() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
@@ -360,8 +361,19 @@ async fn code_review_domain_requests_copilot_through_the_login_mutation() {
             &repository(),
             CodeReviewNumber::new(5).expect("number"),
             &[
-                "alice".to_owned(),
-                "copilot-pull-request-reviewer[bot]".to_owned(),
+                ReviewTarget::Actor(ReviewActor {
+                    login: "alice".to_owned(),
+                    kind: ReviewActorKind::User,
+                }),
+                ReviewTarget::Actor(ReviewActor {
+                    login: "copilot-pull-request-reviewer".to_owned(),
+                    kind: ReviewActorKind::Bot,
+                }),
+                ReviewTarget::Team(ReviewTeam {
+                    id: "T_kwDOMaintainers".to_owned(),
+                    slug: "maintainers".to_owned(),
+                    name: "Maintainers".to_owned(),
+                }),
             ],
         )
         .await
@@ -387,7 +399,11 @@ async fn code_review_domain_requests_copilot_through_the_login_mutation() {
     );
     assert_eq!(
         body["variables"]["botLogins"],
-        serde_json::json!(["copilot-pull-request-reviewer[bot]"])
+        serde_json::json!(["copilot-pull-request-reviewer"])
+    );
+    assert_eq!(
+        body["variables"]["teamSlugs"],
+        serde_json::json!(["maintainers"])
     );
 }
 
@@ -439,6 +455,7 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         include_str!("fixtures/pull_request.json"),
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
         include_str!("fixtures/pull_request.json"),
     ])
     .await;
@@ -448,15 +465,10 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         .expect("code review");
 
     assert_eq!(review.submissions.len(), 7);
-    assert_eq!(review.submissions[0].findings[0].replies.len(), 1);
-    assert!(
-        review
-            .submissions
-            .last()
-            .expect("last review")
-            .findings
-            .is_empty()
-    );
+    assert_eq!(review.threads[0].replies.len(), 1);
+    let last_submission = review.submissions.last().expect("last review");
+    assert!(review.findings_for(&last_submission.id).next().is_none());
+    assert_eq!(review.outstanding_review_requests.len(), 2);
     let requests = requests.await.expect("captured requests");
     assert_user_request(&requests[0], "GET /repos/faictor/postel-sandbox/pulls/5 ");
     assert_user_request(
@@ -464,7 +476,8 @@ async fn code_review_domain_reads_one_consistent_review_history() {
         "GET /repos/faictor/postel-sandbox/pulls/5/reviews?per_page=100 ",
     );
     assert_user_request(&requests[2], "POST /graphql ");
-    assert_user_request(&requests[3], "GET /repos/faictor/postel-sandbox/pulls/5 ");
+    assert_user_request(&requests[3], "POST /graphql ");
+    assert_user_request(&requests[4], "GET /repos/faictor/postel-sandbox/pulls/5 ");
     let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
@@ -472,6 +485,14 @@ async fn code_review_domain_reads_one_consistent_review_history() {
             .as_str()
             .expect("GraphQL document")
             .contains("pullRequestReview { databaseId }")
+    );
+    let (_, body) = requests[3].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("reviewRequests")
     );
 }
 
@@ -481,9 +502,11 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         include_str!("fixtures/pull_request.json"),
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
         include_str!("fixtures/pull_request_changed.json"),
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
+        include_str!("fixtures/review_requests_response.json"),
         include_str!("fixtures/pull_request_changed.json"),
     ])
     .await;
@@ -496,7 +519,7 @@ async fn code_review_domain_retries_when_the_revision_changes_during_the_read() 
         review.current_range.head_sha,
         "cccccccccccccccccccccccccccccccccccccccc"
     );
-    assert_eq!(requests.await.expect("captured requests").len(), 7);
+    assert_eq!(requests.await.expect("captured requests").len(), 9);
 }
 
 #[tokio::test]

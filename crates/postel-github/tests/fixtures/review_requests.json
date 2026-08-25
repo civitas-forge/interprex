@@ -1,0 +1,48 @@
+{
+  "repository": {
+    "pullRequest": {
+      "reviewRequests": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "id": "PRR_kwDORequestBot",
+            "asCodeOwner": false,
+            "requestedReviewer": {
+              "__typename": "Bot",
+              "id": "BOT_kwDOReviewer",
+              "login": "copilot-pull-request-reviewer"
+            }
+          },
+          {
+            "id": "PRR_kwDORequestUser",
+            "asCodeOwner": true,
+            "requestedReviewer": {
+              "__typename": "User",
+              "id": "U_kwDOReviewer",
+              "login": "alice"
+            }
+          },
+          {
+            "id": "PRR_kwDORequestTeam",
+            "asCodeOwner": false,
+            "requestedReviewer": {
+              "__typename": "Team",
+              "id": "T_kwDOMaintainers",
+              "slug": "maintainers",
+              "name": "Maintainers"
+            }
+          },
+          {
+            "id": "PRR_kwDORequestPlaceholder",
+            "asCodeOwner": false,
+            "requestedReviewer": {
+              "__typename": "Mannequin",
+              "id": "M_kwDOImported",
+              "login": "imported-reviewer"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

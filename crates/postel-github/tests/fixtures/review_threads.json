@@ -80,6 +80,34 @@
                 }
               ]
             }
+          },
+          {
+            "id": "PRRT_kwDOSCkZoc6Author",
+            "isResolved": false,
+            "path": "src/lib.rs",
+            "line": 27,
+            "originalLine": 27,
+            "comments": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": [
+                {
+                  "databaseId": 3463060000,
+                  "body": "Does this behavior need another compatibility case?",
+                  "createdAt": "2026-06-23T21:26:34Z",
+                  "updatedAt": "2026-06-23T21:26:34Z",
+                  "author": { "login": "arthur-debert", "__typename": "User" },
+                  "pullRequestReview": { "databaseId": 4557215507 }
+                },
+                {
+                  "databaseId": 3463060001,
+                  "body": "Yes, the later review covers it.",
+                  "createdAt": "2026-06-23T21:42:00Z",
+                  "updatedAt": "2026-06-23T21:42:00Z",
+                  "author": { "login": "adr-agy-review", "__typename": "Bot" },
+                  "pullRequestReview": { "databaseId": 4557243595 }
+                }
+              ]
+            }
           }
         ]
       }
