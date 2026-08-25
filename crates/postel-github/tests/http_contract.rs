@@ -9,9 +9,9 @@ use std::{collections::BTreeMap, time::Duration};
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use postel::{
-    AssetId, AssetStreamError, AssetUpload, DispatchInputs, IssueNumber, IssuesProvider,
-    JobsProvider, PullRequestNumber, PullRequestsProvider, ReleaseId, ReleasesProvider, Repository,
-    RepositoryProvider, RepositorySettings, ReviewThreadId,
+    AssetId, AssetStreamError, AssetUpload, CodeHostingProvider, CodeReviewNumber,
+    CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewThreadId,
 };
 use postel_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -224,7 +224,7 @@ fn assert_user_request(request: &str, method_and_path: &str) {
 }
 
 #[tokio::test]
-async fn repo_domain_sends_the_canonical_repository_address() {
+async fn code_hosting_domain_sends_the_canonical_repository_address() {
     let (uri, request) = server(
         "200 OK",
         "application/json",
@@ -243,7 +243,7 @@ async fn repo_domain_sends_the_canonical_repository_address() {
 }
 
 #[tokio::test]
-async fn repo_domain_maps_settings_into_the_github_request_body() {
+async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
     let (uri, request) = server(
         "200 OK",
         "application/json",
@@ -278,7 +278,7 @@ async fn repo_domain_maps_settings_into_the_github_request_body() {
 }
 
 #[tokio::test]
-async fn repo_domain_returns_rulesets_from_every_rest_page() {
+async fn code_hosting_domain_returns_rulesets_from_every_rest_page() {
     let route = "/repos/faictor/postel-sandbox/rulesets";
     let (uri, requests) = rest_pages(
         route,
@@ -349,7 +349,7 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
 }
 
 #[tokio::test]
-async fn pr_domain_requests_copilot_through_the_login_mutation() {
+async fn code_review_domain_requests_copilot_through_the_login_mutation() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
@@ -358,7 +358,7 @@ async fn pr_domain_requests_copilot_through_the_login_mutation() {
     provider(uri)
         .request_reviewers(
             &repository(),
-            PullRequestNumber::new(5).expect("number"),
+            CodeReviewNumber::new(5).expect("number"),
             &[
                 "alice".to_owned(),
                 "copilot-pull-request-reviewer[bot]".to_owned(),
@@ -392,14 +392,14 @@ async fn pr_domain_requests_copilot_through_the_login_mutation() {
 }
 
 #[tokio::test]
-async fn pr_domain_resolves_github_identity_before_marking_ready() {
+async fn code_review_domain_resolves_github_identity_before_marking_ready() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json"),
         r#"{"data":{"markPullRequestReadyForReview":{"pullRequest":{"id":"PR_kwDOExample","isDraft":false}}}}"#,
     ])
     .await;
     provider(uri)
-        .mark_ready(&repository(), PullRequestNumber::new(5).expect("number"))
+        .mark_ready(&repository(), CodeReviewNumber::new(5).expect("number"))
         .await
         .expect("mark ready");
     let requests = requests.await.expect("captured requests");
@@ -411,7 +411,7 @@ async fn pr_domain_resolves_github_identity_before_marking_ready() {
 }
 
 #[tokio::test]
-async fn pr_domain_resolves_a_scoped_review_thread_handle() {
+async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
     let (uri, request) = server(
         "200 OK",
         "application/json",
@@ -421,7 +421,7 @@ async fn pr_domain_resolves_a_scoped_review_thread_handle() {
     provider(uri)
         .resolve_thread(
             &repository(),
-            PullRequestNumber::new(5).expect("number"),
+            CodeReviewNumber::new(5).expect("number"),
             &ReviewThreadId::new("PRRT_kwDOExample").expect("thread id"),
         )
         .await
@@ -434,14 +434,14 @@ async fn pr_domain_resolves_a_scoped_review_thread_handle() {
 }
 
 #[tokio::test]
-async fn pr_domain_returns_review_threads_from_every_graphql_page() {
+async fn code_review_domain_returns_review_threads_from_every_graphql_page() {
     let (uri, requests) = json_responses(vec![
         r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-1","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}}}"#,
         r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"thread-2","isResolved":true,"path":"src/lib.rs","line":20,"comments":{"nodes":[{"body":"second","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
     ])
     .await;
     let threads = provider(uri)
-        .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
+        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
         .await
         .expect("review threads");
     assert_eq!(
@@ -455,14 +455,14 @@ async fn pr_domain_returns_review_threads_from_every_graphql_page() {
 }
 
 #[tokio::test]
-async fn pr_domain_returns_every_comment_and_preserves_empty_threads() {
+async fn code_review_domain_returns_every_comment_and_preserves_empty_threads() {
     let (uri, requests) = json_responses(vec![
         r#"{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"conversation","isResolved":false,"path":"src/lib.rs","line":10,"comments":{"nodes":[{"body":"first","author":{"login":"alice"}}],"pageInfo":{"hasNextPage":true,"endCursor":"comment-cursor-1"}}},{"id":"empty","isResolved":false,"path":"src/empty.rs","line":7,"comments":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
         r#"{"data":{"node":{"comments":{"nodes":[{"body":"reply","author":{"login":"bob"}}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"#,
     ])
     .await;
     let threads = provider(uri)
-        .review_threads(&repository(), PullRequestNumber::new(5).expect("number"))
+        .review_threads(&repository(), CodeReviewNumber::new(5).expect("number"))
         .await
         .expect("review threads");
     assert_eq!(threads.len(), 2);

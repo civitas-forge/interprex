@@ -85,7 +85,7 @@ pub struct Ruleset {
 }
 
 #[async_trait]
-pub trait RepositoryProvider: Send + Sync {
+pub trait CodeHostingProvider: Send + Sync {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts>;
     async fn settings(&self, repository: &Repository) -> Result<RepositorySettings>;
     async fn apply_settings(

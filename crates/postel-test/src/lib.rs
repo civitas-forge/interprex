@@ -2,11 +2,11 @@
 
 #![forbid(unsafe_code)]
 
+mod code_hosting;
+mod code_reviews;
 mod issues;
 mod jobs;
-mod pull_requests;
 mod releases;
-mod repository;
 mod state;
 
 pub use state::FakeProvider;

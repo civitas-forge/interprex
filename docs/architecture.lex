@@ -19,15 +19,16 @@ Architecture
 
 2. Domains and Refusals
 
-    The development platform decomposes into five domains — repo, tracker,
-    pr, jobs, releases — each stating its operations in the tools'
-    vocabulary and naming no provider. Each is defined in
+    The development platform decomposes into five domains — code hosting,
+    tracker, code review, jobs, releases — each stating its operations in the
+    tools' vocabulary and naming no provider. Each is defined in
     [./100-platform.lex].
 
     A fact two domains both name is answered by the domain that owns it,
-    never by whichever provider is nearer: check results belong to the pr
+    never by whichever provider is nearer: check results belong to the code
+    review
     domain, so a caller reads them there and a jobs provider elsewhere
-    publishes into the pr domain rather than being asked directly. One
+    publishes into the code review domain rather than being asked directly. One
     contract answers whatever runs the jobs.
 
     A provider that cannot express a fact a contract requires refuses
@@ -73,7 +74,7 @@ Architecture
         them or why. Ownership of the objects behind a domain divides among
         callers, and that division is theirs to state.
     Acts performed with the platform's own cli:
-        Opening issues and pull requests, assigning labels, merging and
+        Opening issues and Github pull requests, assigning labels, merging and
         pushing cross no contract here. Whoever performs them drives the
         platform's own cli, under rules that live with the performer, and no
         client here grows to own them.
@@ -88,11 +89,12 @@ Architecture
 5. The Tools That Link It
 
     kent:
-        Links `postel` and a selected adapter, then drives the pr domain; every
-        platform read and write in a review uses that interface.
+        Links `postel` and a selected adapter, then drives the code review
+        domain; every platform read and write in a review uses that interface.
     edward:
-        Links the repo and jobs domains for derived repo state and the ci
-        runtime, and supplies their providers at its composition root.
+        Links the code hosting and jobs domains for derived repository state
+        and the ci runtime, and supplies their providers at its composition
+        root.
     minsky, sam:
         Write their records — sessions, events, access — through the bucket
         client, under the write discipline of [./contracts/records.lex];
