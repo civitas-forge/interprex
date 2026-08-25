@@ -5,8 +5,12 @@ Glossary
     [./docs/contracts/records.lex].
 
 
+    provider:
+        An implementation of the domain interfaces for one development
+        platform, owning authentication, pagination and normalization, such
+        as `GithubProvider`. The external service itself is the platform.
     change request:
-        A proposed change published for merge as a provider pull or merge
+        A proposed change published for merge as a platform pull or merge
         request. Its source is typically a git branch; the request outlives
         that branch. `ChangeRequest` is one complete observation of a change
         request, open or closed, and its code-review data.
@@ -41,7 +45,12 @@ Glossary
         such as a GitHub user or a named app installation. It is never who a
         review is attributed to.
     unrepresentable data:
-        Provider data that an Interprex model cannot faithfully represent:
+        Platform data that an Interprex model cannot faithfully represent:
         required facts are missing or inconsistent, or the entity lies
         outside the domain's model. Interprex returns
         `ProviderError::Unrepresentable` instead of approximating.
+    invalid input:
+        A caller request that contradicts itself, such as an upload whose
+        stream does not match its declared length. Interprex returns
+        `ProviderError::InvalidInput`; correcting the request, not retrying
+        it, resolves the error.

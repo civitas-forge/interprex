@@ -51,7 +51,9 @@ Design
 
     A provider returns Interprex values or a structured error for
     unrepresentable data. It does not return vendor response types or fill a
-    required fact with an approximation.
+    required fact with an approximation. A caller request that contradicts
+    itself returns `InvalidInput` for the caller to correct; transport and
+    operation failures return `External`.
 
 3. Provider Construction
 

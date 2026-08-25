@@ -286,7 +286,7 @@ pub struct ChangeRequest {
     pub title: String,
     pub state: OpenClosed,
     pub draft: bool,
-    pub commits: CommitRange,
+    pub commit_range: CommitRange,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     /// Platform reviews. Collection order carries no policy meaning.
@@ -429,7 +429,7 @@ mod tests {
             title: "Author threads".to_owned(),
             state: OpenClosed::Open,
             draft: false,
-            commits: CommitRange {
+            commit_range: CommitRange {
                 base_sha: "base".to_owned(),
                 head_sha: "head".to_owned(),
             },

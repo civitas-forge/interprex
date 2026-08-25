@@ -48,7 +48,7 @@ async fn consumer_observes_changes_through_the_same_contract() {
                 title: "Review requests".to_owned(),
                 state: OpenClosed::Open,
                 draft: true,
-                commits: CommitRange {
+                commit_range: CommitRange {
                     base_sha: "base".to_owned(),
                     head_sha: "head".to_owned(),
                 },
@@ -171,7 +171,7 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         title: "Review threads".to_owned(),
         state: OpenClosed::Open,
         draft: false,
-        commits: range.clone(),
+        commit_range: range.clone(),
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
         reviews: vec![Review {

@@ -140,8 +140,8 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .expect("read configured change request");
 
     assert_eq!(change_request.number, number);
-    assert!(!change_request.commits.base_sha.is_empty());
-    assert!(!change_request.commits.head_sha.is_empty());
+    assert!(!change_request.commit_range.base_sha.is_empty());
+    assert!(!change_request.commit_range.head_sha.is_empty());
     assert!(!change_request.reviews.is_empty());
     assert!(!change_request.author.id.as_str().is_empty());
     assert!(change_request.reviews.iter().all(|item| {

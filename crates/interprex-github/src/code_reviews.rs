@@ -771,7 +771,7 @@ fn normalize_change_request(
             }
         },
         draft: value.draft,
-        commits: CommitRange {
+        commit_range: CommitRange {
             base_sha,
             head_sha: value.head.sha,
         },
