@@ -27,17 +27,27 @@ Glossary
     identity:
         The platform principal under which a provider performs an operation —
         a user or an app installation on github.
-    review submission:
-        One formal assessment by one reviewer of one exact head commit. It has
-        a disposition and may have a summary and any number of findings.
+    code review:
+        One proposed change and its review data: the current change, submitted
+        reviews, inline discussions, general conversation and outstanding
+        review requests. On Github this is a pull request.
+    submitted review:
+        One formal assessment by one platform actor of one exact head commit.
+        It has a disposition and may have a summary and any number of findings.
+        An optional app records how that actor submitted it.
     review thread:
         One inline conversation attached to a file location. Its initial
-        comment and ordered replies remain visible whether a reviewer or the
-        change author began it.
+        comment, ordered replies, current resolution status and whether later
+        changes made its original location outdated remain visible.
     finding:
-        A review thread begun by a formal review submission. The submission is
-        its origin; its current resolution status and replies belong to the
-        thread.
+        A review thread created as part of a submitted review. It belongs to
+        that review even as later participants reply or resolve it.
+    inline discussion:
+        A review thread that did not originate in a submitted review. A later
+        reply by a reviewer does not turn it into a finding.
+    conversation comment:
+        One general comment on the proposed change, not attached to a source
+        location and not itself a submitted review.
     reply:
         A later comment in any review thread. It does not become another
         finding or change the thread's origin.
@@ -45,15 +55,7 @@ Glossary
         One currently outstanding request for a user, bot or team to review a
         change. A deleted target remains as an unavailable target rather than
         deleting the request. It is current state, not a history of request
-        and removal events, and it is not a review submission.
-    reviewer round:
-        The one-based position of a submission among the same reviewer's
-        submissions, ordered by submission time and then opaque submission
-        identity when times match.
-    revision round:
-        The one-based position of a reviewed head commit among the distinct
-        reviewed head commits, ordered by their first submission under the
-        same submission ordering.
+        and removal events, and it is not a submitted review.
     installation:
         The grant under which an app authenticates on the platform, carrying
         its permissions and its tokens.

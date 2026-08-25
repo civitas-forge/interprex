@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use postel::{
     CheckOutcome, CodeReview, CodeReviewNumber, CodeReviewsProvider, Repository, Result,
-    ReviewRequestTarget, ReviewThreadId, ReviewThreadStatus,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
+    ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -33,11 +35,18 @@ impl CodeReviewsProvider for FakeProvider {
             .code_reviews
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
-        if let Some(thread) = code_review
-            .threads
+        let finding = code_review
+            .reviews
             .iter_mut()
-            .find(|thread| &thread.id == thread_id)
-        {
+            .flat_map(|review| review.findings.iter_mut())
+            .find(|thread| &thread.id == thread_id);
+        let thread = finding.or_else(|| {
+            code_review
+                .discussions
+                .iter_mut()
+                .find(|thread| &thread.id == thread_id)
+        });
+        if let Some(thread) = thread {
             thread.status = ReviewThreadStatus::Resolved;
             return Ok(());
         }
@@ -50,11 +59,23 @@ impl CodeReviewsProvider for FakeProvider {
         number: CodeReviewNumber,
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()> {
-        self.state
-            .write()
-            .await
-            .requested_reviewers
-            .insert((repository.clone(), number), reviewers.to_vec());
+        let mut state = self.state.write().await;
+        let code_review = state
+            .code_reviews
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("code review {number:?} in {repository}")))?;
+        for target in reviewers {
+            if code_review
+                .outstanding_requests
+                .iter()
+                .any(|request| request.target.request_target().as_ref() == Some(target))
+            {
+                continue;
+            }
+            code_review
+                .outstanding_requests
+                .push(fake_review_request(target));
+        }
         Ok(())
     }
 
@@ -80,5 +101,53 @@ impl CodeReviewsProvider for FakeProvider {
             outcome.clone(),
         ));
         Ok(())
+    }
+}
+
+fn fake_review_request(target: &ReviewRequestTarget) -> ReviewRequest {
+    let (identity, target) = match target {
+        ReviewRequestTarget::User(login) => (
+            format!("user:{login}"),
+            ReviewTarget::Actor(ReviewActor {
+                id: ReviewActorId::new(format!("fake-user:{login}"))
+                    .expect("fake user identity is nonempty"),
+                login: login.clone(),
+                kind: ReviewActorKind::User,
+            }),
+        ),
+        ReviewRequestTarget::Bot(login) => (
+            format!("bot:{login}"),
+            ReviewTarget::Actor(ReviewActor {
+                id: ReviewActorId::new(format!("fake-bot:{login}"))
+                    .expect("fake bot identity is nonempty"),
+                login: login.clone(),
+                kind: ReviewActorKind::Bot,
+            }),
+        ),
+        ReviewRequestTarget::Team(identifier) => {
+            let slug = identifier
+                .rsplit('/')
+                .next()
+                .unwrap_or(identifier)
+                .to_owned();
+            (
+                format!("team:{identifier}"),
+                ReviewTarget::Team(ReviewTeam {
+                    id: ReviewTeamId::new(format!("fake-team:{identifier}"))
+                        .expect("fake team identity is nonempty"),
+                    slug: slug.clone(),
+                    name: slug,
+                    kind: ReviewTeamKind::Organization {
+                        request_identifier: identifier.clone(),
+                    },
+                }),
+            )
+        }
+    };
+    ReviewRequest {
+        id: ReviewRequestId::new(format!("fake-request:{identity}"))
+            .expect("fake request identity is nonempty"),
+        target,
+        as_code_owner: false,
     }
 }

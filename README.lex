@@ -22,9 +22,9 @@ Postel
     tracker — issue tracking:
         Tracking issues, bugs and feature requests.
     code review:
-        Proposed changes, formal review submissions by users and apps, the
-        revisions they reviewed, all inline conversations and their replies,
-        findings, outstanding review requests, and review state.
+        Proposed changes, submitted reviews by users and apps, the revisions
+        they reviewed, findings, inline discussions, general conversation,
+        outstanding review requests, and review state.
     jobs — ci:
         Integrating with ci pipelines: triggering jobs and managing job
         status.

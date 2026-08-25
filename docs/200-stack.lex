@@ -34,10 +34,14 @@ Implementation Stack
     authentication. For repository settings, rulesets and branch protection, the
     Github domain modules call Octocrab's raw REST methods. They use its GraphQL
     method for review threads, outstanding review requests and thread
-    resolution, marking a draft ready, and reviewer requests by login. `gh` is
-    a developer convenience, never a runtime dependency.
+    resolution, marking a draft ready, and reviewer requests by login. General
+    code review conversation comes from REST issue comments. `gh` is a
+    developer convenience, never a runtime dependency.
 
-    Copilot reviews are requested by bot login through the request mutation — the one path that also re-requests after a push. The copilot auto-review ruleset rule stays off in derived repository state: platform-side automation would land reviews outside the round count.
+    Copilot reviews are requested by bot login through the request mutation.
+    The copilot auto-review ruleset rule stays off in derived repository state:
+    platform-side automation would submit reviews outside the caller's review
+    policy.
 
     The reviewer-request mutation is verified without a sandbox write. The
     live suite is read-only ([./verify.lex]), so the loopback transport test

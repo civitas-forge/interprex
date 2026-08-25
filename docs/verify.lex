@@ -58,32 +58,33 @@ Verify
       `FakeProvider`: no network, no third-party account, nothing left behind in
       a real repository ([./interface.lex]).
     - `FakeProvider` implements all five interfaces and records observable
-      domain outcomes rather than expectations about consumer implementation.
+      domain outcomes rather than expectations about consumer implementation;
+      resolving a thread and requesting reviewers change the next code review
+      observation.
     - Provider tests construct equivalent clients from project and direct
       configuration.
     - Github provider tests prove user operations use `GH_TOKEN`, app-only
       operations use the named app installation, and neither can substitute
       for the other.
     - Captured Github responses exercise normalization without network access;
-      the code review fixture includes several bots, repeated submissions on
-      one revision, later revisions, reviewer and author-started threads,
-      file and multiline diff anchors, findings, replies, resolved and outdated
-      locations, submissions without findings, distinct unavailable reviewers,
-      and outstanding user, bot, placeholder, unavailable, organization-team
-      and enterprise-team requests. Unknown vendor fields do not enter the
-      model.
+      the code review fixture includes several bots, repeated submitted reviews
+      on one revision, later revisions, findings and independent discussions,
+      file and multiline locations, replies, resolved and outdated locations,
+      reviews without findings, general conversation, distinct unavailable
+      reviewers, and outstanding user, bot, placeholder, unavailable,
+      organization-team and enterprise-team requests. Unknown vendor fields do
+      not enter the model.
     - Local transport tests run the real Octocrab adapter against a loopback
       server and assert the method, path, authentication and Postel-owned body
       for every domain.
-    - Code review transport tests prove that pull request facts, formal
-      submissions, review threads and outstanding review requests become one
-      result, and that the adapter retries when the revision or a child
-      collection changes while it is assembling that result.
+    - Code review transport tests prove that proposed-change facts, submitted
+      reviews, review threads, general conversation and outstanding requests
+      become one complete observation through the public interface.
     - Ignored, read-only live tests read repository facts and labels from
       `faictor/postel-sandbox`, and can read a configured code review to check
-      its submissions, threads and outstanding requests against current
-      provider data. The sandbox test assumes no issue, code review, label or
-      branch state.
+      its submitted reviews, findings, discussions, conversation and
+      outstanding requests against current provider data. The sandbox test
+      assumes no issue, code review, label or branch state.
     - The live workflow runs manually or for an explicitly named
       `codex/live-e2e-*` branch, shares one concurrency group across branches
       without cancellation, runs one test thread, and delays calls under a

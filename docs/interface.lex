@@ -33,13 +33,12 @@ Interface
         tracker:
             Read one issue, list labels and upsert one label.
         code review:
-            Read one coherent code review result containing every formal
-            submission, its reviewed revision, every inline thread and each
-            outstanding review request; identify which threads are findings
-            from each submission; derive the commit range between a reviewer's
-            submissions; resolve a review thread; request users and bots by
-            login or teams by canonical provider identifier; mark a draft ready
-            and publish an app-owned check outcome.
+            Read one complete observation containing the proposed change,
+            every submitted review and its findings, independent inline
+            discussions, general conversation and each outstanding review
+            request; resolve a review thread; request users and bots by login or
+            teams by canonical provider identifier; mark a draft ready and
+            publish an app-owned check outcome.
         jobs:
             Dispatch a workflow with inputs, read one run and cancel one run.
         releases:

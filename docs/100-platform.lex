@@ -20,9 +20,9 @@ The Development Platform
     tracker:
         Issues and the label taxonomy.
     code review:
-        A proposed change: its facts, reviewed revisions, formal review
-        submissions, all inline conversations, findings and replies,
-        outstanding review requests, check results and draft-ready transition.
+        A proposed change: its facts, reviewed revisions, submitted reviews,
+        findings, inline discussions, general conversation, outstanding review
+        requests, check results and draft-ready transition.
     jobs:
         The ci runtime: the generated thin callers, dispatch, runs, runners, caches, and a run's own transport containers — each a named archive of any number of files, carrying its own expiry, holding whatever one job hands the next.
     releases:
@@ -41,74 +41,63 @@ The Development Platform
     an issues api; code review, not pull request. A provider that cannot
     express a required fact refuses ([./architecture.lex]).
 
-2. Code Review History
+2. Code Review Model
 
-    Reading a code review returns one result containing its current change
-    range, formal review submissions, inline threads and currently outstanding
-    review requests. A submission records one reviewer, an optional provider
-    app, the exact reviewed head commit, its disposition, submission time and
-    summary. The current code review result separately carries its base and
-    head commits. Github does not retain the historical base commit on a review
-    submission, so Postel does not fill it with the current base and present an
-    invented historical range.
+    Reading a code review returns one complete observation of the proposed
+    change, its submitted reviews and findings, independent inline discussions,
+    general conversation and currently outstanding review requests. The
+    provider completely paginates each declared collection and refuses a fact
+    it cannot normalize rather than silently deleting it. Platforms need not
+    supply a transaction across independently changing collections, so the
+    result does not claim that every value was captured at one instant.
 
-    The provider reads the mutable submission, thread and request collections
-    twice and returns only when both reads match while the enclosing code review
-    facts remain unchanged. If they continue changing across both attempts, the
-    operation fails instead of combining facts from different moments.
+    The proposed change carries its current base and head commits. Each
+    submitted review records one platform actor, an optional provider app, the
+    exact reviewed head commit, its disposition, submission time and optional
+    summary. Github does not retain the historical base commit for a submitted
+    review, so Postel does not pair its reviewed head with the current base and
+    present an invented historical range.
 
-    Submissions are never combined. Two reviewers on one revision are two
-    submissions, and one reviewer submitting twice on that revision is also two
-    submissions. A submission with no findings remains in the history because
-    the reviewer still reviewed that revision. The reviewer set is derived from
-    those submissions; a requested reviewer has not reviewed until a submission
-    exists. Outstanding requests name users, bots and teams and say whether
-    Github requested them as code owners. A request remains visible with an
-    unavailable target when the platform no longer returns that identity.
-    Organization and enterprise teams remain distinct. Outstanding requests
-    describe current state rather than request and removal history. A check
-    result is not a reviewer.
+    Submitted reviews are never combined. Two actors reviewing one revision are
+    two reviews, and one actor submitting twice on that revision is also two
+    reviews. A review with no findings remains present. A requested identity has
+    not reviewed until a submitted review exists. Actors carry opaque provider
+    identities and display logins; an optional app says how the actor submitted
+    the review. When the platform no longer returns an actor, Postel preserves a
+    distinct unavailable identity rather than combining unrelated deleted
+    actors.
 
-    Actors carry opaque provider identities as well as display logins. The
-    identity, not the mutable login, determines whether two submissions belong
-    to the same reviewer. When a platform no longer returns a reviewer's
-    identity, Postel assigns a distinct unavailable identity to that submission
-    rather than combining unrelated deleted reviewers into one history. If the
-    missing identity also prevents Postel from recognizing the change author,
-    the submission is retained rather than silently discarded.
+    A finding is structurally part of the submitted review that created it. It
+    is an inline thread with a stable file or line-range location, an open or
+    resolved status, an initial comment and ordered replies. The line range is
+    the location at which the conversation began; the thread's outdated flag
+    says later changes no longer map that location onto the current revision.
+    Replies do not create a
+    new submitted review or move the finding to another review.
 
-    Every inline thread remains in the result. Its location distinguishes a
-    file anchor from a diff range. A diff range always carries a nonzero
-    original end line and may carry an original start line. It carries a
-    current nonzero range when the anchor still maps, plus its diff side and
-    whether newer changes made the anchor outdated. The thread also carries an open or resolved status, its
-    initial comment and ordered replies. A thread begun by a retained reviewer
-    submission is a finding from that submission. A thread begun by the change
-    author remains visible without being classified as a finding. Reviewer
-    replies in that author-started thread remain replies; they do not turn it
-    into a reviewer submission. Likewise, a reply by the change author does not
-    make the author a reviewer or move a finding to a later submission.
-    A provider response that names a thread but supplies no initial comment is
-    incomplete, so the read refuses instead of silently deleting that thread.
+    An inline thread that did not originate in a submitted review remains as an
+    independent discussion. This includes a thread begun by the change author
+    and a visible thread from a review that has not been submitted. A reviewer
+    replying there does not turn the discussion into a finding. A provider
+    response that names a thread but supplies no initial comment is incomplete,
+    so the read refuses instead of silently deleting that thread. General
+    conversation comments remain separate because they have no source location
+    and are not submitted reviews.
 
-    Requesting a reviewer uses a narrower input than reading an outstanding
-    request. A caller supplies a user or bot login, or a team's canonical
-    provider identifier. Read results also carry actor and team identities,
-    display names, team kind, a request identifier where that team can be
-    addressed by name, code-owner status and unavailable targets; those
-    observed facts are not required to make a new request.
+    Outstanding requests name users, bots and teams and say whether Github
+    requested them as code owners. A request remains visible with an unavailable
+    target when the platform no longer returns that identity. Organization and
+    enterprise teams remain distinct. An observed user, bot or organization
+    team supplies a request target that a caller can use again; an unavailable
+    identity, placeholder or enterprise team does not. Requests describe current
+    state rather than request and removal history. A check result is not a
+    reviewer.
 
-    Rounds are derived rather than stored and do not depend on vector storage
-    order. All submissions against the same head commit share a revision round.
-    A reviewer's submissions, ordered by submission time and then opaque
-    submission identity when times match, form that reviewer's rounds. For
-    every round after that
-    reviewer's first, Postel derives the new-code range from the prior reviewed
-    head to the new reviewed head. A pushed revision therefore starts a new
-    revision round when it receives a submission, while a second submission
-    against an unchanged head remains in the existing revision round. Commit
-    identifiers name range endpoints; they do not assert that one endpoint
-    remains an ancestor after a force push.
+    Postel does not assign rounds, select a previous review, decide that a
+    reviewer is stale, classify finding severity or recommend a next action.
+    Those answers depend on caller configuration and policy. A caller that
+    selects a prior reviewed head may form a commit range from it to another
+    head. The endpoints do not assert ancestry after a force push.
 
 3. What The Contracts Do Not Cover
 
