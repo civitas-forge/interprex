@@ -288,8 +288,13 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
     let record = finding.resolution.as_ref().expect("resolution record");
     assert_eq!(record.resolution, resolution);
-    assert_eq!(record.source_reply.author.login, "author");
-    assert_eq!(record.source_reply, *finding.replies.last().expect("reply"));
+    assert_eq!(
+        record.source_reply_id,
+        finding.replies.last().expect("reply").id
+    );
+    let resolution_reply = finding.resolution_reply().expect("linked resolution reply");
+    assert_eq!(resolution_reply.author.login, "fake-provider");
+    assert!(resolution_reply.created_at > change_request.updated_at);
     assert_eq!(
         finding.replies.last().map(|comment| comment.body.as_str()),
         Some("Addressed by validating the range before indexing.")

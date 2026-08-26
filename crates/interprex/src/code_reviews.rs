@@ -242,12 +242,12 @@ pub struct FindingResolution {
 
 /// One observed finding resolution and the reply that recorded it.
 ///
-/// The source reply preserves the addressing actor, explanation and platform
-/// timestamps without requiring callers to parse provider-specific metadata.
+/// The source reply identifier links to the addressing actor, explanation and
+/// platform timestamps in the containing thread's replies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FindingResolutionRecord {
     pub resolution: FindingResolution,
-    pub source_reply: ReviewComment,
+    pub source_reply_id: ReviewCommentId,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -311,6 +311,15 @@ pub struct ReviewThread {
     pub resolution: Option<FindingResolutionRecord>,
     pub comment: ReviewComment,
     pub replies: Vec<ReviewComment>,
+}
+
+impl ReviewThread {
+    /// Returns the reply that records this finding's resolution.
+    #[must_use]
+    pub fn resolution_reply(&self) -> Option<&ReviewComment> {
+        let reply_id = &self.resolution.as_ref()?.source_reply_id;
+        self.replies.iter().find(|reply| &reply.id == reply_id)
+    }
 }
 
 /// One platform review, including drafts and reviews by the change author.

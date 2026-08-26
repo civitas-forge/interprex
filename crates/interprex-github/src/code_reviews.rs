@@ -198,20 +198,60 @@ fn github_resolution_reply(resolution: FindingResolution, reply: &str) -> String
         .join("\n\n")
 }
 
-fn finding_resolution(body: &str) -> Option<FindingResolution> {
-    body.match_indices(FINDING_RESOLUTION_META_START)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .find_map(|(marker_start, _)| {
-            let start = marker_start + FINDING_RESOLUTION_META_START.len();
-            let metadata = body[start..].split_once(FINDING_RESOLUTION_META_END)?.0;
-            let metadata: GithubFindingResolution = serde_json::from_str(metadata).ok()?;
-            (metadata.version == FINDING_RESOLUTION_META_VERSION).then_some(FindingResolution {
-                reason: metadata.resolution_reason,
-                addressing_severity: metadata.addressing_severity,
-            })
-        })
+#[derive(Debug, Eq, PartialEq)]
+enum ParsedFindingResolution {
+    Absent,
+    Supported(FindingResolution),
+    UnsupportedVersion(u64),
+}
+
+fn finding_resolution(body: &str) -> ParsedFindingResolution {
+    let body = body.trim_end();
+    let Some(marker_start) = body.rfind(FINDING_RESOLUTION_META_START) else {
+        return ParsedFindingResolution::Absent;
+    };
+    if !body.ends_with(FINDING_RESOLUTION_META_END) {
+        return ParsedFindingResolution::Absent;
+    }
+    let metadata_start = marker_start + FINDING_RESOLUTION_META_START.len();
+    let metadata_end = body.len() - FINDING_RESOLUTION_META_END.len();
+    let Some(metadata) = body.get(metadata_start..metadata_end) else {
+        return ParsedFindingResolution::Absent;
+    };
+    let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata) else {
+        return ParsedFindingResolution::Absent;
+    };
+    let Some(version) = metadata.get("version").and_then(serde_json::Value::as_u64) else {
+        return ParsedFindingResolution::Absent;
+    };
+    if version != u64::from(FINDING_RESOLUTION_META_VERSION) {
+        return ParsedFindingResolution::UnsupportedVersion(version);
+    }
+    let Ok(metadata) = serde_json::from_value::<GithubFindingResolution>(metadata) else {
+        return ParsedFindingResolution::Absent;
+    };
+    ParsedFindingResolution::Supported(FindingResolution {
+        reason: metadata.resolution_reason,
+        addressing_severity: metadata.addressing_severity,
+    })
+}
+
+fn latest_finding_resolution(
+    replies: &[ReviewComment],
+) -> std::result::Result<Option<FindingResolutionRecord>, u64> {
+    for comment in replies.iter().rev() {
+        match finding_resolution(&comment.body) {
+            ParsedFindingResolution::Absent => {}
+            ParsedFindingResolution::Supported(resolution) => {
+                return Ok(Some(FindingResolutionRecord {
+                    resolution,
+                    source_reply_id: comment.id.clone(),
+                }));
+            }
+            ParsedFindingResolution::UnsupportedVersion(version) => return Err(version),
+        }
+    }
+    Ok(None)
 }
 
 const MARK_READY: &str = r#"
@@ -367,7 +407,7 @@ struct CommentConnection {
     page_info: PageInfo,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct CommentNode {
     id: String,
     body: String,
@@ -380,7 +420,7 @@ struct CommentNode {
     pull_request_review: Option<CommentReview>,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct GraphqlActor {
     id: String,
     login: String,
@@ -388,7 +428,7 @@ struct GraphqlActor {
     kind: String,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct CommentReview {
     id: String,
 }
@@ -828,19 +868,7 @@ fn normalize_change_request(
             .collect::<Result<Vec<_>>>()?;
         let resolution = review_position
             .is_some()
-            .then(|| {
-                replies
-                    .iter()
-                    .filter_map(|comment| {
-                        finding_resolution(&comment.body).map(|resolution| {
-                            FindingResolutionRecord {
-                                resolution,
-                                source_reply: comment.clone(),
-                            }
-                        })
-                    })
-                    .next_back()
-            })
+            .then(|| latest_finding_resolution(&replies).unwrap_or(None))
             .flatten();
         let normalized = ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
@@ -1170,6 +1198,15 @@ impl CodeReviewsProvider for GithubProvider {
             .ok_or_else(|| ProviderError::NotFound {
                 entity: format!("finding thread {}", thread_id.as_str()),
             })?;
+        if let Err(version) = latest_finding_resolution(&finding.replies) {
+            return Err(ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!(
+                    "finding thread {} contains unsupported resolution metadata version {version}",
+                    thread_id.as_str()
+                ),
+            });
+        }
         if finding
             .resolution
             .as_ref()
@@ -1303,8 +1340,9 @@ mod tests {
     use crate::GithubProvider;
 
     use super::{
-        GithubPullRequest, GithubReview, GithubUnanchoredComment, ReviewRequestsData, ThreadsData,
-        finding_resolution, github_resolution_reply, normalize_change_request,
+        GithubPullRequest, GithubReview, GithubUnanchoredComment, ParsedFindingResolution,
+        ReviewRequestsData, ThreadsData, finding_resolution, github_resolution_reply,
+        latest_finding_resolution, normalize_change_request,
     };
 
     #[test]
@@ -1325,21 +1363,24 @@ mod tests {
             assert!(body.contains("**Addressing severity:** Minor"));
             assert!(body.contains("https://img.shields.io/badge/severity-minor-fbca04"));
             assert!(body.contains("<!-- interprex:finding-resolution"));
-            assert_eq!(finding_resolution(&body), Some(expected));
+            assert_eq!(
+                finding_resolution(&body),
+                ParsedFindingResolution::Supported(expected)
+            );
         }
     }
 
     #[test]
-    fn malformed_or_unknown_resolution_metadata_is_regular_reply_text() {
+    fn parser_distinguishes_malformed_and_unsupported_resolution_metadata() {
         assert_eq!(
             finding_resolution(
                 "<!-- interprex:finding-resolution\n{\"version\":2,\"resolution_reason\":\"ADDRESSED\",\"addressing_severity\":\"major\"}\n-->"
             ),
-            None
+            ParsedFindingResolution::UnsupportedVersion(2)
         );
         assert_eq!(
             finding_resolution("<!-- interprex:finding-resolution\nnot json\n-->"),
-            None
+            ParsedFindingResolution::Absent
         );
 
         let valid = github_resolution_reply(
@@ -1350,12 +1391,10 @@ mod tests {
             "Valid record before malformed trailing metadata.",
         );
         let body = format!("{valid}\n\n<!-- interprex:finding-resolution\nnot json\n-->");
+        assert_eq!(finding_resolution(&body), ParsedFindingResolution::Absent);
         assert_eq!(
-            finding_resolution(&body),
-            Some(FindingResolution {
-                reason: FindingResolutionReason::Invalid,
-                addressing_severity: FindingSeverity::Nit,
-            })
+            finding_resolution(&format!("{valid}\n\nordinary trailing text")),
+            ParsedFindingResolution::Absent
         );
     }
 
@@ -1425,8 +1464,15 @@ mod tests {
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
         let record = finding.resolution.as_ref().expect("resolution record");
         assert_eq!(record.resolution, expected_resolution);
-        assert_eq!(record.source_reply, finding.replies[0]);
-        assert_eq!(record.source_reply.author.login, "arthur-debert");
+        assert_eq!(record.source_reply_id, finding.replies[0].id);
+        assert_eq!(
+            finding
+                .resolution_reply()
+                .expect("linked resolution reply")
+                .author
+                .login,
+            "arthur-debert"
+        );
         assert_eq!(
             change_request.reviews[0]
                 .via_app
@@ -1533,6 +1579,49 @@ mod tests {
         );
         assert_eq!(change_request.unanchored_comments.len(), 1);
         assert!(change_request.unanchored_comments[0].updated_at.is_some());
+    }
+
+    #[test]
+    fn unsupported_newer_resolution_does_not_resurrect_an_older_record() {
+        let pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        let reviews: Vec<GithubReview> =
+            serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
+                .expect("review fixture");
+        let mut threads: ThreadsData =
+            serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        let resolution = FindingResolution {
+            reason: FindingResolutionReason::Addressed,
+            addressing_severity: FindingSeverity::Major,
+        };
+        let comments = &mut threads.repository.pull_request.review_threads.nodes[0]
+            .comments
+            .nodes;
+        comments[1].body = github_resolution_reply(resolution, "Version one resolution.");
+        let mut future = comments[1].clone();
+        future.id = "PRRC_future_resolution".to_owned();
+        future.body = github_resolution_reply(resolution, "Future resolution.")
+            .replace("\"version\":1", "\"version\":2")
+            .replace(
+                "\"resolution_reason\":\"ADDRESSED\"",
+                "\"resolution_reason\":\"SUPERSEDED\"",
+            );
+        comments.push(future);
+
+        let change_request = normalize_change_request(
+            pull_request,
+            reviews,
+            threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("unsupported future resolution metadata remains observable as replies");
+
+        let finding = &change_request.reviews[0].findings[0];
+        assert_eq!(finding.resolution, None);
+        assert_eq!(latest_finding_resolution(&finding.replies), Err(2));
     }
 
     #[test]

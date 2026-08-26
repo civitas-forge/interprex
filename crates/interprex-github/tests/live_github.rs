@@ -303,8 +303,9 @@ async fn configured_finding_resolution_round_trips_through_the_real_provider() {
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
     let record = finding.resolution.as_ref().expect("resolution record");
     assert_eq!(record.resolution, expected);
-    assert!(!record.source_reply.author.login.is_empty());
-    assert!(finding.replies.contains(&record.source_reply));
+    let source_reply = finding.resolution_reply().expect("linked resolution reply");
+    assert!(!source_reply.author.login.is_empty());
+    assert_eq!(source_reply.id, record.source_reply_id);
     assert!(finding.replies.iter().any(|reply| {
         reply
             .body

@@ -132,7 +132,7 @@ Design
     review comment was addressed, `INVALID` means the comment is invalid and
     `WONT_FIX` means it will not be addressed. `FindingResolution` contains that
     reason and the addressing user's severity assessment.
-    `FindingResolutionRecord` also retains the reply that identifies the actor,
+    `FindingResolutionRecord` links to the reply that identifies the actor,
     explanation and timestamps. It does not replace `ReviewThreadStatus`: a
     manually resolved or legacy thread can have no finding resolution, and an
     interrupted provider operation can record a finding resolution before the
@@ -154,8 +154,10 @@ Design
     and a severity badge for people reading the thread. The badge is redundant
     presentation: the adapter never fetches or interprets its image URL. GitHub
     currently has no generally applicable field that both accepts and returns a
-    finding resolution. The adapter reads raw reply bodies, ignores malformed or
-    unknown metadata versions and uses the latest valid record.
+    finding resolution. The adapter reads a terminal metadata envelope from raw
+    reply bodies. Malformed envelopes are ordinary text. An unsupported newer
+    version stops fallback to an older record, and the current adapter refuses
+    to write over that newer format.
 
     Outstanding review requests preserve their actor or team target, the
     provider address that can request that target again when available, and

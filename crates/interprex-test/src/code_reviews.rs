@@ -66,8 +66,7 @@ impl CodeReviewsProvider for FakeProvider {
             .change_requests
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
-        let author = change_request.author.clone();
-        let written_at = change_request.updated_at;
+        let observed_at = change_request.updated_at;
         let finding = change_request
             .reviews
             .iter_mut()
@@ -82,6 +81,20 @@ impl CodeReviewsProvider for FakeProvider {
             finding.status = ReviewThreadStatus::Resolved;
             return Ok(());
         }
+        let author = ReviewActor {
+            id: ReviewActorId::new("fake-provider:authenticated-actor")
+                .expect("fake actor identity is nonempty"),
+            login: "fake-provider".to_owned(),
+            kind: ReviewActorKind::User,
+        };
+        let written_at = finding
+            .replies
+            .iter()
+            .map(|comment| comment.updated_at.unwrap_or(comment.created_at))
+            .chain([observed_at])
+            .max()
+            .expect("the observed change supplies one timestamp")
+            + std::time::Duration::from_micros(1);
         let reply_number = finding
             .replies
             .iter()
@@ -100,10 +113,11 @@ impl CodeReviewsProvider for FakeProvider {
             created_at: written_at,
             updated_at: None,
         };
-        finding.replies.push(source_reply.clone());
+        let source_reply_id = source_reply.id.clone();
+        finding.replies.push(source_reply);
         finding.resolution = Some(FindingResolutionRecord {
             resolution,
-            source_reply,
+            source_reply_id,
         });
         finding.status = ReviewThreadStatus::Resolved;
         Ok(())
