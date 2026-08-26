@@ -13,7 +13,8 @@ Glossary
         A proposed change published for merge as a platform pull or merge
         request. Its source is typically a git branch; the request outlives
         that branch. `ChangeRequest` is one complete observation of a change
-        request, open or closed, and its code-review data.
+        request and its code-review data. Its state is open, closed without
+        merging, or merged with the time the platform recorded.
     code review:
         The domain that acts on change requests so merging can be approved.
         It covers reviews, findings, standalone threads, unanchored

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelError, OpenClosed, Repository, Result};
+use crate::{ModelError, Repository, Result};
 
 platform_number!(ChangeRequestNumber);
 platform_number!(ReviewLine);
@@ -416,6 +416,20 @@ pub struct Review {
     pub findings: Vec<ReviewFinding>,
 }
 
+/// Whether a change request is open, closed without merging, or merged.
+///
+/// Platforms report merging separately from closing, so `Closed` states that
+/// the change did not land and `Merged` carries the merge time the platform
+/// recorded. A state Interprex does not model, such as a locked merge request,
+/// is unrepresentable rather than reported as the nearest variant.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeRequestState {
+    Open,
+    Closed,
+    Merged { merged_at: DateTime<Utc> },
+}
+
 /// One complete observation of a change request and its code-review data.
 ///
 /// The provider completely paginates every declared collection and never
@@ -425,7 +439,7 @@ pub struct Review {
 pub struct ChangeRequest {
     pub number: ChangeRequestNumber,
     pub title: String,
-    pub state: OpenClosed,
+    pub state: ChangeRequestState,
     pub draft: bool,
     pub commit_range: CommitRange,
     pub author: ReviewActor,
@@ -588,7 +602,7 @@ mod tests {
         let change_request = ChangeRequest {
             number: ChangeRequestNumber::new(1).expect("number"),
             title: "Author threads".to_owned(),
-            state: OpenClosed::Open,
+            state: ChangeRequestState::Open,
             draft: false,
             commit_range: CommitRange {
                 base_sha: "base".to_owned(),
@@ -611,6 +625,29 @@ mod tests {
 
         assert_eq!(change_request.reviews[0].findings.len(), 1);
         assert_eq!(change_request.standalone_threads.len(), 1);
+    }
+
+    #[test]
+    fn only_merged_change_requests_carry_a_merge_time() {
+        let merged_at = Utc.timestamp_opt(3, 0).single().expect("timestamp");
+
+        assert_eq!(
+            serde_json::to_value(ChangeRequestState::Open).expect("serializes open state"),
+            serde_json::json!("open")
+        );
+        assert_eq!(
+            serde_json::to_value(ChangeRequestState::Closed).expect("serializes closed state"),
+            serde_json::json!("closed")
+        );
+        assert_eq!(
+            serde_json::to_value(ChangeRequestState::Merged { merged_at })
+                .expect("serializes merged state"),
+            serde_json::json!({ "merged": { "merged_at": "1970-01-01T00:00:03Z" } })
+        );
+        assert_ne!(
+            ChangeRequestState::Closed,
+            ChangeRequestState::Merged { merged_at }
+        );
     }
 
     #[test]

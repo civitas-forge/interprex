@@ -3,6 +3,8 @@
   "node_id": "PR_kwDOExample",
   "title": "Exercise review provider",
   "state": "open",
+  "merged": false,
+  "merged_at": null,
   "draft": true,
   "head": { "sha": "cccccccccccccccccccccccccccccccccccccccc" },
   "base": { "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
