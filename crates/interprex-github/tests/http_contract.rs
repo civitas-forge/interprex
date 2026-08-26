@@ -9,11 +9,11 @@ use std::{collections::BTreeMap, time::Duration};
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, ChangeRequestState,
-    CodeHostingProvider, CodeReviewsProvider, DispatchInputs, FindingResolution,
-    FindingResolutionReason, FindingResolutionReply, FindingSeverity, IssueNumber, IssuesProvider,
-    JobsProvider, ReleaseId, ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget,
-    ReviewThreadId,
+    AssetId, AssetStreamError, AssetUpload, ChangeRequestHead, ChangeRequestNumber,
+    ChangeRequestState, CodeHostingProvider, CodeReviewsProvider, DispatchInputs,
+    FindingResolution, FindingResolutionReason, FindingResolutionReply, FindingSeverity,
+    IssueNumber, IssuesProvider, JobsProvider, ReleaseId, ReleasesProvider, Repository,
+    RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -67,6 +67,17 @@ async fn rest_pages(
     route: &'static str,
     bodies: Vec<&'static str>,
 ) -> (String, oneshot::Receiver<Vec<String>>) {
+    rest_filtered_pages(route, "", bodies).await
+}
+
+/// Serves paginated REST responses whose next link repeats `filters`, the way
+/// GitHub carries a query's filters onto its later pages. `filters` is either
+/// empty or a query fragment ending in `&`.
+async fn rest_filtered_pages(
+    route: &'static str,
+    filters: &'static str,
+    bodies: Vec<&'static str>,
+) -> (String, oneshot::Receiver<Vec<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test server");
@@ -94,7 +105,7 @@ async fn rest_pages(
             requests.push(String::from_utf8(request).expect("request is UTF-8"));
             let link = if index + 1 < page_count {
                 format!(
-                    "link: <{next_base}{route}?per_page=100&page={}>; rel=\"next\"\r\n",
+                    "link: <{next_base}{route}?{filters}per_page=100&page={}>; rel=\"next\"\r\n",
                     index + 2
                 )
             } else {
@@ -353,6 +364,45 @@ async fn tracker_domain_returns_labels_from_every_rest_page() {
         requests.await.expect("captured requests")[1]
             .starts_with("GET /repos/civitas-forge/interprex-sandbox/labels?per_page=100&page=2 ")
     );
+}
+
+#[tokio::test]
+async fn code_review_domain_lists_open_change_requests_for_a_fork_head_across_pages() {
+    let route = "/repos/civitas-forge/interprex-sandbox/pulls";
+    let (uri, requests) = rest_filtered_pages(
+        route,
+        "head=contributor%3Afeature&state=open&",
+        vec![
+            r#"[{"number":5,"head":{"ref":"feature","sha":"aaa","repo":{"full_name":"contributor/interprex-sandbox"}}},
+                 {"number":6,"head":{"ref":"feature","sha":"bbb","repo":{"full_name":"contributor/another-sandbox"}}}]"#,
+            r#"[{"number":9,"head":{"ref":"feature","sha":"ccc","repo":{"full_name":"contributor/interprex-sandbox"}}}]"#,
+        ],
+    )
+    .await;
+    let fork = Repository::new("contributor", "interprex-sandbox").expect("repository");
+    let numbers = provider(uri)
+        .open_change_requests(
+            &repository(),
+            &ChangeRequestHead::new(fork, "refs/heads/feature").expect("head"),
+        )
+        .await
+        .expect("open change requests");
+    assert_eq!(
+        numbers
+            .iter()
+            .map(|number| number.get())
+            .collect::<Vec<_>>(),
+        [5, 9],
+        "6 proposes the same owner's branch in another repository, which is another head"
+    );
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(
+        &requests[0],
+        "GET /repos/civitas-forge/interprex-sandbox/pulls?head=contributor%3Afeature&state=open&per_page=100 ",
+    );
+    assert!(requests[1].starts_with(
+        "GET /repos/civitas-forge/interprex-sandbox/pulls?head=contributor%3Afeature&state=open&per_page=100&page=2 "
+    ));
 }
 
 #[tokio::test]

@@ -6,8 +6,20 @@
   "merged": false,
   "merged_at": null,
   "draft": true,
-  "head": { "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-  "base": { "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+  "head": {
+    "ref": "feature",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repo": {
+      "full_name": "contributor/interprex-sandbox"
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "repo": {
+      "full_name": "civitas-forge/interprex-sandbox"
+    }
+  },
   "user": {
     "node_id": "U_kwDOArthur",
     "login": "arthur-debert",

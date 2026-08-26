@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckOutcome,
-    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion,
+    CheckOutcome, CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
     FindingResolutionRecord, FindingResolutionReply, FindingSeverity, ProviderError, Repository,
     Result, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp,
     ReviewAppId, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
@@ -341,7 +341,28 @@ struct GithubPullRequest {
 
 #[derive(Deserialize)]
 struct GitRef {
+    /// The branch name, which GitHub returns unqualified.
+    #[serde(rename = "ref")]
+    branch: String,
     sha: String,
+    /// The repository holding the branch, absent once GitHub stops
+    /// identifying it, as for a change request whose fork was deleted.
+    repo: Option<GithubRepositoryRef>,
+}
+
+#[derive(Deserialize)]
+struct GithubRepositoryRef {
+    full_name: String,
+}
+
+/// What a head listing reads from each pull request.
+///
+/// GitHub's `head` filter addresses an owner and a branch, so the repository
+/// name comes back on each result and is compared here rather than assumed.
+#[derive(Deserialize)]
+struct GithubPullRequestNumber {
+    number: u64,
+    head: GitRef,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -971,6 +992,8 @@ fn normalize_change_request(
         None => ghost_actor(format!("unavailable-change-author:{}", value.node_id))?,
     };
     let base_sha = value.base.sha;
+    let base_branch = value.base.branch;
+    let head = observed_head(&value.head)?;
     let mut review_positions = BTreeMap::new();
     let mut normalized_reviews = Vec::new();
 
@@ -1147,6 +1170,8 @@ fn normalize_change_request(
             base_sha,
             head_sha: value.head.sha,
         },
+        base_branch,
+        head,
         author,
         updated_at: value.updated_at,
         reviews: normalized_reviews,
@@ -1168,6 +1193,48 @@ fn thread_references_missing_review(reviews: &[GithubReview], threads: &[ThreadN
             .first()
             .and_then(|comment| comment.pull_request_review.as_ref())
             .is_some_and(|review| !review_ids.contains(review.id.as_str()))
+    })
+}
+
+/// Reads the head GitHub reports for one pull request.
+///
+/// GitHub returns the branch unqualified and drops the repository once the
+/// fork holding it is deleted. A branch without its repository is not a head,
+/// so that observation is absent rather than paired with the targeted
+/// repository, which did not hold the branch.
+fn observed_head(head: &GitRef) -> Result<Option<ChangeRequestHead>> {
+    let Some(repository) = &head.repo else {
+        return Ok(None);
+    };
+    let unrepresentable = |fact: String| ProviderError::Unrepresentable {
+        provider: "github",
+        fact,
+    };
+    let repository = repository
+        .full_name
+        .parse::<Repository>()
+        .map_err(|error| {
+            unrepresentable(format!("head repository {}: {error}", repository.full_name))
+        })?;
+    ChangeRequestHead::new(repository, &format!("refs/heads/{}", head.branch))
+        .map(Some)
+        .map_err(|error| unrepresentable(format!("head branch {}: {error}", head.branch)))
+}
+
+/// Writes a change request's head as GitHub's `head` pull-request filter.
+///
+/// The filter is `owner:branch`, naming where the branch lives rather than
+/// which repository the change request targets. The two differ for a change
+/// request proposed from a fork, so the owner comes from the head's own
+/// repository.
+fn head_filter(head: &ChangeRequestHead) -> String {
+    format!("{}:{}", head.repository().owner(), head.branch())
+}
+
+fn number(value: u64) -> Result<ChangeRequestNumber> {
+    ChangeRequestNumber::new(value).map_err(|error| ProviderError::Unrepresentable {
+        provider: "github",
+        fact: error.to_string(),
     })
 }
 
@@ -1415,6 +1482,52 @@ impl CodeReviewsProvider for GithubProvider {
         )
     }
 
+    async fn open_change_requests(
+        &self,
+        repository: &Repository,
+        head: &ChangeRequestHead,
+    ) -> Result<Vec<ChangeRequestNumber>> {
+        let filter = head_filter(head);
+        let page: Page<GithubPullRequestNumber> = self
+            .user()?
+            .get(
+                format!("/repos/{repository}/pulls"),
+                Some(&[
+                    ("head", filter.as_str()),
+                    ("state", "open"),
+                    ("per_page", "100"),
+                ]),
+            )
+            .await
+            .map_err(|error| external("list open change requests", error))?;
+        let listed = self
+            .user()?
+            .all_pages(page)
+            .await
+            .map_err(|error| external("list open change requests", error))?;
+        let mut numbers = Vec::new();
+        for pull_request in listed {
+            match observed_head(&pull_request.head)? {
+                Some(observed) if &observed == head => numbers.push(number(pull_request.number)?),
+                // The filter addresses an owner and a branch, so another
+                // repository of the same owner can answer it.
+                Some(_) => {}
+                None => {
+                    return Err(ProviderError::Unrepresentable {
+                        provider: "github",
+                        fact: format!(
+                            "change request {} proposes branch {} from a repository GitHub no longer identifies, so whether it proposes {} cannot be established",
+                            pull_request.number,
+                            pull_request.head.branch,
+                            head.repository()
+                        ),
+                    });
+                }
+            }
+        }
+        Ok(numbers)
+    }
+
     async fn resolve_thread(
         &self,
         _repository: &Repository,
@@ -1596,9 +1709,9 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use interprex::{
-        ChangeRequestState, CheckConclusion, CheckOutcome, CodeReviewsProvider, FindingResolution,
-        FindingResolutionReason, FindingResolutionRecord, FindingSeverity, ProviderError,
-        Repository, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation,
+        ChangeRequestHead, ChangeRequestState, CheckConclusion, CheckOutcome, CodeReviewsProvider,
+        FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
+        ProviderError, Repository, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation,
         ReviewRequestTarget, ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
@@ -1612,7 +1725,7 @@ mod tests {
     use super::{
         GithubPullRequest, GithubReview, GithubUnanchoredComment, ParsedFindingResolution,
         ReviewRequestNode, ReviewRequestsData, ThreadsData, TimelineData, TimelineItemNode,
-        finding_resolution, github_resolution_reply, latest_finding_resolution,
+        finding_resolution, github_resolution_reply, head_filter, latest_finding_resolution,
         normalize_change_request,
     };
 
@@ -1625,6 +1738,48 @@ mod tests {
 
     fn requested_at(time: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         Some(time.parse().expect("request timestamp"))
+    }
+
+    #[test]
+    fn a_head_whose_repository_github_dropped_is_absent_rather_than_guessed() {
+        let mut pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        pull_request.head.repo = None;
+        let change_request = normalize_change_request(
+            pull_request,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("normalizes");
+
+        assert_eq!(change_request.head, None);
+        assert_eq!(
+            change_request.base_branch, "main",
+            "the targeted branch survives a head whose repository is gone"
+        );
+    }
+
+    #[test]
+    fn head_filter_names_the_repository_holding_the_branch() {
+        let upstream = Repository::new("civitas-forge", "interprex").expect("repository");
+        let fork = Repository::new("contributor", "interprex").expect("repository");
+        assert_eq!(
+            head_filter(
+                &ChangeRequestHead::new(upstream, "refs/heads/feat/open-request").expect("head")
+            ),
+            "civitas-forge:feat/open-request"
+        );
+        assert_eq!(
+            head_filter(
+                &ChangeRequestHead::new(fork, "refs/heads/feat/open-request").expect("head")
+            ),
+            "contributor:feat/open-request",
+            "a fork head keeps its own owner rather than the targeted repository's"
+        );
     }
 
     #[test]
@@ -1717,6 +1872,21 @@ mod tests {
         )
         .expect("normalizes");
 
+        assert_eq!(
+            change_request.base_branch, "main",
+            "the targeted branch is a named fact, not inferred from base_sha"
+        );
+        assert_eq!(
+            change_request.head,
+            Some(
+                ChangeRequestHead::new(
+                    Repository::new("contributor", "interprex-sandbox").expect("repository"),
+                    "refs/heads/feature"
+                )
+                .expect("head")
+            ),
+            "a fork head is observed as the fork's branch, not the targeted repository's"
+        );
         assert_eq!(change_request.reviews.len(), 11);
         assert_eq!(
             change_request.reviews[1].revision,
