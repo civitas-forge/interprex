@@ -10,8 +10,9 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, DispatchInputs, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
-    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
+    CodeReviewsProvider, DispatchInputs, FindingResolution, FindingResolutionReason,
+    FindingSeverity, IssueNumber, IssuesProvider, JobsProvider, ReleaseId, ReleasesProvider,
+    Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -447,6 +448,73 @@ async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
     let (_, body) = request.split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert_eq!(body["variables"]["threadId"], "PRRT_kwDOExample");
+}
+
+#[tokio::test]
+async fn code_review_domain_records_a_finding_resolution_before_resolving_the_thread() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        include_str!("fixtures/review_threads_response.json").replace(
+            "\"isResolved\": true",
+            "\"isResolved\": false",
+        ),
+        include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/unanchored_comments.json").to_owned(),
+        r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"PRRC_resolution"}}}}"#
+            .to_owned(),
+        r#"{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_kwDOSCkZoc6LuYFt","isResolved":true}}}}"#
+            .to_owned(),
+    ])
+    .await;
+    provider(uri)
+        .resolve_finding(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &ReviewThreadId::new("PRRT_kwDOSCkZoc6LuYFt").expect("thread id"),
+            FindingResolution {
+                reason: FindingResolutionReason::Invalid,
+                addressing_severity: FindingSeverity::Minor,
+            },
+            "The reported state cannot be reached through the public interface.",
+        )
+        .await
+        .expect("resolve finding");
+
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 7);
+    assert_user_request(&requests[5], "POST /graphql ");
+    assert_user_request(&requests[6], "POST /graphql ");
+    let (_, reply_body) = requests[5]
+        .split_once("\r\n\r\n")
+        .expect("reply request body");
+    let reply_body: serde_json::Value =
+        serde_json::from_str(reply_body).expect("JSON reply request body");
+    assert!(
+        reply_body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("addPullRequestReviewThreadReply")
+    );
+    assert_eq!(reply_body["variables"]["threadId"], "PRRT_kwDOSCkZoc6LuYFt");
+    let posted = reply_body["variables"]["body"]
+        .as_str()
+        .expect("reply Markdown");
+    assert!(posted.contains("**Resolution:** Invalid"));
+    assert!(posted.contains("**Addressing severity:** Minor"));
+    assert!(posted.contains("<!-- interprex:finding-resolution"));
+    assert!(posted.contains("\"resolution_reason\":\"INVALID\""));
+    assert!(posted.contains("\"addressing_severity\":\"minor\""));
+
+    let (_, resolve_body) = requests[6]
+        .split_once("\r\n\r\n")
+        .expect("resolve request body");
+    let resolve_body: serde_json::Value =
+        serde_json::from_str(resolve_body).expect("JSON resolve request body");
+    assert_eq!(
+        resolve_body["variables"]["threadId"],
+        "PRRT_kwDOSCkZoc6LuYFt"
+    );
 }
 
 #[tokio::test]

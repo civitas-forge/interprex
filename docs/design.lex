@@ -42,8 +42,8 @@ Design
         Issues and labels.
     code review:
         Change requests, reviews and their findings, standalone threads,
-        unanchored comments, outstanding review requests, check results and
-        the draft-to-ready transition.
+        unanchored comments, finding resolutions, outstanding review requests,
+        check results and the draft-to-ready transition.
     jobs:
         Dispatch, run observation and cancellation.
     releases:
@@ -116,16 +116,43 @@ Design
     identifiers.
 
     A review thread retains its initial comment, ordered replies, open or
-    resolved status and outdated status. `ReviewLocation` stores the file path
-    once and an anchor. A line anchor retains its original range, diff side and
-    current mapped range when GitHub supplies one. A file anchor does not
-    invent line data.
+    resolved platform status, optional finding resolution and outdated status.
+    `ReviewLocation` stores the file path once and an anchor. A line anchor
+    retains its original range, diff side and current mapped range when GitHub
+    supplies one. A file anchor does not invent line data.
 
     A thread whose initial comment names a review is nested under that review as
     a finding. This includes a change author's self-review and a draft review.
     A thread with no originating review remains a standalone thread. Replies
     do not move a thread or create another review. Unanchored comments remain
     separate because they have no source location.
+
+    `FindingResolutionReason` has the same variants and serialized spellings as
+    GitHub's `PullRequestReviewThreadResolutionReason`: `ADDRESSED` means the
+    review comment was addressed, `INVALID` means the comment is invalid and
+    `WONT_FIX` means it will not be addressed. `FindingResolution` records that
+    reason with the addressing user's severity assessment. It does not replace
+    `ReviewThreadStatus`: a manually resolved or legacy thread can have no
+    finding resolution, and an interrupted provider operation can record a
+    finding resolution before the platform thread becomes resolved.
+
+    `CodeReviewsProvider::resolve_finding` takes the conclusion, addressing
+    severity and visible explanatory reply. A successful operation records the
+    reply and marks the platform thread resolved. Providers may need multiple
+    platform requests, so an error can follow a partial write; a later
+    observation preserves the recorded conclusion and platform status as
+    separate facts. Before adding a reply, the GitHub adapter reads the finding.
+    Repeating the same recorded conclusion does not add another reply; if the
+    matching record exists while the thread remains open, the repeated call
+    only resolves the thread.
+
+    GitHub stores the canonical finding resolution in a versioned JSON envelope
+    inside an HTML comment in the reply body. The same reply shows text labels
+    and a severity badge for people reading the thread. The badge is redundant
+    presentation: the adapter never fetches or interprets its image URL. GitHub
+    currently has no generally applicable field that both accepts and returns a
+    finding resolution. The adapter reads raw reply bodies, ignores malformed or
+    unknown metadata versions and uses the latest valid record.
 
     Outstanding review requests preserve their actor or team target, the
     provider address that can request that target again when available, and
@@ -135,10 +162,11 @@ Design
     Unavailable targets remain present. A request describes current state and
     is not proof that a review exists.
 
-    Interprex returns these observations without assigning review rounds, choosing
-    a previous review, deciding that a reviewer is stale, classifying finding
-    severity or recommending a next action. Callers derive those answers from
-    their own configuration and policy.
+    Interprex returns these observations without assigning review rounds,
+    choosing a previous review, deciding that a reviewer is stale, classifying
+    finding severity from prose or recommending a next action. The caller
+    explicitly supplies an addressing severity when resolving a finding and
+    derives other policy answers from its own configuration.
 
 5. Provider and Caller Ownership
 
@@ -148,7 +176,8 @@ Design
     but exposes no Octocrab type through a domain interface.
 
     Callers own why an operation occurs and what follows from its result. Interprex
-    can request a reviewer, resolve a thread or publish a check; it does not
-    decide when those operations should happen. The same distinction keeps
+    can request a reviewer, record and resolve a finding, resolve a thread or
+    publish a check; it does not decide when those operations should happen or
+    which conclusion and severity are correct. The same distinction keeps
     review rounds and convergence rules outside the library while keeping all
     facts needed to implement them in the returned observation.

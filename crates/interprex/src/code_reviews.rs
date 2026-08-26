@@ -201,6 +201,45 @@ pub enum ReviewThreadStatus {
     Resolved,
 }
 
+/// The addressing user's assessment of a finding's effect on the change.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSeverity {
+    Critical,
+    Major,
+    Minor,
+    Nit,
+}
+
+/// Why the addressing user considers a finding complete.
+///
+/// The variants and serialized spellings match GitHub's
+/// `PullRequestReviewThreadResolutionReason` enum.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum FindingResolutionReason {
+    /// The review comment was addressed.
+    Addressed,
+    /// The review comment is invalid.
+    Invalid,
+    /// The review comment will not be addressed.
+    WontFix,
+}
+
+/// The addressing user's recorded conclusion for one finding.
+///
+/// This is distinct from [`ReviewThreadStatus`]. A platform thread can have no
+/// Interprex resolution because it was resolved outside this interface, and a
+/// failed multi-request provider operation can leave a recorded conclusion on
+/// a thread the platform still reports as open.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FindingResolution {
+    pub reason: FindingResolutionReason,
+    /// The severity assigned by the user addressing the finding. It need not
+    /// match a severity stated by the reviewer.
+    pub addressing_severity: FindingSeverity,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewComment {
     pub id: ReviewCommentId,
@@ -255,6 +294,8 @@ pub struct ReviewThread {
     pub location: ReviewLocation,
     pub outdated: bool,
     pub status: ReviewThreadStatus,
+    /// The latest valid resolution record found in this thread's replies.
+    pub resolution: Option<FindingResolution>,
     pub comment: ReviewComment,
     pub replies: Vec<ReviewComment>,
 }
@@ -332,6 +373,26 @@ pub trait CodeReviewsProvider: Send + Sync {
         number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()>;
+    /// Records why a finding is complete, records its assessed severity and
+    /// marks its platform thread resolved.
+    ///
+    /// `reply` is visible explanatory text. Providers may add their own visible
+    /// or machine-readable representation around it. Providers whose platforms
+    /// require more than one request can return an error after a partial write;
+    /// a later observation preserves the platform thread state and any valid
+    /// resolution record independently.
+    ///
+    /// Repeating an already recorded resolution does not add another reply. If
+    /// that record exists while the platform thread is open, the repeated call
+    /// only resolves the thread.
+    async fn resolve_finding(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        thread_id: &ReviewThreadId,
+        resolution: FindingResolution,
+        reply: &str,
+    ) -> Result<()>;
     /// Adds each target to the outstanding reviewer set.
     ///
     /// A target already present remains one request, so repeating the same call
@@ -394,6 +455,7 @@ mod tests {
             },
             outdated: false,
             status: ReviewThreadStatus::Open,
+            resolution: None,
             comment: comment(&format!("comment-{id}"), author),
             replies: Vec::new(),
         }
@@ -447,6 +509,28 @@ mod tests {
 
         assert_eq!(change_request.reviews[0].findings.len(), 1);
         assert_eq!(change_request.standalone_threads.len(), 1);
+    }
+
+    #[test]
+    fn finding_resolution_reasons_use_githubs_enum_spellings() {
+        for (reason, expected) in [
+            (FindingResolutionReason::Addressed, "ADDRESSED"),
+            (FindingResolutionReason::Invalid, "INVALID"),
+            (FindingResolutionReason::WontFix, "WONT_FIX"),
+        ] {
+            let resolution = FindingResolution {
+                reason,
+                addressing_severity: FindingSeverity::Major,
+            };
+
+            assert_eq!(
+                serde_json::to_value(resolution).expect("serializes resolution"),
+                serde_json::json!({
+                    "reason": expected,
+                    "addressing_severity": "major"
+                })
+            );
+        }
     }
 
     #[test]

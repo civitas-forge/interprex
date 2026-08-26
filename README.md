@@ -27,8 +27,9 @@ tracker
 code review
 
 : Read change requests, reviews, findings, standalone threads, unanchored
-comments and outstanding review requests; resolve threads, request reviewers,
-mark a change request ready and publish check results.
+comments and outstanding review requests; record finding resolutions and
+addressing severity, resolve threads, request reviewers, mark a change request
+ready and publish check results.
 
 jobs
 
@@ -58,9 +59,16 @@ decisions about independent review evidence to the caller.
 
 A thread attached to a review is one of that review's findings, including a
 self-review finding from the change author. A thread with no originating review
-is a standalone thread. An unanchored comment has no source location. Interprex
-does not derive rounds, stale reviewers, severity or next actions from these
-records.
+is a standalone thread. An unanchored comment has no source location.
+
+A finding resolution uses GitHub's three resolution reasons: `ADDRESSED` when
+the review comment was addressed, `INVALID` when the review comment is invalid
+and `WONT_FIX` when it will not be addressed. It also records the addressing
+user's severity assessment. This conclusion is separate from the platform
+thread's open or resolved status: manual and legacy resolutions may have no
+Interprex conclusion, while a partially completed write may leave a conclusion
+on a platform thread that is still open. Interprex does not derive rounds, stale
+reviewers, severity or next actions from review text.
 
 ## 4. Workspace Crates
 

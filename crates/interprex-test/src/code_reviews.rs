@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, Repository, Result,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
-    ReviewThreadStatus,
+    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, FindingResolution,
+    Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment,
+    ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewTarget, ReviewTeam,
+    ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -51,6 +51,50 @@ impl CodeReviewsProvider for FakeProvider {
             return Ok(());
         }
         Err(missing(format!("review thread {}", thread_id.as_str())))
+    }
+
+    async fn resolve_finding(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        thread_id: &ReviewThreadId,
+        resolution: FindingResolution,
+        reply: &str,
+    ) -> Result<()> {
+        let mut state = self.state.write().await;
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let author = change_request.author.clone();
+        let written_at = change_request.updated_at;
+        let finding = change_request
+            .reviews
+            .iter_mut()
+            .flat_map(|review| review.findings.iter_mut())
+            .find(|thread| &thread.id == thread_id)
+            .ok_or_else(|| missing(format!("finding thread {}", thread_id.as_str())))?;
+        let reply_id = ReviewCommentId::new(format!("fake-resolution:{}", thread_id.as_str()))
+            .expect("fake resolution identity is nonempty");
+        if let Some(existing) = finding
+            .replies
+            .iter_mut()
+            .find(|comment| comment.id == reply_id)
+        {
+            existing.body = reply.to_owned();
+            existing.updated_at = Some(written_at);
+        } else {
+            finding.replies.push(ReviewComment {
+                id: reply_id,
+                author,
+                body: reply.to_owned(),
+                created_at: written_at,
+                updated_at: None,
+            });
+        }
+        finding.resolution = Some(resolution);
+        finding.status = ReviewThreadStatus::Resolved;
+        Ok(())
     }
 
     async fn request_reviewers(

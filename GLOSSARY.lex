@@ -25,7 +25,17 @@ Glossary
     finding:
         An inline review thread attached to the review in which it
         originated. Its initial comment, replies, source location,
-        resolution status and outdated status remain together.
+        platform resolution status, optional finding resolution and outdated
+        status remain together.
+    finding resolution:
+        The addressing user's recorded `ADDRESSED`, `INVALID` or `WONT_FIX`
+        reason, together with that user's severity assessment. The values match
+        GitHub's `PullRequestReviewThreadResolutionReason` enum. This conclusion
+        is separate from the platform thread's open or resolved status.
+    addressing severity:
+        The `critical`, `major`, `minor` or `nit` effect assigned by the user
+        resolving a finding. It need not match a severity stated by the
+        reviewer and is never inferred from review prose.
     standalone thread:
         An inline review thread with no originating review. Later replies do
         not change its origin.

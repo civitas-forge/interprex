@@ -1,10 +1,11 @@
 //! Sparse, opt-in checks against `civitas-forge/interprex-sandbox`.
 //!
-//! The test is read-only so concurrent branches cannot corrupt shared state.
-//! Every request takes a machine-global file lock and observes a minimum delay;
-//! the workflow adds repository-global GitHub Actions concurrency across
-//! branches and runs. Octocrab's rate-limit-aware retry remains enabled above
-//! both controls.
+//! Observation tests are read-only. The finding-resolution test writes only to
+//! the review thread named explicitly by its environment variables and is not
+//! part of the default workflow. Every test operation takes a machine-global
+//! file lock and observes a minimum delay; the workflow adds repository-global
+//! GitHub Actions concurrency across branches and runs. Octocrab's
+//! rate-limit-aware retry remains enabled above both controls.
 
 use std::{
     fs::{File, OpenOptions},
@@ -15,8 +16,9 @@ use std::{
 
 use fs2::FileExt;
 use interprex::{
-    ChangeRequestNumber, CodeHostingProvider, CodeReviewsProvider, IssuesProvider, Repository,
-    ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadStatus,
+    ChangeRequestNumber, CodeHostingProvider, CodeReviewsProvider, FindingResolution,
+    FindingResolutionReason, FindingSeverity, IssuesProvider, Repository, ReviewAnchor,
+    ReviewAuthor, ReviewTarget, ReviewThreadId, ReviewThreadStatus,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -88,7 +90,7 @@ fn live_provider() -> (interprex_github::GithubProvider, Repository) {
         "set INTERPREX_LIVE_GITHUB=1 to acknowledge a real GitHub API test"
     );
     let token = std::env::var("INTERPREX_E2E_GH_TOKEN")
-        .expect("INTERPREX_E2E_GH_TOKEN must contain the sandbox read token");
+        .expect("INTERPREX_E2E_GH_TOKEN must contain the sandbox token");
     let repository = std::env::var("INTERPREX_E2E_REPOSITORY")
         .unwrap_or_else(|_| DEFAULT_REPOSITORY.to_owned())
         .parse()
@@ -253,4 +255,56 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         change_request.unanchored_comments.len(),
         change_request.outstanding_requests.len()
     );
+}
+
+#[tokio::test]
+#[ignore = "writes to a configured real GitHub review thread; run only through serialized live verification"]
+async fn configured_finding_resolution_round_trips_through_the_real_provider() {
+    let (provider, repository) = live_provider();
+    let number = std::env::var("INTERPREX_E2E_CHANGE_REQUEST_NUMBER")
+        .expect("INTERPREX_E2E_CHANGE_REQUEST_NUMBER must name an existing change request")
+        .parse()
+        .expect("INTERPREX_E2E_CHANGE_REQUEST_NUMBER must be a positive integer");
+    let number = ChangeRequestNumber::new(number).expect("positive change request number");
+    let thread_id = ReviewThreadId::new(
+        std::env::var("INTERPREX_E2E_FINDING_THREAD_ID")
+            .expect("INTERPREX_E2E_FINDING_THREAD_ID must name an existing finding thread"),
+    )
+    .expect("nonempty finding thread id");
+    let expected = FindingResolution {
+        reason: FindingResolutionReason::Addressed,
+        addressing_severity: FindingSeverity::Nit,
+    };
+
+    let _throttle = GlobalThrottle::acquire();
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &thread_id,
+            expected,
+            "Interprex live integration verified this finding resolution round trip.",
+        )
+        .await
+        .expect("record and resolve configured finding");
+    drop(_throttle);
+
+    let _throttle = GlobalThrottle::acquire();
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("read configured change request after resolving its finding");
+    let finding = observed
+        .reviews
+        .iter()
+        .flat_map(|review| &review.findings)
+        .find(|finding| finding.id == thread_id)
+        .expect("configured finding remains observable");
+    assert_eq!(finding.status, ReviewThreadStatus::Resolved);
+    assert_eq!(finding.resolution, Some(expected));
+    assert!(finding.replies.iter().any(|reply| {
+        reply
+            .body
+            .contains("Interprex live integration verified this finding resolution round trip.")
+    }));
 }

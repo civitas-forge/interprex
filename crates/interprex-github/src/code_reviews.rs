@@ -12,15 +12,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestNumber, CheckConclusion, CheckOutcome, CodeReviewsProvider,
-    CommitRange, OpenClosed, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange,
-    ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
-    ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    CommitRange, FindingResolution, FindingResolutionReason, FindingSeverity, OpenClosed,
+    ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment, ReviewCommentId,
+    ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation,
+    ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewState,
+    ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId,
+    ReviewThreadStatus, ReviewedRevision,
 };
 use octocrab::Page;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{GithubProvider, client::external};
@@ -104,6 +105,74 @@ const RESOLVE_THREAD: &str = r#"
 mutation ResolveReviewThread($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
 }"#;
+
+const ADD_THREAD_REPLY: &str = r#"
+mutation AddPullRequestReviewThreadReply($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(
+    input: {pullRequestReviewThreadId: $threadId, body: $body}
+  ) { comment { id } }
+}"#;
+
+const FINDING_RESOLUTION_META_START: &str = "<!-- interprex:finding-resolution\n";
+const FINDING_RESOLUTION_META_END: &str = "\n-->";
+const FINDING_RESOLUTION_META_VERSION: u8 = 1;
+
+#[derive(Deserialize, Serialize)]
+struct GithubFindingResolution {
+    version: u8,
+    resolution_reason: FindingResolutionReason,
+    addressing_severity: FindingSeverity,
+}
+
+fn severity_badge(severity: FindingSeverity) -> (&'static str, &'static str, &'static str) {
+    match severity {
+        FindingSeverity::Critical => ("critical", "Critical", "b60205"),
+        FindingSeverity::Major => ("major", "Major", "d93f0b"),
+        FindingSeverity::Minor => ("minor", "Minor", "fbca04"),
+        FindingSeverity::Nit => ("nit", "Nit", "c5def5"),
+    }
+}
+
+fn resolution_label(reason: FindingResolutionReason) -> &'static str {
+    match reason {
+        FindingResolutionReason::Addressed => "Addressed",
+        FindingResolutionReason::Invalid => "Invalid",
+        FindingResolutionReason::WontFix => "Won't fix",
+    }
+}
+
+fn github_resolution_reply(resolution: FindingResolution, reply: &str) -> String {
+    let (severity, severity_label, color) = severity_badge(resolution.addressing_severity);
+    let resolution_label = resolution_label(resolution.reason);
+    let visible =
+        format!("**Resolution:** {resolution_label}  \n**Addressing severity:** {severity_label}");
+    let badge = format!(
+        "![Interprex severity: {severity}](https://img.shields.io/badge/severity-{severity}-{color})"
+    );
+    let metadata = GithubFindingResolution {
+        version: FINDING_RESOLUTION_META_VERSION,
+        resolution_reason: resolution.reason,
+        addressing_severity: resolution.addressing_severity,
+    };
+    let metadata = serde_json::to_string(&metadata)
+        .expect("the fixed finding-resolution metadata shape serializes");
+    let marker = format!("{FINDING_RESOLUTION_META_START}{metadata}{FINDING_RESOLUTION_META_END}");
+    [visible, badge, reply.to_owned(), marker]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn finding_resolution(body: &str) -> Option<FindingResolution> {
+    let start = body.rfind(FINDING_RESOLUTION_META_START)? + FINDING_RESOLUTION_META_START.len();
+    let metadata = body[start..].split_once(FINDING_RESOLUTION_META_END)?.0;
+    let metadata: GithubFindingResolution = serde_json::from_str(metadata).ok()?;
+    (metadata.version == FINDING_RESOLUTION_META_VERSION).then_some(FindingResolution {
+        reason: metadata.resolution_reason,
+        addressing_severity: metadata.addressing_severity,
+    })
+}
 
 const MARK_READY: &str = r#"
 mutation MarkReady($pullRequestId: ID!) {
@@ -714,6 +783,13 @@ fn normalize_change_request(
                 }
             },
         };
+        let replies = comments
+            .map(normalize_comment)
+            .collect::<Result<Vec<_>>>()?;
+        let resolution = replies
+            .iter()
+            .filter_map(|comment| finding_resolution(&comment.body))
+            .next_back();
         let normalized = ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
                 provider: "github",
@@ -726,10 +802,9 @@ fn normalize_change_request(
             } else {
                 ReviewThreadStatus::Open
             },
+            resolution,
             comment: normalize_comment(initial)?,
-            replies: comments
-                .map(normalize_comment)
-                .collect::<Result<Vec<_>>>()?,
+            replies,
         };
         if let Some(position) = review_position {
             normalized_reviews[position].findings.push(normalized);
@@ -1012,6 +1087,47 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(())
     }
 
+    async fn resolve_finding(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        thread_id: &ReviewThreadId,
+        resolution: FindingResolution,
+        reply: &str,
+    ) -> Result<()> {
+        let change_request = self.change_request(repository, number).await?;
+        let finding = change_request
+            .reviews
+            .iter()
+            .flat_map(|review| &review.findings)
+            .find(|finding| &finding.id == thread_id)
+            .ok_or_else(|| ProviderError::NotFound {
+                entity: format!("finding thread {}", thread_id.as_str()),
+            })?;
+        if finding.resolution == Some(resolution) {
+            return if finding.status == ReviewThreadStatus::Resolved {
+                Ok(())
+            } else {
+                self.resolve_thread(repository, number, thread_id).await
+            };
+        }
+        let already_resolved = finding.status == ReviewThreadStatus::Resolved;
+        let body = github_resolution_reply(resolution, reply);
+        let _: serde_json::Value = self
+            .user()?
+            .graphql(&json!({
+                "query": ADD_THREAD_REPLY,
+                "variables": { "threadId": thread_id.as_str(), "body": body }
+            }))
+            .await
+            .map_err(|error| external("record finding resolution", error))?;
+        if already_resolved {
+            Ok(())
+        } else {
+            self.resolve_thread(repository, number, thread_id).await
+        }
+    }
+
     async fn request_reviewers(
         &self,
         repository: &Repository,
@@ -1091,9 +1207,10 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use interprex::{
-        CheckConclusion, CheckOutcome, CodeReviewsProvider, ProviderError, Repository,
-        ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget,
-        ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
+        CheckConclusion, CheckOutcome, CodeReviewsProvider, FindingResolution,
+        FindingResolutionReason, FindingSeverity, ProviderError, Repository, ReviewActorKind,
+        ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget, ReviewTarget,
+        ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1105,8 +1222,44 @@ mod tests {
 
     use super::{
         GithubPullRequest, GithubReview, GithubUnanchoredComment, ReviewRequestsData, ThreadsData,
-        normalize_change_request,
+        finding_resolution, github_resolution_reply, normalize_change_request,
     };
+
+    #[test]
+    fn github_reply_keeps_visible_labels_and_hidden_canonical_metadata() {
+        for (reason, label) in [
+            (FindingResolutionReason::Addressed, "Addressed"),
+            (FindingResolutionReason::Invalid, "Invalid"),
+            (FindingResolutionReason::WontFix, "Won't fix"),
+        ] {
+            let expected = FindingResolution {
+                reason,
+                addressing_severity: FindingSeverity::Minor,
+            };
+
+            let body = github_resolution_reply(expected, "The addressing explanation.");
+
+            assert!(body.contains(&format!("**Resolution:** {label}")));
+            assert!(body.contains("**Addressing severity:** Minor"));
+            assert!(body.contains("https://img.shields.io/badge/severity-minor-fbca04"));
+            assert!(body.contains("<!-- interprex:finding-resolution"));
+            assert_eq!(finding_resolution(&body), Some(expected));
+        }
+    }
+
+    #[test]
+    fn malformed_or_unknown_resolution_metadata_is_regular_reply_text() {
+        assert_eq!(
+            finding_resolution(
+                "<!-- interprex:finding-resolution\n{\"version\":2,\"resolution_reason\":\"ADDRESSED\",\"addressing_severity\":\"major\"}\n-->"
+            ),
+            None
+        );
+        assert_eq!(
+            finding_resolution("<!-- interprex:finding-resolution\nnot json\n-->"),
+            None
+        );
+    }
 
     #[test]
     fn github_fixtures_preserve_reviews_findings_standalone_threads_and_unanchored_comments() {
@@ -1116,9 +1269,18 @@ mod tests {
         let reviews: Vec<GithubReview> =
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
-        let threads: ThreadsData =
+        let mut threads: ThreadsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_threads.json"))
                 .expect("thread fixture");
+        let expected_resolution = FindingResolution {
+            reason: FindingResolutionReason::Addressed,
+            addressing_severity: FindingSeverity::Major,
+        };
+        threads.repository.pull_request.review_threads.nodes[0]
+            .comments
+            .nodes[1]
+            .body =
+            github_resolution_reply(expected_resolution, "Addressed in the current revision.");
         let requests: ReviewRequestsData =
             serde_json::from_str(include_str!("../tests/fixtures/review_requests.json"))
                 .expect("review request fixture");
@@ -1163,6 +1325,7 @@ mod tests {
         assert_eq!(finding.replies.len(), 1);
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
+        assert_eq!(finding.resolution, Some(expected_resolution));
         assert_eq!(
             change_request.reviews[0]
                 .via_app

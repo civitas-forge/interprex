@@ -2,11 +2,12 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason, FindingSeverity,
+    OpenClosed, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
+    RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
+    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId,
+    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -204,6 +205,7 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
                 },
                 outdated: false,
                 status: ReviewThreadStatus::Open,
+                resolution: None,
                 comment: ReviewComment {
                     id: ReviewCommentId::new("comment-1").expect("comment id"),
                     author: reviewer.clone(),
@@ -228,6 +230,7 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             },
             outdated: false,
             status: ReviewThreadStatus::Open,
+            resolution: None,
             comment: ReviewComment {
                 id: ReviewCommentId::new("comment-3").expect("comment id"),
                 author: author.clone(),
@@ -263,23 +266,30 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             .expect("review"),
         change_request
     );
+    let resolution = FindingResolution {
+        reason: FindingResolutionReason::Addressed,
+        addressing_severity: FindingSeverity::Major,
+    };
     provider
-        .resolve_thread(
+        .resolve_finding(
             &repository,
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            "Addressed by validating the range before indexing.",
         )
         .await
-        .expect("resolve thread");
-    assert!(
-        provider
-            .change_request(&repository, number)
-            .await
-            .expect("review")
-            .reviews[0]
-            .findings[0]
-            .status
-            == ReviewThreadStatus::Resolved
+        .expect("resolve finding");
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review");
+    let finding = &observed.reviews[0].findings[0];
+    assert_eq!(finding.status, ReviewThreadStatus::Resolved);
+    assert_eq!(finding.resolution, Some(resolution));
+    assert_eq!(
+        finding.replies.last().map(|comment| comment.body.as_str()),
+        Some("Addressed by validating the range before indexing.")
     );
 }
 
