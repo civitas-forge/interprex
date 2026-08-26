@@ -1,10 +1,13 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use bytes::Bytes;
 use interprex::{
-    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, DispatchInputs, Issue, IssueNumber,
-    Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, Ruleset, RunId,
-    WorkflowRun,
+    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
+    IssueNumber, Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
+    Ruleset, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -21,6 +24,7 @@ pub(crate) struct State {
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
+    pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     pub(crate) runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -63,6 +67,23 @@ impl FakeProvider {
             .await
             .change_requests
             .insert((repository, change_request.number), change_request);
+    }
+
+    /// Seeds observed checks, each on the commit it names, replacing whatever
+    /// was already seeded on the commits this call names.
+    ///
+    /// The commit comes from every run's own `head_sha`, so no seeded
+    /// observation can place a run on a commit it does not name.
+    pub async fn seed_check_runs(&self, repository: Repository, runs: Vec<CheckRun>) {
+        let mut state = self.state.write().await;
+        let mut replaced = BTreeSet::new();
+        for run in runs {
+            let key = (repository.clone(), run.head_sha.clone());
+            if replaced.insert(key.clone()) {
+                state.check_runs.insert(key.clone(), Vec::new());
+            }
+            state.check_runs.entry(key).or_default().push(run);
+        }
     }
 
     pub async fn seed_run(&self, repository: Repository, run: WorkflowRun) {

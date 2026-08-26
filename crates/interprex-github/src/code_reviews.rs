@@ -6,20 +6,26 @@
 //! reviews, apps and unanchored comments; GraphQL supplies thread locations,
 //! resolution, complete comment sequences and outstanding requests. The
 //! provider joins them here so callers never correlate GitHub entities.
+//!
+//! Checks are read separately, per commit, from GitHub's check-runs endpoint,
+//! which reports the current run of each check within each check suite on that
+//! commit. Runs sharing a name across suites all remain. GitHub's legacy commit
+//! statuses are a different mechanism with its own endpoint and are not read
+//! here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion,
-    CheckOutcome, CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
-    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, ProviderError, Repository,
-    Result, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp,
-    ReviewAppId, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
-    ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship,
-    ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam,
-    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
-    ReviewedRevision,
+    CheckOutcome, CheckRun, CheckStatus, CodeReviewsProvider, CommitRange, FindingResolution,
+    FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
+    Mergeability, ProviderApp, ProviderAppId, ProviderError, PublishedCheckConclusion, Repository,
+    Result, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId,
+    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
+    ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
+    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -187,6 +193,10 @@ struct AddedThreadReply {
     id: String,
 }
 
+/// The page size every check-runs request asks for, and the size a short page
+/// is measured against.
+const CHECK_RUNS_PER_PAGE: usize = 100;
+
 const FINDING_RESOLUTION_META_START: &str = "<!-- interprex:finding-resolution\n";
 const FINDING_RESOLUTION_META_END: &str = "\n-->";
 const FINDING_RESOLUTION_META_VERSION: u8 = 1;
@@ -333,6 +343,10 @@ struct GithubPullRequest {
     merged: bool,
     merged_at: Option<chrono::DateTime<chrono::Utc>>,
     draft: bool,
+    /// GitHub computes the merge after the read arrives and reports `null`
+    /// until that finishes. A response that carries no field at all states as
+    /// little as `null` does, and reads the same way.
+    mergeable: Option<bool>,
     head: GitRef,
     base: GitRef,
     user: Option<GithubUser>,
@@ -398,6 +412,37 @@ struct GithubUnanchoredComment {
     body: String,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One page of GitHub's check-runs envelope.
+///
+/// GitHub returns the runs under `check_runs` beside the complete
+/// `total_count`, not as a bare array. Octocrab's `Page` recognizes a fixed
+/// set of envelope keys that does not include this one, so this read pages by
+/// number instead of following `Link` headers through `all_pages`.
+#[derive(Deserialize)]
+struct GithubCheckRunPage {
+    total_count: u64,
+    check_runs: Vec<GithubCheckRun>,
+}
+
+#[derive(Deserialize)]
+struct GithubCheckRun {
+    name: String,
+    head_sha: String,
+    status: String,
+    conclusion: Option<String>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The app that published the run. It carries the same identifier a
+    /// ruleset reports as `integration_id`.
+    app: Option<GithubApp>,
+    html_url: Option<String>,
+    output: Option<GithubCheckRunOutput>,
+}
+
+#[derive(Deserialize)]
+struct GithubCheckRunOutput {
+    summary: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -749,6 +794,19 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
     })
 }
 
+fn normalize_app(app: GithubApp) -> Result<ProviderApp> {
+    Ok(ProviderApp {
+        id: ProviderAppId::new(app.id.to_string()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
+        })?,
+        slug: app.slug,
+        name: app.name,
+    })
+}
+
 fn rest_actor(user: GithubUser) -> Result<ReviewActor> {
     let kind = user.kind.ok_or_else(|| ProviderError::Unrepresentable {
         provider: "github",
@@ -1057,18 +1115,7 @@ fn normalize_change_request(
             author: review_author,
             via_app: review
                 .performed_via_github_app
-                .map(|app| {
-                    Ok(ReviewApp {
-                        id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
-                            ProviderError::Unrepresentable {
-                                provider: "github",
-                                fact: error.to_string(),
-                            }
-                        })?,
-                        slug: app.slug,
-                        name: app.name,
-                    })
-                })
+                .map(normalize_app)
                 .transpose()?,
             revision: ReviewedRevision {
                 head_sha: review.commit_id,
@@ -1172,6 +1219,11 @@ fn normalize_change_request(
         },
         base_branch,
         head,
+        mergeability: match value.mergeable {
+            Some(true) => Mergeability::Mergeable,
+            Some(false) => Mergeability::Conflicted,
+            None => Mergeability::Unknown,
+        },
         author,
         updated_at: value.updated_at,
         reviews: normalized_reviews,
@@ -1238,14 +1290,98 @@ fn number(value: u64) -> Result<ChangeRequestNumber> {
     })
 }
 
-fn conclusion(value: &CheckConclusion) -> &'static str {
+fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
     match value {
-        CheckConclusion::Success => "success",
-        CheckConclusion::Failure => "failure",
-        CheckConclusion::Neutral => "neutral",
-        CheckConclusion::Cancelled => "cancelled",
-        CheckConclusion::TimedOut => "timed_out",
-        CheckConclusion::ActionRequired => "action_required",
+        "success" => Ok(CheckConclusion::Success),
+        "failure" => Ok(CheckConclusion::Failure),
+        "neutral" => Ok(CheckConclusion::Neutral),
+        "cancelled" => Ok(CheckConclusion::Cancelled),
+        "timed_out" => Ok(CheckConclusion::TimedOut),
+        "action_required" => Ok(CheckConclusion::ActionRequired),
+        "skipped" => Ok(CheckConclusion::Skipped),
+        "stale" => Ok(CheckConclusion::Stale),
+        other => Err(ProviderError::Unrepresentable {
+            provider: "github",
+            fact: format!("unknown check run conclusion {other}"),
+        }),
+    }
+}
+
+fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
+    let unfinished = match value.status.as_str() {
+        "requested" => Some(CheckStatus::Requested),
+        "queued" => Some(CheckStatus::Queued),
+        "pending" => Some(CheckStatus::Pending),
+        "waiting" => Some(CheckStatus::Waiting),
+        "in_progress" => Some(CheckStatus::InProgress),
+        "completed" => None,
+        other => {
+            return Err(ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("unknown check run status {other}"),
+            });
+        }
+    };
+    let status = if let Some(unfinished) = unfinished {
+        if let Some(conclusion) = value.conclusion {
+            return Err(ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!(
+                    "check run {} is {} and has conclusion {conclusion}",
+                    value.name, value.status
+                ),
+            });
+        }
+        if value.completed_at.is_some() {
+            return Err(ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!(
+                    "check run {} is {} and has a completion time",
+                    value.name, value.status
+                ),
+            });
+        }
+        unfinished
+    } else {
+        let conclusion = value
+            .conclusion
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("completed check run {} has no conclusion", value.name),
+            })?;
+        let completed_at = value
+            .completed_at
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("completed check run {} has no completion time", value.name),
+            })?;
+        CheckStatus::Completed {
+            conclusion: normalize_check_conclusion(&conclusion)?,
+            completed_at,
+        }
+    };
+    Ok(CheckRun {
+        name: value.name,
+        head_sha: value.head_sha,
+        via_app: value.app.map(normalize_app).transpose()?,
+        status,
+        summary: value
+            .output
+            .and_then(|output| output.summary)
+            .filter(|summary| !summary.trim().is_empty()),
+        html_url: value.html_url,
+    })
+}
+
+fn conclusion(value: &PublishedCheckConclusion) -> &'static str {
+    match value {
+        PublishedCheckConclusion::Success => "success",
+        PublishedCheckConclusion::Failure => "failure",
+        PublishedCheckConclusion::Neutral => "neutral",
+        PublishedCheckConclusion::Cancelled => "cancelled",
+        PublishedCheckConclusion::TimedOut => "timed_out",
+        PublishedCheckConclusion::ActionRequired => "action_required",
+        PublishedCheckConclusion::Skipped => "skipped",
     }
 }
 
@@ -1370,6 +1506,47 @@ impl GithubProvider {
                 return Ok(threads);
             };
             cursor = Some(next_cursor);
+        }
+    }
+
+    async fn github_check_runs(
+        &self,
+        repository: &Repository,
+        head_sha: &str,
+    ) -> Result<Vec<GithubCheckRun>> {
+        let mut collected: Vec<GithubCheckRun> = Vec::new();
+        let mut page = 1_u32;
+        loop {
+            let response: GithubCheckRunPage = self
+                .user()?
+                .get(
+                    format!("/repos/{repository}/commits/{head_sha}/check-runs"),
+                    Some(&[
+                        ("per_page", CHECK_RUNS_PER_PAGE.to_string()),
+                        ("page", page.to_string()),
+                        // GitHub's default, sent explicitly: within each check
+                        // suite on the commit, its current run of each check.
+                        // Suites remain separate, so runs can share a name.
+                        ("filter", "latest".to_owned()),
+                    ]),
+                )
+                .await
+                .map_err(|error| {
+                    crate::client::read_error(
+                        "read check runs",
+                        format!("commit {head_sha} in {repository}"),
+                        error,
+                    )
+                })?;
+            let received = response.check_runs.len();
+            collected.extend(response.check_runs);
+            // A short page ends the collection. The envelope's complete count
+            // ends it too, so a response that ignored `page` cannot repeat the
+            // first page forever.
+            if received < CHECK_RUNS_PER_PAGE || collected.len() as u64 >= response.total_count {
+                return Ok(collected);
+            }
+            page += 1;
         }
     }
 
@@ -1680,6 +1857,14 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(())
     }
 
+    async fn checks(&self, repository: &Repository, head_sha: &str) -> Result<Vec<CheckRun>> {
+        self.github_check_runs(repository, head_sha)
+            .await?
+            .into_iter()
+            .map(normalize_check_run)
+            .collect()
+    }
+
     async fn publish_check(
         &self,
         repository: &Repository,
@@ -1709,10 +1894,11 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use interprex::{
-        ChangeRequestHead, ChangeRequestState, CheckConclusion, CheckOutcome, CodeReviewsProvider,
-        FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
-        ProviderError, Repository, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation,
-        ReviewRequestTarget, ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
+        ChangeRequestHead, ChangeRequestState, CheckConclusion, CheckOutcome, CheckStatus,
+        CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
+        FindingSeverity, Mergeability, ProviderError, PublishedCheckConclusion, Repository, Result,
+        ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget,
+        ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1723,10 +1909,10 @@ mod tests {
     use crate::GithubProvider;
 
     use super::{
-        GithubPullRequest, GithubReview, GithubUnanchoredComment, ParsedFindingResolution,
-        ReviewRequestNode, ReviewRequestsData, ThreadsData, TimelineData, TimelineItemNode,
-        finding_resolution, github_resolution_reply, head_filter, latest_finding_resolution,
-        normalize_change_request,
+        GithubCheckRunPage, GithubPullRequest, GithubReview, GithubUnanchoredComment,
+        ParsedFindingResolution, ReviewRequestNode, ReviewRequestsData, ThreadsData, TimelineData,
+        TimelineItemNode, finding_resolution, github_resolution_reply, head_filter,
+        latest_finding_resolution, normalize_change_request, normalize_check_run,
     };
 
     fn review_request_timeline() -> TimelineData {
@@ -1738,6 +1924,21 @@ mod tests {
 
     fn requested_at(time: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         Some(time.parse().expect("request timestamp"))
+    }
+
+    fn check_run(status: &str, conclusion: Option<&str>) -> super::GithubCheckRun {
+        super::GithubCheckRun {
+            name: "quality".to_owned(),
+            head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+            status: status.to_owned(),
+            conclusion: conclusion.map(str::to_owned),
+            completed_at: conclusion
+                .is_some()
+                .then(|| "2026-08-24T10:04:00Z".parse().expect("completion time")),
+            app: None,
+            html_url: None,
+            output: None,
+        }
     }
 
     #[test]
@@ -2627,6 +2828,202 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn check_run_fixture_keeps_a_running_check_separate_from_a_completed_one() {
+        let page: GithubCheckRunPage =
+            serde_json::from_str(include_str!("../tests/fixtures/check_runs.json"))
+                .expect("check run fixture");
+        assert_eq!(page.total_count, 3);
+        let runs = page
+            .check_runs
+            .into_iter()
+            .map(normalize_check_run)
+            .collect::<Result<Vec<_>>>()
+            .expect("normalizes");
+
+        assert_eq!(
+            runs.iter().map(|run| run.name.as_str()).collect::<Vec<_>>(),
+            ["quality", "integration", "docs"]
+        );
+        assert_eq!(
+            runs[0].status,
+            CheckStatus::Completed {
+                conclusion: CheckConclusion::Failure,
+                completed_at: "2026-08-24T10:04:00Z".parse().expect("completion time"),
+            }
+        );
+        assert_eq!(
+            runs[0].summary.as_deref(),
+            Some("clippy reported one warning")
+        );
+        let publisher = runs[0].via_app.as_ref().expect("publishing app");
+        assert_eq!(publisher.id.as_str(), "1042");
+        assert_eq!(publisher.slug, "quality-app");
+        assert_eq!(
+            runs[0].html_url.as_deref(),
+            Some("https://github.com/civitas-forge/interprex-sandbox/runs/41")
+        );
+        assert_eq!(runs[1].status, CheckStatus::InProgress);
+        assert_eq!(runs[1].summary, None);
+        assert_eq!(
+            runs[2].status,
+            CheckStatus::Completed {
+                conclusion: CheckConclusion::Skipped,
+                completed_at: "2026-08-24T10:01:00Z".parse().expect("completion time"),
+            }
+        );
+        assert_eq!(runs[2].summary, None, "blank output text is not a summary");
+        assert_eq!(runs[2].via_app, None);
+        assert_eq!(runs[2].html_url, None);
+    }
+
+    #[test]
+    fn every_status_github_reports_before_completion_keeps_its_own_meaning() {
+        for (reported, expected) in [
+            ("requested", CheckStatus::Requested),
+            ("queued", CheckStatus::Queued),
+            ("pending", CheckStatus::Pending),
+            ("waiting", CheckStatus::Waiting),
+            ("in_progress", CheckStatus::InProgress),
+        ] {
+            assert_eq!(
+                normalize_check_run(check_run(reported, None))
+                    .expect("normalizes")
+                    .status,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn a_check_suite_conclusion_is_not_a_check_run_conclusion() {
+        assert!(matches!(
+            normalize_check_run(check_run("completed", Some("startup_failure")))
+                .expect_err("a check suite conclusion must be unrepresentable on a run"),
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("unknown check run conclusion startup_failure")
+        ));
+    }
+
+    #[test]
+    fn every_check_conclusion_github_reports_is_representable() {
+        for (reported, expected) in [
+            ("success", CheckConclusion::Success),
+            ("failure", CheckConclusion::Failure),
+            ("neutral", CheckConclusion::Neutral),
+            ("cancelled", CheckConclusion::Cancelled),
+            ("timed_out", CheckConclusion::TimedOut),
+            ("action_required", CheckConclusion::ActionRequired),
+            ("skipped", CheckConclusion::Skipped),
+            ("stale", CheckConclusion::Stale),
+        ] {
+            let run = normalize_check_run(check_run("completed", Some(reported)))
+                .expect("normalizes every reported conclusion");
+            assert!(matches!(
+                run.status,
+                CheckStatus::Completed { conclusion, .. } if conclusion == expected
+            ));
+        }
+    }
+
+    #[test]
+    fn unknown_check_statuses_and_conclusions_are_unrepresentable() {
+        let unknown_status = normalize_check_run(check_run("paused", None))
+            .expect_err("unknown status must be unrepresentable");
+        assert!(matches!(
+            unknown_status,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown check run status paused")
+        ));
+
+        let unknown_conclusion = normalize_check_run(check_run("completed", Some("abandoned")))
+            .expect_err("unknown conclusion must be unrepresentable");
+        assert!(matches!(
+            unknown_conclusion,
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("unknown check run conclusion abandoned")
+        ));
+    }
+
+    #[test]
+    fn a_check_run_contradicting_its_own_status_is_unrepresentable() {
+        let mut missing_conclusion = check_run("completed", Some("success"));
+        missing_conclusion.conclusion = None;
+        assert!(matches!(
+            normalize_check_run(missing_conclusion)
+                .expect_err("completed run without a conclusion must be unrepresentable"),
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no conclusion")
+        ));
+
+        let mut missing_time = check_run("completed", Some("success"));
+        missing_time.completed_at = None;
+        assert!(matches!(
+            normalize_check_run(missing_time)
+                .expect_err("completed run without a completion time must be unrepresentable"),
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("has no completion time")
+        ));
+
+        assert!(matches!(
+            normalize_check_run(check_run("in_progress", Some("success")))
+                .expect_err("running check run with a conclusion must be unrepresentable"),
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("is in_progress and has conclusion success")
+        ));
+
+        let mut completed_while_queued = check_run("queued", None);
+        completed_while_queued.completed_at =
+            Some("2026-08-24T10:04:00Z".parse().expect("completion time"));
+        assert!(matches!(
+            normalize_check_run(completed_while_queued)
+                .expect_err("queued check run with a completion time must be unrepresentable"),
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("is queued and has a completion time")
+        ));
+    }
+
+    #[test]
+    fn every_publishable_conclusion_maps_to_a_value_github_accepts_from_a_client() {
+        for (publishable, expected) in [
+            (PublishedCheckConclusion::Success, "success"),
+            (PublishedCheckConclusion::Failure, "failure"),
+            (PublishedCheckConclusion::Neutral, "neutral"),
+            (PublishedCheckConclusion::Cancelled, "cancelled"),
+            (PublishedCheckConclusion::TimedOut, "timed_out"),
+            (PublishedCheckConclusion::ActionRequired, "action_required"),
+            (PublishedCheckConclusion::Skipped, "skipped"),
+        ] {
+            let written = super::conclusion(&publishable);
+            assert_eq!(written, expected);
+            assert_ne!(
+                written, "stale",
+                "GitHub sets stale itself and refuses it from a client"
+            );
+        }
+    }
+
+    #[test]
+    fn an_uncomputed_merge_stays_distinct_from_a_conflicted_one() {
+        let mergeability = |mergeable: Option<bool>| {
+            let mut pull_request: GithubPullRequest =
+                serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                    .expect("pull request fixture");
+            pull_request.mergeable = mergeable;
+            normalize_change_request(
+                pull_request,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("normalizes")
+            .mergeability
+        };
+
+        assert_eq!(mergeability(Some(true)), Mergeability::Mergeable);
+        assert_eq!(mergeability(Some(false)), Mergeability::Conflicted);
+        assert_eq!(mergeability(None), Mergeability::Unknown);
+    }
+
     #[tokio::test]
     async fn app_only_check_uses_the_named_app_client() {
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -2670,7 +3067,7 @@ mod tests {
                 &CheckOutcome {
                     name: "reviewer".to_owned(),
                     head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-                    conclusion: CheckConclusion::Success,
+                    conclusion: PublishedCheckConclusion::Success,
                     summary: "settled".to_owned(),
                 },
             )

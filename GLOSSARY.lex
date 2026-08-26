@@ -23,14 +23,23 @@ Glossary
         `refs/heads/<branch>`. It is both how a caller holding only its
         checkout addresses the open change requests that propose it and what
         an observed change request reports, so the two agree.
+    mergeability:
+        Whether the platform found a conflict between a change request's source
+        and its target: mergeable, conflicted, or unknown while the platform
+        has not finished computing the merge. It reports that conflict
+        computation alone. A mergeable change request can still be one the
+        platform refuses to merge over required checks, approvals or branch
+        rules.
     code review:
         The domain that acts on change requests so merging can be approved.
-        It covers reviews, findings, standalone threads, unanchored
-        comments, review requests and check results.
+        It covers mergeability, reviews, findings, standalone threads,
+        unanchored comments, review requests, the checks on a commit and
+        published check results.
     review:
         One provider review record acting on a change request: its author,
-        reviewing application when known, reviewed head commit, summary and
-        findings. Its state distinguishes a draft from a submitted review.
+        the provider application that produced it when known, reviewed head
+        commit, summary and findings. Its state distinguishes a draft from a
+        submitted review.
     finding:
         An inline review thread attached to the review in which it
         originated. Its initial comment, replies, source location,
@@ -60,10 +69,21 @@ Glossary
         time belongs to the request still standing, and it is absent when the
         provider matches the request to no retained request event, as it never
         can for a target the provider cannot identify.
-    reviewing application:
-        The provider application through which an actor created or submitted
-        a review (`via_app`). It is attribution, not the actor and not the
-        authentication identity.
+    check:
+        One recorded verification of a commit, with its name, the commit, its
+        status, the application that published it, its published summary and
+        its location. A check that has not finished carries the platform's own
+        unfinished status and no conclusion; a completed check carries its
+        conclusion and the time it finished. A name identifies at most one
+        check within one platform grouping of checks, so several checks on one
+        commit can share a name and a read returns all of them. On GitHub these
+        are check runs, grouped into check suites; GitHub's separate legacy
+        commit statuses are not read.
+    provider application:
+        The application through which an actor created or submitted a review,
+        or that published a check (`via_app`). It is attribution, not the
+        actor and not the authentication identity. A required-check rule can
+        name the application that must publish a check.
     authentication identity:
         The principal under which a provider authenticates an operation,
         such as a GitHub user or a named app installation. It is never who a

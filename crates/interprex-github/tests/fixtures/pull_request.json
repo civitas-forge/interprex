@@ -6,6 +6,7 @@
   "merged": false,
   "merged_at": null,
   "draft": true,
+  "mergeable": true,
   "head": {
     "ref": "feature",
     "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

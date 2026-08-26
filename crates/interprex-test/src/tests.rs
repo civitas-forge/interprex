@@ -2,13 +2,14 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestHead, ChangeRequestNumber,
-    ChangeRequestState, CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
-    FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
-    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ChangeRequestState, CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp,
+    ProviderAppId, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
+    RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
+    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
+    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -36,6 +37,7 @@ fn change_request(
         },
         base_branch: "main".to_owned(),
         head: Some(head),
+        mergeability: Mergeability::Unknown,
         author: ReviewActor {
             id: ReviewActorId::new("actor-author").expect("actor id"),
             login: "author".to_owned(),
@@ -223,6 +225,7 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         commit_range: range.clone(),
         base_branch: "main".to_owned(),
         head: Some(head(&repository, "refs/heads/review-threads")),
+        mergeability: Mergeability::Conflicted,
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
         reviews: vec![Review {
@@ -461,6 +464,82 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     assert_eq!(
         finding.replies[finding.replies.len() - 2].body,
         "Addressed by validating the range before indexing."
+    );
+}
+
+#[tokio::test]
+async fn consumer_observes_seeded_checks_per_commit_through_the_contract() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    assert!(
+        provider
+            .checks(&repository, "head")
+            .await
+            .expect("checks")
+            .is_empty(),
+        "a commit with no seeded checks has none"
+    );
+
+    let runs = vec![
+        CheckRun {
+            name: "quality".to_owned(),
+            head_sha: "head".to_owned(),
+            via_app: Some(ProviderApp {
+                id: ProviderAppId::new("1042").expect("app id"),
+                slug: "quality-app".to_owned(),
+                name: "Quality App".to_owned(),
+            }),
+            status: CheckStatus::Completed {
+                conclusion: CheckConclusion::Failure,
+                completed_at: "2026-08-25T09:40:00Z".parse().expect("timestamp"),
+            },
+            summary: Some("clippy reported one warning".to_owned()),
+            html_url: Some("https://github.invalid/runs/1".to_owned()),
+        },
+        CheckRun {
+            name: "integration".to_owned(),
+            head_sha: "head".to_owned(),
+            via_app: None,
+            status: CheckStatus::InProgress,
+            summary: None,
+            html_url: None,
+        },
+        CheckRun {
+            name: "quality".to_owned(),
+            head_sha: "other-head".to_owned(),
+            via_app: None,
+            status: CheckStatus::Queued,
+            summary: None,
+            html_url: None,
+        },
+    ];
+    provider
+        .seed_check_runs(repository.clone(), runs.clone())
+        .await;
+
+    assert_eq!(
+        provider.checks(&repository, "head").await.expect("checks"),
+        runs[..2],
+        "a commit observes the runs that name it"
+    );
+    assert_eq!(
+        provider
+            .checks(&repository, "other-head")
+            .await
+            .expect("checks"),
+        runs[2..],
+        "a run seeded in the same call belongs to the commit it names"
+    );
+    assert!(
+        provider
+            .checks(
+                &Repository::new("other", "sandbox").expect("repository"),
+                "head"
+            )
+            .await
+            .expect("checks")
+            .is_empty(),
+        "checks belong to the repository they were seeded in"
     );
 }
 

@@ -1,0 +1,61 @@
+{
+  "total_count": 3,
+  "check_runs": [
+    {
+      "id": 41,
+      "name": "quality",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-08-24T10:00:00Z",
+      "completed_at": "2026-08-24T10:04:00Z",
+      "output": {
+        "title": "quality",
+        "summary": "clippy reported one warning",
+        "text": null
+      },
+      "html_url": "https://github.com/civitas-forge/interprex-sandbox/runs/41",
+      "app": {
+        "id": 1042,
+        "slug": "quality-app",
+        "name": "Quality App"
+      }
+    },
+    {
+      "id": 42,
+      "name": "integration",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "in_progress",
+      "conclusion": null,
+      "started_at": "2026-08-24T10:00:00Z",
+      "completed_at": null,
+      "output": {
+        "title": null,
+        "summary": null,
+        "text": null
+      },
+      "html_url": "https://github.com/civitas-forge/interprex-sandbox/runs/42",
+      "app": {
+        "id": 1042,
+        "slug": "quality-app",
+        "name": "Quality App"
+      }
+    },
+    {
+      "id": 43,
+      "name": "docs",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-08-24T10:00:00Z",
+      "completed_at": "2026-08-24T10:01:00Z",
+      "output": {
+        "title": "docs",
+        "summary": "   ",
+        "text": null
+      },
+      "html_url": null,
+      "app": null
+    }
+  ]
+}

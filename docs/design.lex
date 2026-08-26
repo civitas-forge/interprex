@@ -41,9 +41,10 @@ Design
     tracker:
         Issues and labels.
     code review:
-        Change requests, reviews and their findings, standalone threads,
-        unanchored comments, finding resolutions, outstanding review requests,
-        check results and the draft-to-ready transition.
+        Change requests, their mergeability, reviews and their findings,
+        standalone threads, unanchored comments, finding resolutions,
+        outstanding review requests, the checks on a commit, published check
+        results and the draft-to-ready transition.
     jobs:
         Dispatch, run observation and cancellation.
     releases:
@@ -134,6 +135,107 @@ Design
     historical base commit for each review. Interprex does not pair a historical
     head with the current base and present it as a historical range.
 
+    `ChangeRequest::mergeability` carries the platform's answer for the current
+    source and target: mergeable, conflicted, or unknown. GitHub starts
+    computing the merge when a read arrives and reports `null` until that
+    computation finishes, so unknown is an observed platform state rather than
+    a read that failed or a value Interprex chose in place of one.
+
+    GitHub's `mergeable_state` string is deliberately absent from the model.
+    Its `clean`, `dirty` and `unknown` values restate mergeability, while
+    `blocked`, `behind`, `unstable` and `draft` are the verdict of GitHub's own
+    policy evaluation over required checks, approvals, branch currency and the
+    draft flag. That verdict is the answer [#5] leaves to the caller, so
+    Interprex returns the observed facts it owns instead: mergeability, checks,
+    reviews, `base_branch` for selecting the rules that govern the target, and
+    `draft`. It does not claim those facts reconstruct GitHub's verdict.
+    Branch currency, for one, is a git fact that [#1] keeps outside this
+    library, and a caller that needs it compares the commits itself.
+
+    `CodeReviewsProvider::checks` reads the current checks on one commit,
+    completely paginated. A caller reads them for whichever commit it
+    cares about, usually the change request's current head. The request sends
+    GitHub's `filter=latest` explicitly, which scopes the answer to the current
+    run of each check within each check suite. A rerun inside a suite replaces
+    the run it repeated, so no superseded run is reported and a caller that
+    wants the earlier runs cannot get them here.
+
+    A name identifies at most one run inside a suite, and a commit carries as
+    many suites as were triggered on it. Several runs on one commit can
+    therefore share a name: two applications publishing the same check, or one
+    application whose workflow ran twice. Interprex returns every one of them.
+    Collapsing them would mean choosing which run answers for that name, and
+    that choice belongs to the caller, which has `via_app`, the status and the
+    completion time to make it. GitHub's own required-status-check rules face
+    the same ambiguity and resolve it by context and `integration_id`.
+
+    GitHub also answers from at most the 1,000 most recent check suites on a
+    commit and gives no signal that it stopped there, so a commit past that
+    limit is reported short; the trait documents that limit alongside the
+    read.
+
+    `CheckStatus` holds the conclusion inside its completed variant, following
+    `ReviewState`: a check that has not finished has no conclusion to report,
+    so no combination of the returned facts can contradict itself.
+    `CheckStatus::conclusion` returns that conclusion, or nothing while the
+    check is unfinished, for a caller that needs only this much.
+
+    The variants before `Completed` are GitHub's own unfinished statuses, one
+    each for `requested`, `queued`, `pending`, `waiting` and `in_progress`.
+    They stay distinct because they do not mean the same thing to a person
+    waiting on the check: queued is progress, while a run held back by a
+    concurrency limit or an unsatisfied deployment protection rule is not, and
+    Interprex does not decide which of those distinctions a caller reports on.
+    `Pending` therefore names the one state GitHub calls `pending`, not every
+    unfinished one.
+
+    `CheckConclusion` covers the conclusions a check run reports, so a read
+    never discards one. It holds one value GitHub's documented response enum
+    omits, `stale`, which GitHub sets on a run itself. It omits
+    `startup_failure`: GitHub reports that for a check suite that failed before
+    its runs began and states that it does not apply to check runs, so a run
+    reporting it is unrepresentable data rather than a modelled state, and the
+    jobs domain keeps `RunConclusion::StartupFailure`, where it is observable.
+
+    The observed `CheckRun` stays separate from the written `CheckOutcome`,
+    which always carries a conclusion because Interprex publishes only finished
+    results. Their conclusion vocabularies are separate for the same reason
+    `ReviewRequestTarget` is narrower than `ReviewTarget`: GitHub sets `stale`
+    on a check run itself and refuses that conclusion from a client, so
+    `CheckOutcome` uses `PublishedCheckConclusion`, which has no such variant.
+    A request GitHub would reject is therefore not constructible rather than
+    checked at the boundary.
+
+    A check run also carries the application that published it, as `via_app`,
+    and where a person can read it, as `html_url`. A required-status-check rule
+    names the check by context and may also name the application that must
+    publish it, as `RequiredCheck::integration_id`. Both identifiers hold the
+    same GitHub app identifier in different types: an integer in the rule, and
+    its decimal spelling in the opaque `ProviderApp::id`, which is opaque
+    because other providers need not identify applications by number. A caller
+    comparing them compares those two spellings. Interprex returns both facts
+    and compares neither, and one provider-neutral identifier type across both
+    domains would belong to a change that owns `RequiredCheck`.
+
+    A status GitHub adds later, a conclusion Interprex does not model, a
+    completed check missing its conclusion or completion time, and a running
+    check that reports either, are all returned as unrepresentable data.
+
+    GitHub returns check runs in an envelope keyed `check_runs` beside a
+    `total_count` rather than as a bare array. Octocrab's `Page` recognizes a
+    fixed set of envelope keys that excludes this one, so this read pages by
+    number instead of following `Link` headers, and stops at a short page or
+    once it holds the reported total.
+
+    GitHub's legacy commit statuses are a separate mechanism from check runs,
+    with their own endpoint. This domain reads check runs only, so a caller
+    that needs commit statuses cannot obtain them here.
+
+    Interprex does not intersect check names with a ruleset's required check
+    names, decide that a change request is ready, or answer whether the
+    platform would accept the merge. Those are caller decisions over the
+    returned facts.
+
     Every review record remains independent, including repeated reviews by the
     same actor against the same head and reviews without findings. Collection
     order carries no policy meaning. A draft review has `ReviewState::Draft`. A
@@ -157,8 +259,8 @@ Design
     `ReviewAuthor::relationship` returns the category and
     `ReviewAuthor::actor` returns the actor, using the change request's author
     for the change-author variant. `via_app` separately attributes the
-    reviewing application. Neither the author nor the app is the
-    authentication identity.
+    provider application that produced the review. Neither the author nor the
+    app is the authentication identity.
 
     A caller may decide that only `other` reviews count as independent evidence.
     Interprex does not make that policy decision, and `unknown` never becomes

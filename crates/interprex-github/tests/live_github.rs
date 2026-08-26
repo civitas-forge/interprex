@@ -236,6 +236,16 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .map(|finding| &finding.thread)
         .chain(change_request.standalone_threads.iter())
         .collect::<Vec<_>>();
+    let checks = provider
+        .checks(&repository, &change_request.commit_range.head_sha)
+        .await
+        .expect("read the checks on the observed head commit");
+    assert!(checks.iter().all(|run| !run.name.is_empty()));
+    assert!(checks.iter().all(|run| !run.head_sha.is_empty()));
+    let unfinished_check_count = checks
+        .iter()
+        .filter(|run| run.status.conclusion().is_none())
+        .count();
     let open_finding_count = findings
         .iter()
         .filter(|thread| thread.status == ReviewThreadStatus::Open)
@@ -246,8 +256,9 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .count();
     assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "change request {}: {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} standalone threads, {} unanchored comments, {} outstanding requests",
+        "change request {}: mergeability {:?}, {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} standalone threads, {} unanchored comments, {} outstanding requests, {} checks ({} unfinished)",
         number.get(),
+        change_request.mergeability,
         change_request.reviews.len(),
         author_review_count,
         other_review_count,
@@ -258,7 +269,9 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         resolved_finding_count,
         change_request.standalone_threads.len(),
         change_request.unanchored_comments.len(),
-        change_request.outstanding_requests.len()
+        change_request.outstanding_requests.len(),
+        checks.len(),
+        unfinished_check_count
     );
 }
 

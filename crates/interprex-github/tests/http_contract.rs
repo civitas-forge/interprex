@@ -10,10 +10,10 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetId, AssetStreamError, AssetUpload, ChangeRequestHead, ChangeRequestNumber,
-    ChangeRequestState, CodeHostingProvider, CodeReviewsProvider, DispatchInputs,
-    FindingResolution, FindingResolutionReason, FindingResolutionReply, FindingSeverity,
-    IssueNumber, IssuesProvider, JobsProvider, ReleaseId, ReleasesProvider, Repository,
-    RepositorySettings, ReviewRequestTarget, ReviewThreadId,
+    ChangeRequestState, CheckConclusion, CheckStatus, CodeHostingProvider, CodeReviewsProvider,
+    DispatchInputs, FindingResolution, FindingResolutionReason, FindingResolutionReply,
+    FindingSeverity, IssueNumber, IssuesProvider, JobsProvider, Mergeability, ReleaseId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -669,6 +669,7 @@ async fn code_review_domain_reads_one_complete_observation() {
         "the re-request on the second timeline page supersedes the removal on the first"
     );
     assert_eq!(change_request.unanchored_comments.len(), 1);
+    assert_eq!(change_request.mergeability, Mergeability::Mergeable);
     let requests = requests.await.expect("captured requests");
     assert_user_request(
         &requests[0],
@@ -838,6 +839,117 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
         "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 ",
     );
     assert_user_request(&requests[4], "POST /graphql ");
+}
+
+fn check_run_page(names: impl IntoIterator<Item = String>, total_count: usize) -> String {
+    let runs = names
+        .into_iter()
+        .map(|name| {
+            serde_json::json!({
+                "name": name,
+                "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "status": "completed",
+                "conclusion": "success",
+                "completed_at": "2026-08-24T10:04:00Z",
+                "app": { "id": 1042, "slug": "quality-app", "name": "Quality App" },
+                "html_url": "https://github.invalid/runs/1",
+                "output": { "title": name, "summary": "settled" }
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "total_count": total_count, "check_runs": runs }).to_string()
+}
+
+#[tokio::test]
+async fn code_review_domain_returns_check_runs_from_every_page() {
+    let full_page = check_run_page((1..=100).map(|index| format!("check-{index}")), 101);
+    // The last page repeats a name from the first page, as a second check
+    // suite on the same commit does.
+    let last_page = serde_json::json!({
+        "total_count": 101,
+        "check_runs": [{
+            "name": "check-1",
+            "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "in_progress",
+            "conclusion": null,
+            "completed_at": null,
+            "app": { "id": 2087, "slug": "rerun-app", "name": "Rerun App" },
+            "html_url": null,
+            "output": { "title": null, "summary": null }
+        }]
+    })
+    .to_string();
+    let (uri, requests) = json_responses(vec![full_page, last_page]).await;
+
+    let runs = provider(uri)
+        .checks(&repository(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .expect("check runs");
+
+    assert_eq!(runs.len(), 101);
+    assert_eq!(runs[0].name, "check-1");
+    assert_eq!(
+        runs[0]
+            .via_app
+            .as_ref()
+            .map(|app| app.id.as_str().to_owned()),
+        Some("1042".to_owned()),
+        "the publishing app is the identifier a ruleset names as integration_id"
+    );
+    assert_eq!(
+        runs[0].status,
+        CheckStatus::Completed {
+            conclusion: CheckConclusion::Success,
+            completed_at: "2026-08-24T10:04:00Z".parse().expect("completion time"),
+        }
+    );
+    assert_eq!(
+        runs[100].name, "check-1",
+        "a run sharing a name with another is returned, not collapsed into it"
+    );
+    assert_eq!(runs[100].status, CheckStatus::InProgress);
+    assert_eq!(
+        runs[100]
+            .via_app
+            .as_ref()
+            .map(|app| app.id.as_str().to_owned()),
+        Some("2087".to_owned())
+    );
+
+    let requests = timeout(Duration::from_secs(1), requests)
+        .await
+        .expect("provider read both pages")
+        .expect("captured requests");
+    assert_eq!(requests.len(), 2);
+    assert_user_request(
+        &requests[0],
+        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[1],
+        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=2&filter=latest ",
+    );
+}
+
+#[tokio::test]
+async fn code_review_domain_stops_reading_check_runs_at_the_reported_total() {
+    let full_page = check_run_page((1..=100).map(|index| format!("check-{index}")), 100);
+    let (uri, requests) = json_responses(vec![full_page]).await;
+
+    let runs = provider(uri)
+        .checks(&repository(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .await
+        .expect("check runs");
+
+    assert_eq!(runs.len(), 100);
+    assert_eq!(
+        timeout(Duration::from_secs(1), requests)
+            .await
+            .expect("provider read one page")
+            .expect("captured requests")
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
