@@ -451,6 +451,27 @@ async fn code_review_domain_resolves_a_scoped_review_thread_handle() {
 }
 
 #[tokio::test]
+async fn code_review_domain_rejects_an_unconfirmed_thread_resolution() {
+    let (uri, _request) = server(
+        "200 OK",
+        "application/json",
+        r#"{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_kwDOOther","isResolved":false}}}}"#,
+    )
+    .await;
+    let error = provider(uri)
+        .resolve_thread(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &ReviewThreadId::new("PRRT_kwDOExample").expect("thread id"),
+        )
+        .await
+        .expect_err("mismatched unresolved response must fail");
+
+    assert!(error.to_string().contains("isResolved=false"));
+    assert!(error.to_string().contains("PRRT_kwDOOther"));
+}
+
+#[tokio::test]
 async fn code_review_domain_records_a_finding_resolution_before_resolving_the_thread() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json").to_owned(),

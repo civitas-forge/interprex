@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, FindingResolution,
-    Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment,
-    ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewTarget, ReviewTeam,
-    ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
+    FindingResolutionRecord, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
+    ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -74,25 +74,37 @@ impl CodeReviewsProvider for FakeProvider {
             .flat_map(|review| review.findings.iter_mut())
             .find(|thread| &thread.id == thread_id)
             .ok_or_else(|| missing(format!("finding thread {}", thread_id.as_str())))?;
-        let reply_id = ReviewCommentId::new(format!("fake-resolution:{}", thread_id.as_str()))
-            .expect("fake resolution identity is nonempty");
-        if let Some(existing) = finding
-            .replies
-            .iter_mut()
-            .find(|comment| comment.id == reply_id)
+        if finding
+            .resolution
+            .as_ref()
+            .is_some_and(|record| record.resolution == resolution)
         {
-            existing.body = reply.to_owned();
-            existing.updated_at = Some(written_at);
-        } else {
-            finding.replies.push(ReviewComment {
-                id: reply_id,
-                author,
-                body: reply.to_owned(),
-                created_at: written_at,
-                updated_at: None,
-            });
+            finding.status = ReviewThreadStatus::Resolved;
+            return Ok(());
         }
-        finding.resolution = Some(resolution);
+        let reply_number = finding
+            .replies
+            .iter()
+            .filter(|comment| comment.id.as_str().starts_with("fake-resolution:"))
+            .count()
+            + 1;
+        let reply_id = ReviewCommentId::new(format!(
+            "fake-resolution:{}:{reply_number}",
+            thread_id.as_str()
+        ))
+        .expect("fake resolution identity is nonempty");
+        let source_reply = ReviewComment {
+            id: reply_id,
+            author,
+            body: reply.to_owned(),
+            created_at: written_at,
+            updated_at: None,
+        };
+        finding.replies.push(source_reply.clone());
+        finding.resolution = Some(FindingResolutionRecord {
+            resolution,
+            source_reply,
+        });
         finding.status = ReviewThreadStatus::Resolved;
         Ok(())
     }

@@ -130,11 +130,14 @@ Design
     `FindingResolutionReason` has the same variants and serialized spellings as
     GitHub's `PullRequestReviewThreadResolutionReason`: `ADDRESSED` means the
     review comment was addressed, `INVALID` means the comment is invalid and
-    `WONT_FIX` means it will not be addressed. `FindingResolution` records that
-    reason with the addressing user's severity assessment. It does not replace
-    `ReviewThreadStatus`: a manually resolved or legacy thread can have no
-    finding resolution, and an interrupted provider operation can record a
-    finding resolution before the platform thread becomes resolved.
+    `WONT_FIX` means it will not be addressed. `FindingResolution` contains that
+    reason and the addressing user's severity assessment.
+    `FindingResolutionRecord` also retains the reply that identifies the actor,
+    explanation and timestamps. It does not replace `ReviewThreadStatus`: a
+    manually resolved or legacy thread can have no finding resolution, and an
+    interrupted provider operation can record a finding resolution before the
+    platform thread becomes resolved. Standalone threads never contain a
+    finding resolution.
 
     `CodeReviewsProvider::resolve_finding` takes the conclusion, addressing
     severity and visible explanatory reply. A successful operation records the

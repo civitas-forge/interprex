@@ -12,13 +12,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestNumber, CheckConclusion, CheckOutcome, CodeReviewsProvider,
-    CommitRange, FindingResolution, FindingResolutionReason, FindingSeverity, OpenClosed,
-    ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment, ReviewCommentId,
-    ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation,
-    ReviewRelationship, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewState,
-    ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId,
-    ReviewThreadStatus, ReviewedRevision,
+    CommitRange, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
+    FindingSeverity, OpenClosed, ProviderError, Repository, Result, Review, ReviewActor,
+    ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,40 @@ mutation AddPullRequestReviewThreadReply($threadId: ID!, $body: String!) {
   ) { comment { id } }
 }"#;
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolveThreadData {
+    resolve_review_thread: ResolveThreadPayload,
+}
+
+#[derive(Deserialize)]
+struct ResolveThreadPayload {
+    thread: ResolvedThread,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolvedThread {
+    id: String,
+    is_resolved: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AddThreadReplyData {
+    add_pull_request_review_thread_reply: AddThreadReplyPayload,
+}
+
+#[derive(Deserialize)]
+struct AddThreadReplyPayload {
+    comment: AddedThreadReply,
+}
+
+#[derive(Deserialize)]
+struct AddedThreadReply {
+    id: String,
+}
+
 const FINDING_RESOLUTION_META_START: &str = "<!-- interprex:finding-resolution\n";
 const FINDING_RESOLUTION_META_END: &str = "\n-->";
 const FINDING_RESOLUTION_META_VERSION: u8 = 1;
@@ -165,13 +199,19 @@ fn github_resolution_reply(resolution: FindingResolution, reply: &str) -> String
 }
 
 fn finding_resolution(body: &str) -> Option<FindingResolution> {
-    let start = body.rfind(FINDING_RESOLUTION_META_START)? + FINDING_RESOLUTION_META_START.len();
-    let metadata = body[start..].split_once(FINDING_RESOLUTION_META_END)?.0;
-    let metadata: GithubFindingResolution = serde_json::from_str(metadata).ok()?;
-    (metadata.version == FINDING_RESOLUTION_META_VERSION).then_some(FindingResolution {
-        reason: metadata.resolution_reason,
-        addressing_severity: metadata.addressing_severity,
-    })
+    body.match_indices(FINDING_RESOLUTION_META_START)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .find_map(|(marker_start, _)| {
+            let start = marker_start + FINDING_RESOLUTION_META_START.len();
+            let metadata = body[start..].split_once(FINDING_RESOLUTION_META_END)?.0;
+            let metadata: GithubFindingResolution = serde_json::from_str(metadata).ok()?;
+            (metadata.version == FINDING_RESOLUTION_META_VERSION).then_some(FindingResolution {
+                reason: metadata.resolution_reason,
+                addressing_severity: metadata.addressing_severity,
+            })
+        })
 }
 
 const MARK_READY: &str = r#"
@@ -786,10 +826,22 @@ fn normalize_change_request(
         let replies = comments
             .map(normalize_comment)
             .collect::<Result<Vec<_>>>()?;
-        let resolution = replies
-            .iter()
-            .filter_map(|comment| finding_resolution(&comment.body))
-            .next_back();
+        let resolution = review_position
+            .is_some()
+            .then(|| {
+                replies
+                    .iter()
+                    .filter_map(|comment| {
+                        finding_resolution(&comment.body).map(|resolution| {
+                            FindingResolutionRecord {
+                                resolution,
+                                source_reply: comment.clone(),
+                            }
+                        })
+                    })
+                    .next_back()
+            })
+            .flatten();
         let normalized = ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
                 provider: "github",
@@ -1076,7 +1128,7 @@ impl CodeReviewsProvider for GithubProvider {
         _number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
     ) -> Result<()> {
-        let _: serde_json::Value = self
+        let response: ResolveThreadData = self
             .user()?
             .graphql(&json!({
                 "query": RESOLVE_THREAD,
@@ -1084,7 +1136,21 @@ impl CodeReviewsProvider for GithubProvider {
             }))
             .await
             .map_err(|error| external("resolve review thread", error))?;
-        Ok(())
+        let resolved = response.resolve_review_thread.thread;
+        if resolved.id == thread_id.as_str() && resolved.is_resolved {
+            Ok(())
+        } else {
+            Err(ProviderError::External {
+                provider: "github",
+                operation: "resolve review thread",
+                message: format!(
+                    "GitHub returned thread {} with isResolved={} for requested thread {}",
+                    resolved.id,
+                    resolved.is_resolved,
+                    thread_id.as_str()
+                ),
+            })
+        }
     }
 
     async fn resolve_finding(
@@ -1104,7 +1170,11 @@ impl CodeReviewsProvider for GithubProvider {
             .ok_or_else(|| ProviderError::NotFound {
                 entity: format!("finding thread {}", thread_id.as_str()),
             })?;
-        if finding.resolution == Some(resolution) {
+        if finding
+            .resolution
+            .as_ref()
+            .is_some_and(|record| record.resolution == resolution)
+        {
             return if finding.status == ReviewThreadStatus::Resolved {
                 Ok(())
             } else {
@@ -1113,7 +1183,7 @@ impl CodeReviewsProvider for GithubProvider {
         }
         let already_resolved = finding.status == ReviewThreadStatus::Resolved;
         let body = github_resolution_reply(resolution, reply);
-        let _: serde_json::Value = self
+        let response: AddThreadReplyData = self
             .user()?
             .graphql(&json!({
                 "query": ADD_THREAD_REPLY,
@@ -1121,6 +1191,18 @@ impl CodeReviewsProvider for GithubProvider {
             }))
             .await
             .map_err(|error| external("record finding resolution", error))?;
+        if response
+            .add_pull_request_review_thread_reply
+            .comment
+            .id
+            .is_empty()
+        {
+            return Err(ProviderError::External {
+                provider: "github",
+                operation: "record finding resolution",
+                message: "GitHub returned an empty reply identifier".to_owned(),
+            });
+        }
         if already_resolved {
             Ok(())
         } else {
@@ -1259,6 +1341,22 @@ mod tests {
             finding_resolution("<!-- interprex:finding-resolution\nnot json\n-->"),
             None
         );
+
+        let valid = github_resolution_reply(
+            FindingResolution {
+                reason: FindingResolutionReason::Invalid,
+                addressing_severity: FindingSeverity::Nit,
+            },
+            "Valid record before malformed trailing metadata.",
+        );
+        let body = format!("{valid}\n\n<!-- interprex:finding-resolution\nnot json\n-->");
+        assert_eq!(
+            finding_resolution(&body),
+            Some(FindingResolution {
+                reason: FindingResolutionReason::Invalid,
+                addressing_severity: FindingSeverity::Nit,
+            })
+        );
     }
 
     #[test]
@@ -1325,7 +1423,10 @@ mod tests {
         assert_eq!(finding.replies.len(), 1);
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
-        assert_eq!(finding.resolution, Some(expected_resolution));
+        let record = finding.resolution.as_ref().expect("resolution record");
+        assert_eq!(record.resolution, expected_resolution);
+        assert_eq!(record.source_reply, finding.replies[0]);
+        assert_eq!(record.source_reply.author.login, "arthur-debert");
         assert_eq!(
             change_request.reviews[0]
                 .via_app
@@ -1594,6 +1695,13 @@ mod tests {
             .first_mut()
             .expect("initial comment")
             .pull_request_review = None;
+        thread.comments.nodes[1].body = github_resolution_reply(
+            FindingResolution {
+                reason: FindingResolutionReason::Addressed,
+                addressing_severity: FindingSeverity::Minor,
+            },
+            "Marker text on a standalone thread.",
+        );
 
         let change_request = normalize_change_request(
             pull_request,
@@ -1609,6 +1717,7 @@ mod tests {
             change_request.standalone_threads[0].id.as_str(),
             expected_id
         );
+        assert_eq!(change_request.standalone_threads[0].resolution, None);
         assert_eq!(
             change_request
                 .reviews

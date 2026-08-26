@@ -240,6 +240,16 @@ pub struct FindingResolution {
     pub addressing_severity: FindingSeverity,
 }
 
+/// One observed finding resolution and the reply that recorded it.
+///
+/// The source reply preserves the addressing actor, explanation and platform
+/// timestamps without requiring callers to parse provider-specific metadata.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FindingResolutionRecord {
+    pub resolution: FindingResolution,
+    pub source_reply: ReviewComment,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewComment {
     pub id: ReviewCommentId,
@@ -294,8 +304,11 @@ pub struct ReviewThread {
     pub location: ReviewLocation,
     pub outdated: bool,
     pub status: ReviewThreadStatus,
-    /// The latest valid resolution record found in this thread's replies.
-    pub resolution: Option<FindingResolution>,
+    /// The recorded conclusion when this thread is a finding.
+    ///
+    /// Standalone threads always contain `None` because finding resolutions
+    /// are conclusions about review findings, not arbitrary inline threads.
+    pub resolution: Option<FindingResolutionRecord>,
     pub comment: ReviewComment,
     pub replies: Vec<ReviewComment>,
 }

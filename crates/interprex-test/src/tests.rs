@@ -286,10 +286,84 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         .expect("review");
     let finding = &observed.reviews[0].findings[0];
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
-    assert_eq!(finding.resolution, Some(resolution));
+    let record = finding.resolution.as_ref().expect("resolution record");
+    assert_eq!(record.resolution, resolution);
+    assert_eq!(record.source_reply.author.login, "author");
+    assert_eq!(record.source_reply, *finding.replies.last().expect("reply"));
     assert_eq!(
         finding.replies.last().map(|comment| comment.body.as_str()),
         Some("Addressed by validating the range before indexing.")
+    );
+
+    let reply_count = finding.replies.len();
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            "A retry must not replace the recorded explanation.",
+        )
+        .await
+        .expect("repeat identical resolution");
+    let repeated = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after retry");
+    assert_eq!(repeated.reviews[0].findings[0].replies.len(), reply_count);
+
+    let mut partial_write = repeated;
+    partial_write.reviews[0].findings[0].status = ReviewThreadStatus::Open;
+    provider
+        .seed_change_request(repository.clone(), partial_write)
+        .await;
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            "A partial-write retry only resolves the existing thread.",
+        )
+        .await
+        .expect("recover partial resolution write");
+    let recovered = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after partial-write retry");
+    assert_eq!(
+        recovered.reviews[0].findings[0].status,
+        ReviewThreadStatus::Resolved
+    );
+    assert_eq!(recovered.reviews[0].findings[0].replies.len(), reply_count);
+
+    let replacement = FindingResolution {
+        reason: FindingResolutionReason::WontFix,
+        addressing_severity: FindingSeverity::Minor,
+    };
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            replacement,
+            "The compatibility cost is not justified.",
+        )
+        .await
+        .expect("record changed resolution");
+    let replaced = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after changed resolution");
+    let finding = &replaced.reviews[0].findings[0];
+    assert_eq!(finding.replies.len(), reply_count + 1);
+    assert_eq!(
+        finding.resolution.as_ref().map(|record| record.resolution),
+        Some(replacement)
+    );
+    assert_eq!(
+        finding.replies[finding.replies.len() - 2].body,
+        "Addressed by validating the range before indexing."
     );
 }
 

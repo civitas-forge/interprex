@@ -301,7 +301,10 @@ async fn configured_finding_resolution_round_trips_through_the_real_provider() {
         .find(|finding| finding.id == thread_id)
         .expect("configured finding remains observable");
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
-    assert_eq!(finding.resolution, Some(expected));
+    let record = finding.resolution.as_ref().expect("resolution record");
+    assert_eq!(record.resolution, expected);
+    assert!(!record.source_reply.author.login.is_empty());
+    assert!(finding.replies.contains(&record.source_reply));
     assert!(finding.replies.iter().any(|reply| {
         reply
             .body

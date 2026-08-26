@@ -67,8 +67,8 @@ and `WONT_FIX` when it will not be addressed. It also records the addressing
 user's severity assessment. This conclusion is separate from the platform
 thread's open or resolved status: manual and legacy resolutions may have no
 Interprex conclusion, while a partially completed write may leave a conclusion
-on a platform thread that is still open. Interprex does not derive rounds, stale
-reviewers, severity or next actions from review text.
+on a platform thread that is still open. Interprex does not infer rounds, stale
+reviewers, severity or next actions from unstructured review prose.
 
 ## 4. Workspace Crates
 

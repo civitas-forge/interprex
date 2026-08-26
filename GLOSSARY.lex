@@ -29,9 +29,11 @@ Glossary
         status remain together.
     finding resolution:
         The addressing user's recorded `ADDRESSED`, `INVALID` or `WONT_FIX`
-        reason, together with that user's severity assessment. The values match
-        GitHub's `PullRequestReviewThreadResolutionReason` enum. This conclusion
-        is separate from the platform thread's open or resolved status.
+        reason, together with that user's severity assessment and the reply
+        that supplies the actor, explanation and timestamps. The values match
+        GitHub's `PullRequestReviewThreadResolutionReason` enum. This
+        conclusion is separate from the platform thread's open or resolved
+        status.
     addressing severity:
         The `critical`, `major`, `minor` or `nit` effect assigned by the user
         resolving a finding. It need not match a severity stated by the
