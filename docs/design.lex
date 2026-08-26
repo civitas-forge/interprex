@@ -135,17 +135,19 @@ Design
     reason and the addressing user's severity assessment.
     `FindingResolutionRecord` links to the reply that identifies the actor,
     explanation and timestamps. Its supported variant contains the understood
-    conclusion; its unsupported variant preserves a newer metadata version
-    without treating an older record as current. It does not replace
+    conclusion; its unsupported variant preserves a provider-defined opaque
+    metadata-format identifier without treating an older record as current. It
+    does not replace
     `ReviewThreadStatus`: a manually resolved or legacy thread can have no
     finding resolution, and an interrupted provider operation can record a
     finding resolution before the platform thread becomes resolved. Standalone
     `ReviewThread` values have no finding-resolution field.
 
     `CodeReviewsProvider::resolve_finding` takes the conclusion, addressing
-    severity and visible explanatory reply. A successful operation records the
-    reply and marks the platform thread resolved. Providers may need multiple
-    platform requests, so an error can follow a partial write; a later
+    severity and a `FindingResolutionReply`, whose constructor rejects blank
+    explanations. A successful operation records the reply and marks the
+    platform thread resolved. Providers may need multiple platform requests, so
+    an error can follow a partial write; a later
     observation preserves the recorded conclusion and platform status as
     separate facts. Before adding a reply, the GitHub adapter reads the finding.
     Repeating the same recorded conclusion does not add another reply; if the

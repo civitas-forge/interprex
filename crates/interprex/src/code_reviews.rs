@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{OpenClosed, Repository, Result};
+use crate::{ModelError, OpenClosed, Repository, Result};
 
 platform_number!(ChangeRequestNumber);
 platform_number!(ReviewLine);
@@ -240,6 +240,42 @@ pub struct FindingResolution {
     pub addressing_severity: FindingSeverity,
 }
 
+/// The nonblank visible explanation attached to a finding resolution.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FindingResolutionReply(String);
+
+impl FindingResolutionReply {
+    pub fn new(value: impl Into<String>) -> std::result::Result<Self, ModelError> {
+        let value = value.into();
+        if value.trim().is_empty() {
+            return Err(ModelError::Empty {
+                field: "finding resolution reply",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for FindingResolutionReply {
+    type Error = ModelError;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<FindingResolutionReply> for String {
+    fn from(value: FindingResolutionReply) -> Self {
+        value.0
+    }
+}
+
 /// One observed finding resolution and the reply that recorded it.
 ///
 /// The source reply identifier links to the addressing actor, explanation and
@@ -252,7 +288,7 @@ pub enum FindingResolutionRecord {
         source_reply_id: ReviewCommentId,
     },
     Unsupported {
-        metadata_version: u64,
+        metadata_format: String,
         source_reply_id: ReviewCommentId,
     },
 }
@@ -440,11 +476,11 @@ pub trait CodeReviewsProvider: Send + Sync {
     /// Records why a finding is complete, records its assessed severity and
     /// marks its platform thread resolved.
     ///
-    /// `reply` must contain visible explanatory text after trimming whitespace.
-    /// Providers may add their own visible or machine-readable representation
-    /// around it. Providers whose platforms require more than one request can
-    /// return an error after a partial write; a later observation preserves the
-    /// platform thread state and any valid resolution record independently.
+    /// `reply` contains validated visible explanatory text. Providers may add
+    /// their own visible or machine-readable representation around it.
+    /// Providers whose platforms require more than one request can return an
+    /// error after a partial write; a later observation preserves the platform
+    /// thread state and any valid resolution record independently.
     ///
     /// Repeating an already recorded resolution does not add another reply. If
     /// that record exists while the platform thread is open, the repeated call
@@ -455,7 +491,7 @@ pub trait CodeReviewsProvider: Send + Sync {
         number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
         resolution: FindingResolution,
-        reply: &str,
+        reply: &FindingResolutionReply,
     ) -> Result<()>;
     /// Adds each target to the outstanding reviewer set.
     ///
@@ -597,6 +633,14 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn finding_resolution_replies_require_visible_explanatory_text() {
+        assert!(FindingResolutionReply::new("\n\t").is_err());
+        let reply = FindingResolutionReply::new("Addressed in the current revision.")
+            .expect("visible explanation");
+        assert_eq!(reply.as_str(), "Addressed in the current revision.");
     }
 
     #[test]

@@ -13,10 +13,10 @@ use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestNumber, CheckConclusion, CheckOutcome, CodeReviewsProvider,
     CommitRange, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
-    FindingSeverity, OpenClosed, ProviderError, Repository, Result, Review, ReviewActor,
-    ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor,
-    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId,
-    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
+    FindingResolutionReply, FindingSeverity, OpenClosed, ProviderError, Repository, Result, Review,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId,
+    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
+    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
     ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
     ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
@@ -248,7 +248,9 @@ fn latest_finding_resolution(replies: &[ReviewComment]) -> Option<FindingResolut
             }
             ParsedFindingResolution::UnsupportedVersion(metadata_version) => {
                 return Some(FindingResolutionRecord::Unsupported {
-                    metadata_version,
+                    metadata_format: format!(
+                        "github:interprex-finding-resolution:v{metadata_version}"
+                    ),
                     source_reply_id: comment.id.clone(),
                 });
             }
@@ -1192,14 +1194,8 @@ impl CodeReviewsProvider for GithubProvider {
         number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
         resolution: FindingResolution,
-        reply: &str,
+        reply: &FindingResolutionReply,
     ) -> Result<()> {
-        if reply.trim().is_empty() {
-            return Err(ProviderError::InvalidInput {
-                provider: "github",
-                fact: "finding resolution reply must contain an explanation".to_owned(),
-            });
-        }
         let change_request = self.change_request(repository, number).await?;
         let finding = change_request
             .reviews
@@ -1210,13 +1206,13 @@ impl CodeReviewsProvider for GithubProvider {
                 entity: format!("finding thread {}", thread_id.as_str()),
             })?;
         if let Some(FindingResolutionRecord::Unsupported {
-            metadata_version, ..
+            metadata_format, ..
         }) = &finding.resolution
         {
             return Err(ProviderError::Unrepresentable {
                 provider: "github",
                 fact: format!(
-                    "finding thread {} contains unsupported resolution metadata version {metadata_version}",
+                    "finding thread {} contains unsupported resolution metadata format {metadata_format}",
                     thread_id.as_str()
                 ),
             });
@@ -1235,7 +1231,7 @@ impl CodeReviewsProvider for GithubProvider {
             };
         }
         let already_resolved = finding.status == ReviewThreadStatus::Resolved;
-        let body = github_resolution_reply(resolution, reply);
+        let body = github_resolution_reply(resolution, reply.as_str());
         let response: AddThreadReplyData = self
             .user()?
             .graphql(&json!({
@@ -1639,9 +1635,10 @@ mod tests {
         assert!(matches!(
             &finding.resolution,
             Some(FindingResolutionRecord::Unsupported {
-                metadata_version: 2,
+                metadata_format,
                 source_reply_id,
-            }) if source_reply_id.as_str() == "PRRC_future_resolution"
+            }) if metadata_format == "github:interprex-finding-resolution:v2"
+                && source_reply_id.as_str() == "PRRC_future_resolution"
         ));
         assert_eq!(
             finding.resolution,

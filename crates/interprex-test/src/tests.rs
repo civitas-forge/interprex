@@ -2,12 +2,13 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason, FindingSeverity,
-    OpenClosed, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
-    RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
-    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, OpenClosed, Release,
+    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -271,24 +272,16 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         reason: FindingResolutionReason::Addressed,
         addressing_severity: FindingSeverity::Major,
     };
-    let error = provider
-        .resolve_finding(
-            &repository,
-            number,
-            &ReviewThreadId::new("thread-1").expect("thread id"),
-            resolution,
-            "   ",
-        )
-        .await
-        .expect_err("blank explanation must fail");
-    assert!(error.to_string().contains("must contain an explanation"));
+    let explanation =
+        FindingResolutionReply::new("Addressed by validating the range before indexing.")
+            .expect("resolution explanation");
     provider
         .resolve_finding(
             &repository,
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
             resolution,
-            "Addressed by validating the range before indexing.",
+            &explanation,
         )
         .await
         .expect("resolve finding");
@@ -319,7 +312,8 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
             resolution,
-            "A retry must not replace the recorded explanation.",
+            &FindingResolutionReply::new("A retry must not replace the recorded explanation.")
+                .expect("resolution explanation"),
         )
         .await
         .expect("repeat identical resolution");
@@ -340,7 +334,10 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
             resolution,
-            "A partial-write retry only resolves the existing thread.",
+            &FindingResolutionReply::new(
+                "A partial-write retry only resolves the existing thread.",
+            )
+            .expect("resolution explanation"),
         )
         .await
         .expect("recover partial resolution write");
@@ -354,17 +351,48 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     );
     assert_eq!(recovered.reviews[0].findings[0].replies.len(), reply_count);
 
+    let mut unsupported = recovered.clone();
+    let source_reply_id = unsupported.reviews[0].findings[0]
+        .replies
+        .last()
+        .expect("resolution reply")
+        .id
+        .clone();
+    unsupported.reviews[0].findings[0].resolution = Some(FindingResolutionRecord::Unsupported {
+        metadata_format: "future:test-format".to_owned(),
+        source_reply_id,
+    });
+    provider
+        .seed_change_request(repository.clone(), unsupported)
+        .await;
+
     let replacement = FindingResolution {
         reason: FindingResolutionReason::WontFix,
         addressing_severity: FindingSeverity::Minor,
     };
+    let replacement_reply = FindingResolutionReply::new("The compatibility cost is not justified.")
+        .expect("resolution explanation");
+    let error = provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            replacement,
+            &replacement_reply,
+        )
+        .await
+        .expect_err("unsupported resolution format must not be overwritten");
+    assert!(error.to_string().contains("future:test-format"));
+    provider
+        .seed_change_request(repository.clone(), recovered)
+        .await;
     provider
         .resolve_finding(
             &repository,
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
             replacement,
-            "The compatibility cost is not justified.",
+            &replacement_reply,
         )
         .await
         .expect("record changed resolution");

@@ -17,8 +17,8 @@ use std::{
 use fs2::FileExt;
 use interprex::{
     ChangeRequestNumber, CodeHostingProvider, CodeReviewsProvider, FindingResolution,
-    FindingResolutionReason, FindingSeverity, IssuesProvider, Repository, ReviewAnchor,
-    ReviewAuthor, ReviewTarget, ReviewThreadId, ReviewThreadStatus,
+    FindingResolutionReason, FindingResolutionReply, FindingSeverity, IssuesProvider, Repository,
+    ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadId, ReviewThreadStatus,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -285,7 +285,10 @@ async fn configured_finding_resolution_round_trips_through_the_real_provider() {
             number,
             &thread_id,
             expected,
-            "Interprex live integration verified this finding resolution round trip.",
+            &FindingResolutionReply::new(
+                "Interprex live integration verified this finding resolution round trip.",
+            )
+            .expect("resolution explanation"),
         )
         .await
         .expect("record and resolve configured finding");

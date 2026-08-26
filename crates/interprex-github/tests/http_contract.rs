@@ -11,8 +11,8 @@ use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, CodeHostingProvider,
     CodeReviewsProvider, DispatchInputs, FindingResolution, FindingResolutionReason,
-    FindingSeverity, IssueNumber, IssuesProvider, JobsProvider, ReleaseId, ReleasesProvider,
-    Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
+    FindingResolutionReply, FindingSeverity, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
+    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -472,25 +472,6 @@ async fn code_review_domain_rejects_an_unconfirmed_thread_resolution() {
 }
 
 #[tokio::test]
-async fn code_review_domain_rejects_a_blank_finding_explanation_before_io() {
-    let error = provider("http://127.0.0.1:1".to_owned())
-        .resolve_finding(
-            &repository(),
-            ChangeRequestNumber::new(5).expect("number"),
-            &ReviewThreadId::new("PRRT_kwDOExample").expect("thread id"),
-            FindingResolution {
-                reason: FindingResolutionReason::Addressed,
-                addressing_severity: FindingSeverity::Minor,
-            },
-            "\n\t",
-        )
-        .await
-        .expect_err("blank explanation must fail before a request");
-
-    assert!(error.to_string().contains("must contain an explanation"));
-}
-
-#[tokio::test]
 async fn code_review_domain_records_a_finding_resolution_before_resolving_the_thread() {
     let (uri, requests) = json_responses(vec![
         include_str!("fixtures/pull_request.json").to_owned(),
@@ -516,7 +497,10 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
                 reason: FindingResolutionReason::Invalid,
                 addressing_severity: FindingSeverity::Minor,
             },
-            "The reported state cannot be reached through the public interface.",
+            &FindingResolutionReply::new(
+                "The reported state cannot be reached through the public interface.",
+            )
+            .expect("resolution explanation"),
         )
         .await
         .expect("resolve finding");

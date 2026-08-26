@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, FindingResolution,
-    FindingResolutionRecord, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
-    ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
+    FindingResolutionRecord, FindingResolutionReply, Repository, Result, ReviewActor,
+    ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
+    ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -61,14 +62,8 @@ impl CodeReviewsProvider for FakeProvider {
         number: ChangeRequestNumber,
         thread_id: &ReviewThreadId,
         resolution: FindingResolution,
-        reply: &str,
+        reply: &FindingResolutionReply,
     ) -> Result<()> {
-        if reply.trim().is_empty() {
-            return Err(interprex::ProviderError::InvalidInput {
-                provider: "fake",
-                fact: "finding resolution reply must contain an explanation".to_owned(),
-            });
-        }
         let mut state = self.state.write().await;
         let change_request = state
             .change_requests
@@ -81,6 +76,18 @@ impl CodeReviewsProvider for FakeProvider {
             .flat_map(|review| review.findings.iter_mut())
             .find(|thread| &thread.id == thread_id)
             .ok_or_else(|| missing(format!("finding thread {}", thread_id.as_str())))?;
+        if let Some(FindingResolutionRecord::Unsupported {
+            metadata_format, ..
+        }) = &finding.resolution
+        {
+            return Err(interprex::ProviderError::Unrepresentable {
+                provider: "fake",
+                fact: format!(
+                    "finding thread {} contains unsupported resolution metadata format {metadata_format}",
+                    thread_id.as_str()
+                ),
+            });
+        }
         if matches!(
             &finding.resolution,
             Some(FindingResolutionRecord::Supported {
@@ -119,7 +126,7 @@ impl CodeReviewsProvider for FakeProvider {
         let source_reply = ReviewComment {
             id: reply_id,
             author,
-            body: reply.to_owned(),
+            body: reply.as_str().to_owned(),
             created_at: written_at,
             updated_at: None,
         };
