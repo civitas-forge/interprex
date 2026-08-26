@@ -11,14 +11,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestNumber, CheckConclusion, CheckOutcome, CodeReviewsProvider,
-    CommitRange, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
-    FindingResolutionReply, FindingSeverity, OpenClosed, ProviderError, Repository, Result, Review,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId,
-    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
-    ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
-    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ChangeRequest, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckOutcome,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, ProviderError, Repository,
+    Result, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp,
+    ReviewAppId, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
+    ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship,
+    ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam,
+    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
+    ReviewedRevision,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -290,6 +291,8 @@ struct GithubPullRequest {
     node_id: String,
     title: String,
     state: String,
+    merged: bool,
+    merged_at: Option<chrono::DateTime<chrono::Utc>>,
     draft: bool,
     head: GitRef,
     base: GitRef,
@@ -745,6 +748,40 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
     })
 }
 
+/// Reads GitHub's `state`, `merged` and `merged_at` fields as one state.
+///
+/// GitHub reports a merge as a closed pull request carrying `merged` and a
+/// merge time. Every other combination of the three fields contradicts itself,
+/// and the provider refuses it rather than deciding which field to believe.
+fn normalize_change_request_state(
+    number: u64,
+    state: &str,
+    merged: bool,
+    merged_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<ChangeRequestState> {
+    match (state, merged, merged_at) {
+        ("open", false, None) => Ok(ChangeRequestState::Open),
+        ("closed", false, None) => Ok(ChangeRequestState::Closed),
+        ("closed", true, Some(merged_at)) => Ok(ChangeRequestState::Merged { merged_at }),
+        ("closed", true, None) => Err(ProviderError::Unrepresentable {
+            provider: "github",
+            fact: format!("merged change request {number} has no merge time"),
+        }),
+        ("open" | "closed", false, Some(_)) => Err(ProviderError::Unrepresentable {
+            provider: "github",
+            fact: format!("change request {number} has a merge time but is not merged"),
+        }),
+        ("open", true, _) => Err(ProviderError::Unrepresentable {
+            provider: "github",
+            fact: format!("change request {number} is open and merged"),
+        }),
+        (other, _, _) => Err(ProviderError::Unrepresentable {
+            provider: "github",
+            fact: format!("unknown change request state {other}"),
+        }),
+    }
+}
+
 fn normalize_change_request(
     value: GithubPullRequest,
     mut reviews: Vec<GithubReview>,
@@ -922,16 +959,12 @@ fn normalize_change_request(
             }
         })?,
         title: value.title,
-        state: match value.state.as_str() {
-            "open" => OpenClosed::Open,
-            "closed" => OpenClosed::Closed,
-            other => {
-                return Err(ProviderError::Unrepresentable {
-                    provider: "github",
-                    fact: format!("unknown change request state {other}"),
-                });
-            }
-        },
+        state: normalize_change_request_state(
+            value.number,
+            &value.state,
+            value.merged,
+            value.merged_at,
+        )?,
         draft: value.draft,
         commit_range: CommitRange {
             base_sha,
@@ -1338,7 +1371,7 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use interprex::{
-        CheckConclusion, CheckOutcome, CodeReviewsProvider, FindingResolution,
+        ChangeRequestState, CheckConclusion, CheckOutcome, CodeReviewsProvider, FindingResolution,
         FindingResolutionReason, FindingResolutionRecord, FindingSeverity, ProviderError,
         Repository, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation,
         ReviewRequestTarget, ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
@@ -1698,6 +1731,92 @@ mod tests {
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown change request state")
         ));
+    }
+
+    fn pull_request_with_merge_facts(
+        state: &str,
+        merged: bool,
+        merged_at: Option<&str>,
+    ) -> GithubPullRequest {
+        let mut pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        pull_request.state = state.to_owned();
+        pull_request.merged = merged;
+        pull_request.merged_at = merged_at.map(|value| value.parse().expect("merge time"));
+        pull_request
+    }
+
+    #[test]
+    fn a_merged_change_request_is_distinct_from_one_closed_without_merging() {
+        let closed = normalize_change_request(
+            pull_request_with_merge_facts("closed", false, None),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("normalizes a change request closed without merging");
+        assert_eq!(closed.state, ChangeRequestState::Closed);
+
+        let merged = normalize_change_request(
+            pull_request_with_merge_facts("closed", true, Some("2026-08-24T11:00:00Z")),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("normalizes a merged change request");
+        assert_eq!(
+            merged.state,
+            ChangeRequestState::Merged {
+                merged_at: "2026-08-24T11:00:00Z".parse().expect("merge time"),
+            }
+        );
+    }
+
+    #[test]
+    fn contradictory_merge_facts_are_unrepresentable() {
+        for (state, merged, merged_at, expected) in [
+            (
+                "open",
+                true,
+                Some("2026-08-24T11:00:00Z"),
+                "change request 5 is open and merged",
+            ),
+            ("open", true, None, "change request 5 is open and merged"),
+            (
+                "closed",
+                true,
+                None,
+                "merged change request 5 has no merge time",
+            ),
+            (
+                "closed",
+                false,
+                Some("2026-08-24T11:00:00Z"),
+                "change request 5 has a merge time but is not merged",
+            ),
+            (
+                "open",
+                false,
+                Some("2026-08-24T11:00:00Z"),
+                "change request 5 has a merge time but is not merged",
+            ),
+        ] {
+            let error = normalize_change_request(
+                pull_request_with_merge_facts(state, merged, merged_at),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect_err("contradictory merge facts must be unrepresentable");
+            assert!(
+                matches!(&error, ProviderError::Unrepresentable { fact, .. } if fact == expected),
+                "{error}"
+            );
+        }
     }
 
     #[test]

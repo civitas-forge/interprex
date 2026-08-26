@@ -9,10 +9,11 @@ use std::{collections::BTreeMap, time::Duration};
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, DispatchInputs, FindingResolution, FindingResolutionReason,
-    FindingResolutionReply, FindingSeverity, IssueNumber, IssuesProvider, JobsProvider, ReleaseId,
-    ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget, ReviewThreadId,
+    AssetId, AssetStreamError, AssetUpload, ChangeRequestNumber, ChangeRequestState,
+    CodeHostingProvider, CodeReviewsProvider, DispatchInputs, FindingResolution,
+    FindingResolutionReason, FindingResolutionReply, FindingSeverity, IssueNumber, IssuesProvider,
+    JobsProvider, ReleaseId, ReleasesProvider, Repository, RepositorySettings, ReviewRequestTarget,
+    ReviewThreadId,
 };
 use interprex_github::{GithubConfig, from_config};
 use secrecy::SecretString;
@@ -556,6 +557,7 @@ async fn code_review_domain_reads_one_complete_observation() {
         .await
         .expect("change request");
 
+    assert_eq!(change_request.state, ChangeRequestState::Open);
     assert_eq!(change_request.reviews.len(), 11);
     assert_eq!(
         change_request

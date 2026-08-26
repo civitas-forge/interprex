@@ -1,10 +1,10 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
-    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, OpenClosed, Release,
-    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
+    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, ChangeRequestState,
+    CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
+    FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
+    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
     ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
     ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
@@ -48,7 +48,7 @@ async fn consumer_observes_changes_through_the_same_contract() {
             ChangeRequest {
                 number,
                 title: "Review requests".to_owned(),
-                state: OpenClosed::Open,
+                state: ChangeRequestState::Open,
                 draft: true,
                 commit_range: CommitRange {
                     base_sha: "base".to_owned(),
@@ -171,7 +171,7 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     let change_request = ChangeRequest {
         number,
         title: "Review threads".to_owned(),
-        state: OpenClosed::Open,
+        state: ChangeRequestState::Open,
         draft: false,
         commit_range: range.clone(),
         author: author.clone(),

@@ -42,8 +42,9 @@ releases
 ## 3. Code Review Data
 
 A change request carries its current base and head commits and every review
-record returned by the provider. Reviews remain distinct when the same actor
-reviews the same revision more than once.
+record returned by the provider. Its state is open, closed without merging, or
+merged with the merge time the platform recorded. Reviews remain distinct when
+the same actor reviews the same revision more than once.
 
 Each review records its author, the reviewing application when known, the
 reviewed head commit, its summary and its inline findings. Its state

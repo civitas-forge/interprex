@@ -79,6 +79,14 @@ Design
     that remains inconsistent is returned as unrepresentable data instead of
     being deleted or guessed.
 
+    `ChangeRequestState` reports whether the change request is open, closed
+    without merging or merged, and the merged variant carries the merge time
+    the platform recorded. Whether a change landed is an observed fact, so no
+    caller reads the vendor API to recover it. GitHub reports a merge as a
+    closed pull request with `merged` set and a merge time; any other
+    combination of those three fields, and any state Interprex does not model,
+    is returned as unrepresentable data.
+
     The change request carries its current base and head commits. A review
     carries only the reviewed head commit because GitHub does not retain the
     historical base commit for each review. Interprex does not pair a historical
