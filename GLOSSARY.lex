@@ -72,11 +72,13 @@ Glossary
     check:
         One recorded verification of a commit, with its name, the commit, its
         status, the application that published it, its published summary and
-        its location. A check that has not finished is pending and has no
-        conclusion; a completed check carries its conclusion and the time it
-        finished. A read returns each check's most recent run, so a rerun
-        replaces the run it repeated. On GitHub these are check runs; GitHub's
-        separate legacy commit statuses are not read.
+        its location. A check that has not finished carries the platform's own
+        unfinished status and no conclusion; a completed check carries its
+        conclusion and the time it finished. A name identifies at most one
+        check within one platform grouping of checks, so several checks on one
+        commit can share a name and a read returns all of them. On GitHub these
+        are check runs, grouped into check suites; GitHub's separate legacy
+        commit statuses are not read.
     provider application:
         The application through which an actor created or submitted a review,
         or that published a check (`via_app`). It is attribution, not the

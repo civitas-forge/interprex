@@ -16,7 +16,7 @@ use std::{
 
 use fs2::FileExt;
 use interprex::{
-    ChangeRequestNumber, CheckStatus, CodeHostingProvider, CodeReviewsProvider, FindingResolution,
+    ChangeRequestNumber, CodeHostingProvider, CodeReviewsProvider, FindingResolution,
     FindingResolutionReason, FindingResolutionReply, FindingSeverity, IssuesProvider, Repository,
     ReviewAnchor, ReviewAuthor, ReviewTarget, ReviewThreadId, ReviewThreadStatus,
 };
@@ -242,9 +242,9 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .expect("read the checks on the observed head commit");
     assert!(checks.iter().all(|run| !run.name.is_empty()));
     assert!(checks.iter().all(|run| !run.head_sha.is_empty()));
-    let pending_check_count = checks
+    let unfinished_check_count = checks
         .iter()
-        .filter(|run| run.status == CheckStatus::Pending)
+        .filter(|run| run.status.conclusion().is_none())
         .count();
     let open_finding_count = findings
         .iter()
@@ -256,7 +256,7 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .count();
     assert_eq!(open_finding_count + resolved_finding_count, findings.len());
     eprintln!(
-        "change request {}: mergeability {:?}, {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} standalone threads, {} unanchored comments, {} outstanding requests, {} checks ({} pending)",
+        "change request {}: mergeability {:?}, {} reviews ({} author, {} other, {} unknown, {} draft), {} review threads ({} open, {} resolved), {} standalone threads, {} unanchored comments, {} outstanding requests, {} checks ({} unfinished)",
         number.get(),
         change_request.mergeability,
         change_request.reviews.len(),
@@ -271,7 +271,7 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         change_request.unanchored_comments.len(),
         change_request.outstanding_requests.len(),
         checks.len(),
-        pending_check_count
+        unfinished_check_count
     );
 }
 

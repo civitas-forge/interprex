@@ -8,7 +8,8 @@
 //! provider joins them here so callers never correlate GitHub entities.
 //!
 //! Checks are read separately, per commit, from GitHub's check-runs endpoint,
-//! which reports the current run of each check name. GitHub's legacy commit
+//! which reports the current run of each check within each check suite on that
+//! commit. Runs sharing a name across suites all remain. GitHub's legacy commit
 //! statuses are a different mechanism with its own endpoint and are not read
 //! here.
 
@@ -1299,7 +1300,6 @@ fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
         "action_required" => Ok(CheckConclusion::ActionRequired),
         "skipped" => Ok(CheckConclusion::Skipped),
         "stale" => Ok(CheckConclusion::Stale),
-        "startup_failure" => Ok(CheckConclusion::StartupFailure),
         other => Err(ProviderError::Unrepresentable {
             provider: "github",
             fact: format!("unknown check run conclusion {other}"),
@@ -1308,9 +1308,13 @@ fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
 }
 
 fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
-    let completed = match value.status.as_str() {
-        "queued" | "waiting" | "requested" | "pending" | "in_progress" => false,
-        "completed" => true,
+    let unfinished = match value.status.as_str() {
+        "requested" => Some(CheckStatus::Requested),
+        "queued" => Some(CheckStatus::Queued),
+        "pending" => Some(CheckStatus::Pending),
+        "waiting" => Some(CheckStatus::Waiting),
+        "in_progress" => Some(CheckStatus::InProgress),
+        "completed" => None,
         other => {
             return Err(ProviderError::Unrepresentable {
                 provider: "github",
@@ -1318,24 +1322,7 @@ fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
             });
         }
     };
-    let status = if completed {
-        let conclusion = value
-            .conclusion
-            .ok_or_else(|| ProviderError::Unrepresentable {
-                provider: "github",
-                fact: format!("completed check run {} has no conclusion", value.name),
-            })?;
-        let completed_at = value
-            .completed_at
-            .ok_or_else(|| ProviderError::Unrepresentable {
-                provider: "github",
-                fact: format!("completed check run {} has no completion time", value.name),
-            })?;
-        CheckStatus::Completed {
-            conclusion: normalize_check_conclusion(&conclusion)?,
-            completed_at,
-        }
-    } else {
+    let status = if let Some(unfinished) = unfinished {
         if let Some(conclusion) = value.conclusion {
             return Err(ProviderError::Unrepresentable {
                 provider: "github",
@@ -1354,7 +1341,24 @@ fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
                 ),
             });
         }
-        CheckStatus::Pending
+        unfinished
+    } else {
+        let conclusion = value
+            .conclusion
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("completed check run {} has no conclusion", value.name),
+            })?;
+        let completed_at = value
+            .completed_at
+            .ok_or_else(|| ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!("completed check run {} has no completion time", value.name),
+            })?;
+        CheckStatus::Completed {
+            conclusion: normalize_check_conclusion(&conclusion)?,
+            completed_at,
+        }
     };
     Ok(CheckRun {
         name: value.name,
@@ -1520,8 +1524,9 @@ impl GithubProvider {
                     Some(&[
                         ("per_page", CHECK_RUNS_PER_PAGE.to_string()),
                         ("page", page.to_string()),
-                        // GitHub's default, sent explicitly: the current run of
-                        // each check name, with superseded reruns left out.
+                        // GitHub's default, sent explicitly: within each check
+                        // suite on the commit, its current run of each check.
+                        // Suites remain separate, so runs can share a name.
                         ("filter", "latest".to_owned()),
                     ]),
                 )
@@ -2858,7 +2863,7 @@ mod tests {
             runs[0].html_url.as_deref(),
             Some("https://github.com/civitas-forge/interprex-sandbox/runs/41")
         );
-        assert_eq!(runs[1].status, CheckStatus::Pending);
+        assert_eq!(runs[1].status, CheckStatus::InProgress);
         assert_eq!(runs[1].summary, None);
         assert_eq!(
             runs[2].status,
@@ -2873,15 +2878,31 @@ mod tests {
     }
 
     #[test]
-    fn every_check_status_github_reports_before_completion_is_pending() {
-        for status in ["queued", "waiting", "requested", "pending", "in_progress"] {
+    fn every_status_github_reports_before_completion_keeps_its_own_meaning() {
+        for (reported, expected) in [
+            ("requested", CheckStatus::Requested),
+            ("queued", CheckStatus::Queued),
+            ("pending", CheckStatus::Pending),
+            ("waiting", CheckStatus::Waiting),
+            ("in_progress", CheckStatus::InProgress),
+        ] {
             assert_eq!(
-                normalize_check_run(check_run(status, None))
+                normalize_check_run(check_run(reported, None))
                     .expect("normalizes")
                     .status,
-                CheckStatus::Pending
+                expected
             );
         }
+    }
+
+    #[test]
+    fn a_check_suite_conclusion_is_not_a_check_run_conclusion() {
+        assert!(matches!(
+            normalize_check_run(check_run("completed", Some("startup_failure")))
+                .expect_err("a check suite conclusion must be unrepresentable on a run"),
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("unknown check run conclusion startup_failure")
+        ));
     }
 
     #[test]
@@ -2895,7 +2916,6 @@ mod tests {
             ("action_required", CheckConclusion::ActionRequired),
             ("skipped", CheckConclusion::Skipped),
             ("stale", CheckConclusion::Stale),
-            ("startup_failure", CheckConclusion::StartupFailure),
         ] {
             let run = normalize_check_run(check_run("completed", Some(reported)))
                 .expect("normalizes every reported conclusion");

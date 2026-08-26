@@ -155,16 +155,24 @@ Design
     `CodeReviewsProvider::checks` reads the current checks on one commit,
     completely paginated. A caller reads them for whichever commit it
     cares about, usually the change request's current head. The request sends
-    GitHub's `filter=latest` explicitly: a rerun replaces the run it repeated,
-    so the collection holds each check's most recent run and no superseded one,
-    and a caller that wants the earlier runs cannot get them here. That is not
-    a promise that a name appears once. Two applications, workflows or check
-    suites can publish a check of the same name on one commit, and `via_app`
-    is what separates them, exactly as a required-status-check rule separates
-    them by `integration_id`. GitHub also answers from at most the 1,000 most
-    recent check suites on a commit and gives no signal that it stopped there,
-    so a commit past that limit is reported short; the trait documents that
-    limit alongside the read.
+    GitHub's `filter=latest` explicitly, which scopes the answer to the current
+    run of each check within each check suite. A rerun inside a suite replaces
+    the run it repeated, so no superseded run is reported and a caller that
+    wants the earlier runs cannot get them here.
+
+    A name identifies at most one run inside a suite, and a commit carries as
+    many suites as were triggered on it. Several runs on one commit can
+    therefore share a name: two applications publishing the same check, or one
+    application whose workflow ran twice. Interprex returns every one of them.
+    Collapsing them would mean choosing which run answers for that name, and
+    that choice belongs to the caller, which has `via_app`, the status and the
+    completion time to make it. GitHub's own required-status-check rules face
+    the same ambiguity and resolve it by context and `integration_id`.
+
+    GitHub also answers from at most the 1,000 most recent check suites on a
+    commit and gives no signal that it stopped there, so a commit past that
+    limit is reported short; the trait documents that limit alongside the
+    read.
 
     `CheckStatus` holds the conclusion inside its completed variant, following
     `ReviewState`: a check that has not finished has no conclusion to report,
@@ -186,9 +194,13 @@ Design
     A check run also carries the application that published it, as `via_app`,
     and where a person can read it, as `html_url`. A required-status-check rule
     names the check by context and may also name the application that must
-    publish it, as `RequiredCheck::integration_id`. Both identifiers are the
-    same GitHub app identifier, a number in the ruleset and its text form in
-    `ProviderApp::id`. Interprex returns both facts and compares neither.
+    publish it, as `RequiredCheck::integration_id`. Both identifiers hold the
+    same GitHub app identifier in different types: an integer in the rule, and
+    its decimal spelling in the opaque `ProviderApp::id`, which is opaque
+    because other providers need not identify applications by number. A caller
+    comparing them compares those two spellings. Interprex returns both facts
+    and compares neither, and one provider-neutral identifier type across both
+    domains would belong to a change that owns `RequiredCheck`.
 
     A status GitHub adds later, a conclusion Interprex does not model, a
     completed check missing its conclusion or completion time, and a running

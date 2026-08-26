@@ -500,26 +500,35 @@ async fn consumer_observes_seeded_checks_per_commit_through_the_contract() {
             name: "integration".to_owned(),
             head_sha: "head".to_owned(),
             via_app: None,
-            status: CheckStatus::Pending,
+            status: CheckStatus::InProgress,
+            summary: None,
+            html_url: None,
+        },
+        CheckRun {
+            name: "quality".to_owned(),
+            head_sha: "other-head".to_owned(),
+            via_app: None,
+            status: CheckStatus::Queued,
             summary: None,
             html_url: None,
         },
     ];
     provider
-        .seed_check_runs(repository.clone(), "head", runs.clone())
+        .seed_check_runs(repository.clone(), runs.clone())
         .await;
 
     assert_eq!(
         provider.checks(&repository, "head").await.expect("checks"),
-        runs
+        runs[..2],
+        "a commit observes the runs that name it"
     );
-    assert!(
+    assert_eq!(
         provider
             .checks(&repository, "other-head")
             .await
-            .expect("checks")
-            .is_empty(),
-        "checks belong to the commit they were seeded on"
+            .expect("checks"),
+        runs[2..],
+        "a run seeded in the same call belongs to the commit it names"
     );
     assert!(
         provider

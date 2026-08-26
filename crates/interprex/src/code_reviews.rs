@@ -638,11 +638,14 @@ pub struct ChangeRequest {
 /// The conclusion an observed check reached once it finished.
 ///
 /// The variants cover the conclusions GitHub reports for a check run, so a
-/// read never has to discard one. That set is wider than the one a client may
-/// write: GitHub sets `stale` itself, and GitHub Actions reports
-/// `startup_failure` for a workflow that never started, which the jobs domain
-/// also models as `RunConclusion::StartupFailure`. Publishing uses the
+/// read never has to discard one. That set is wider by one than the set a
+/// client may write, because GitHub sets `stale` itself. Publishing uses the
 /// narrower [`PublishedCheckConclusion`].
+///
+/// `startup_failure` is absent deliberately: GitHub reports it for a check
+/// suite that failed before its runs began and states that it does not apply
+/// to check runs. The jobs domain models it as
+/// `RunConclusion::StartupFailure`, where it is observable.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckConclusion {
@@ -654,7 +657,6 @@ pub enum CheckConclusion {
     ActionRequired,
     Skipped,
     Stale,
-    StartupFailure,
 }
 
 /// The conclusion a published check can report.
@@ -674,21 +676,48 @@ pub enum PublishedCheckConclusion {
     Skipped,
 }
 
-/// Whether an observed check has finished, and what it concluded when it has.
+/// Where an observed check stands, and what it concluded once it has
+/// finished.
 ///
 /// A check that has not finished has no conclusion, so the two facts stay in
 /// one value rather than in an optional field that could contradict a status.
+/// The variants before `Completed` are the platform's own, one for each status
+/// GitHub reports on a check run, because a stalled check and a running one
+/// call for different reporting and Interprex does not decide which
+/// distinctions a caller needs.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckStatus {
-    /// The check exists on the commit and has reached no conclusion. GitHub's
-    /// `queued`, `waiting`, `requested`, `pending` and `in_progress` statuses
-    /// all name this state.
+    /// The check exists and has not been queued yet.
+    Requested,
+    /// The check is queued to run.
+    Queued,
+    /// The check is held back, on GitHub because a concurrency limit is
+    /// reached.
     Pending,
+    /// The check is held back until a deployment protection rule is
+    /// satisfied.
+    Waiting,
+    /// The check is running.
+    InProgress,
     Completed {
         conclusion: CheckConclusion,
         completed_at: DateTime<Utc>,
     },
+}
+
+impl CheckStatus {
+    /// The conclusion this check reached, and `None` while it has not
+    /// finished.
+    #[must_use]
+    pub const fn conclusion(&self) -> Option<CheckConclusion> {
+        match self {
+            Self::Completed { conclusion, .. } => Some(*conclusion),
+            Self::Requested | Self::Queued | Self::Pending | Self::Waiting | Self::InProgress => {
+                None
+            }
+        }
+    }
 }
 
 /// One check the platform recorded against a commit.
@@ -696,9 +725,13 @@ pub enum CheckStatus {
 /// A required-check rule names the check it requires by `name`, which is
 /// `RequiredCheck::context` on the code-hosting side, and may also name the
 /// application that must publish it, which is `RequiredCheck::integration_id`.
-/// `via_app` carries that application as the platform reported it: on GitHub
-/// both identifiers are the same app identifier, written as text here and as a
-/// number there. Interprex performs no part of that comparison.
+/// `via_app` carries that application as the platform reported it. The two
+/// identifiers hold the same GitHub app identifier in different types: an
+/// integer in the rule, and its decimal spelling in `ProviderAppId`, which is
+/// opaque because other providers need not use integers. A caller comparing
+/// them today compares `via_app.id.as_str()` against
+/// `integration_id.to_string()`. Interprex performs no part of that
+/// comparison.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CheckRun {
     pub name: String,
@@ -799,12 +832,19 @@ pub trait CodeReviewsProvider: Send + Sync {
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()>;
     /// Reads the current checks on one commit, completely paginated.
     ///
-    /// A rerun replaces the run it repeated, so the collection holds each
-    /// check's most recent run and no superseded one. Two applications can
-    /// still publish a check of the same name; `via_app` is what separates
-    /// them. A check that has not concluded is returned with
-    /// [`CheckStatus::Pending`] rather than omitted, so a caller can tell a
-    /// missing check from a running one. Collection order carries no meaning.
+    /// A check name identifies no more than one run only within a run of
+    /// checks that the platform grouped together, which GitHub calls a check
+    /// suite. One commit can carry several runs of the same name, published by
+    /// several applications or by one application whose workflow was
+    /// triggered more than once, and every one of them is returned. Deciding
+    /// which of them answers for that name is the caller's, using `via_app`,
+    /// the status and the completion time; Interprex discards none of them.
+    /// Within one such group a rerun does replace the run it repeated, so no
+    /// superseded run is reported.
+    ///
+    /// A check that has not concluded is returned with the platform's own
+    /// status rather than omitted, so a caller can tell a missing check from a
+    /// running or a stalled one. Collection order carries no meaning.
     ///
     /// A platform can report less than it holds: GitHub answers from at most
     /// the 1,000 most recent check suites on a commit and gives no signal that
@@ -1078,12 +1118,25 @@ mod tests {
     }
 
     #[test]
+    fn every_status_before_completion_carries_no_conclusion() {
+        for status in [
+            CheckStatus::Requested,
+            CheckStatus::Queued,
+            CheckStatus::Pending,
+            CheckStatus::Waiting,
+            CheckStatus::InProgress,
+        ] {
+            assert_eq!(status.conclusion(), None);
+        }
+    }
+
+    #[test]
     fn an_observed_check_carries_a_conclusion_only_once_it_has_completed() {
-        let pending = CheckRun {
+        let running = CheckRun {
             name: "quality".to_owned(),
             head_sha: "head".to_owned(),
             via_app: None,
-            status: CheckStatus::Pending,
+            status: CheckStatus::InProgress,
             summary: None,
             html_url: None,
         };
@@ -1093,12 +1146,17 @@ mod tests {
                 completed_at: Utc.timestamp_opt(3, 0).single().expect("timestamp"),
             },
             summary: Some("The job exceeded its limit.".to_owned()),
-            ..pending.clone()
+            ..running.clone()
         };
 
+        assert_eq!(running.status.conclusion(), None);
         assert_eq!(
-            serde_json::to_value(&pending.status).expect("serializes pending status"),
-            serde_json::json!("pending")
+            completed.status.conclusion(),
+            Some(CheckConclusion::TimedOut)
+        );
+        assert_eq!(
+            serde_json::to_value(&running.status).expect("serializes running status"),
+            serde_json::json!("in_progress")
         );
         assert_eq!(
             serde_json::to_value(&completed.status).expect("serializes completed status"),
@@ -1112,7 +1170,7 @@ mod tests {
     }
 
     #[test]
-    fn check_conclusions_cover_every_conclusion_a_check_reports() {
+    fn check_conclusions_cover_every_conclusion_a_check_run_reports() {
         for (conclusion, expected) in [
             (CheckConclusion::Success, "success"),
             (CheckConclusion::Failure, "failure"),
@@ -1122,7 +1180,6 @@ mod tests {
             (CheckConclusion::ActionRequired, "action_required"),
             (CheckConclusion::Skipped, "skipped"),
             (CheckConclusion::Stale, "stale"),
-            (CheckConclusion::StartupFailure, "startup_failure"),
         ] {
             assert_eq!(
                 serde_json::to_value(conclusion).expect("serializes conclusion"),

@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use bytes::Bytes;
 use interprex::{
@@ -66,19 +69,21 @@ impl FakeProvider {
             .insert((repository, change_request.number), change_request);
     }
 
-    /// Seeds the checks observed on one commit, replacing any already seeded
-    /// for that commit.
-    pub async fn seed_check_runs(
-        &self,
-        repository: Repository,
-        head_sha: impl Into<String>,
-        runs: Vec<CheckRun>,
-    ) {
-        self.state
-            .write()
-            .await
-            .check_runs
-            .insert((repository, head_sha.into()), runs);
+    /// Seeds observed checks, each on the commit it names, replacing whatever
+    /// was already seeded on the commits this call names.
+    ///
+    /// The commit comes from every run's own `head_sha`, so no seeded
+    /// observation can place a run on a commit it does not name.
+    pub async fn seed_check_runs(&self, repository: Repository, runs: Vec<CheckRun>) {
+        let mut state = self.state.write().await;
+        let mut replaced = BTreeSet::new();
+        for run in runs {
+            let key = (repository.clone(), run.head_sha.clone());
+            if replaced.insert(key.clone()) {
+                state.check_runs.insert(key.clone(), Vec::new());
+            }
+            state.check_runs.entry(key).or_default().push(run);
+        }
     }
 
     pub async fn seed_run(&self, repository: Repository, run: WorkflowRun) {

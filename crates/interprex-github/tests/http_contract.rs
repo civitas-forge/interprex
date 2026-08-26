@@ -863,15 +863,17 @@ fn check_run_page(names: impl IntoIterator<Item = String>, total_count: usize) -
 #[tokio::test]
 async fn code_review_domain_returns_check_runs_from_every_page() {
     let full_page = check_run_page((1..=100).map(|index| format!("check-{index}")), 101);
+    // The last page repeats a name from the first page, as a second check
+    // suite on the same commit does.
     let last_page = serde_json::json!({
         "total_count": 101,
         "check_runs": [{
-            "name": "integration",
+            "name": "check-1",
             "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "status": "in_progress",
             "conclusion": null,
             "completed_at": null,
-            "app": null,
+            "app": { "id": 2087, "slug": "rerun-app", "name": "Rerun App" },
             "html_url": null,
             "output": { "title": null, "summary": null }
         }]
@@ -901,8 +903,18 @@ async fn code_review_domain_returns_check_runs_from_every_page() {
             completed_at: "2026-08-24T10:04:00Z".parse().expect("completion time"),
         }
     );
-    assert_eq!(runs[100].name, "integration");
-    assert_eq!(runs[100].status, CheckStatus::Pending);
+    assert_eq!(
+        runs[100].name, "check-1",
+        "a run sharing a name with another is returned, not collapsed into it"
+    );
+    assert_eq!(runs[100].status, CheckStatus::InProgress);
+    assert_eq!(
+        runs[100]
+            .via_app
+            .as_ref()
+            .map(|app| app.id.as_str().to_owned()),
+        Some("2087".to_owned())
+    );
 
     let requests = timeout(Duration::from_secs(1), requests)
         .await
