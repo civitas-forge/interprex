@@ -128,13 +128,13 @@ pub struct ReviewRequest {
     ///
     /// A platform can list its outstanding requests without timing them, so a
     /// provider reads the request events separately and matches each
-    /// outstanding request to the event that created it. `None` says the
-    /// provider found no such event: the request predates the retained event
+    /// outstanding request to the event that created it. A provider reports
+    /// `None` when that match fails: the request predates the retained event
     /// history, or the target carries no identity to match against, which is
-    /// always the case for [`ReviewTarget::Unavailable`]. A provider never
-    /// substitutes a nearby timestamp, so a caller measuring how long a
-    /// request has been outstanding can treat `None` as no measurement rather
-    /// than as an approximate one.
+    /// the case for every [`ReviewTarget::Unavailable`] a provider returns. A
+    /// provider never substitutes a nearby timestamp, so a caller measuring
+    /// how long a request has been outstanding reads `None` as no measurement
+    /// rather than an approximate one.
     pub requested_at: Option<DateTime<Utc>>,
     pub as_code_owner: bool,
 }
