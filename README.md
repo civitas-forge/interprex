@@ -97,15 +97,15 @@ in debug output or errors.
 
 ## 6. Documentation
 
-[./GLOSSARY.lex](./GLOSSARY.lex)
+[Glossary](https://github.com/civitas-forge/interprex/blob/main/GLOSSARY.lex)
 
 : The vocabulary used by the public models and documentation.
 
-[./docs/design.lex](./docs/design.lex)
+[Design](https://github.com/civitas-forge/interprex/blob/main/docs/design.lex)
 
 : Domain ownership, provider construction and the complete code-review model.
 
-[./docs/contracts/records.lex](./docs/contracts/records.lex)
+[Records](https://github.com/civitas-forge/interprex/blob/main/docs/contracts/records.lex)
 
 : The behavior guaranteed by the create-only record client.
 
@@ -116,4 +116,5 @@ doctests. The pre-commit hook and GitHub Actions run the same command.
 
 ## 8. License
 
-Interprex is available under the MIT [License](./LICENSE).
+Interprex is available under the MIT
+[License](https://github.com/civitas-forge/interprex/blob/main/LICENSE).
