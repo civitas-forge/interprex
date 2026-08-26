@@ -15,7 +15,7 @@ Interprex
     tracker:
         Read issues and read or update labels.
     code review:
-        Read change requests, reviews, findings, standalone threads, unanchored comments and outstanding review requests; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
+        Read change requests by number or by the head ref they propose, together with their reviews, findings, standalone threads, unanchored comments and outstanding review requests; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
         publish check results.
     jobs:
         Dispatch jobs, read runs and cancel runs.
@@ -24,7 +24,11 @@ Interprex
 
 3. Code Review Data
 
-    A change request carries its current base and head commits and every review record returned by the provider. Its state is open, closed without merging, or merged with the merge time the platform recorded. Reviews remain distinct when the same actor reviews the same revision more than once.
+    A change request carries its current base and head commits, the branch it targets, the head it proposes and every review record returned by the provider. Branches are named rather than left to be inferred from a commit sha, because branches share tips and advance between observations. The head is absent when the provider no longer identifies the repository holding the branch, as GitHub reports once a fork is deleted. Its state is open, closed without merging, or merged with the merge time the platform recorded. Reviews remain distinct when the same actor reviews the same revision more than once.
+
+    A caller working from a git checkout reads the numbers of the open change requests that propose the branch it is on, then reads the observation for whichever number its own policy selects. A change request belongs to the repository it targets while its head branch can live in a fork of that repository, so a caller names both: the repository targeted and the head. A branch can be proposed by several open change requests against different bases, so every match is returned and none is picked for the caller, which tells them apart by the branch each targets.
+
+    `ChangeRequestHead` holds that head, reading its branch from one ref spelling, `refs/heads/<branch>`. One spelling keeps every branch addressable, and a name git would refuse to create is refused here rather than sent as a query no change request could answer.
 
     Each review records its author, the reviewing application when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 

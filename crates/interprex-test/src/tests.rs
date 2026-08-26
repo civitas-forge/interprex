@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, ChangeRequestState,
-    CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
+    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestHead, ChangeRequestNumber,
+    ChangeRequestState, CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
     FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
     Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
@@ -12,6 +12,42 @@ use interprex::{
 };
 
 use crate::FakeProvider;
+
+/// One open change request with no review data, for tests that care about a
+/// few fields and not the rest. Adding a `ChangeRequest` field lands here
+/// rather than at every seed in this file.
+fn head(repository: &Repository, head_ref: &str) -> ChangeRequestHead {
+    ChangeRequestHead::new(repository.clone(), head_ref).expect("head")
+}
+
+fn change_request(
+    number: ChangeRequestNumber,
+    title: &str,
+    head: ChangeRequestHead,
+) -> ChangeRequest {
+    ChangeRequest {
+        number,
+        title: title.to_owned(),
+        state: ChangeRequestState::Open,
+        draft: false,
+        commit_range: CommitRange {
+            base_sha: "base".to_owned(),
+            head_sha: "head".to_owned(),
+        },
+        base_branch: "main".to_owned(),
+        head: Some(head),
+        author: ReviewActor {
+            id: ReviewActorId::new("actor-author").expect("actor id"),
+            login: "author".to_owned(),
+            kind: ReviewActorKind::User,
+        },
+        updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
+        reviews: Vec::new(),
+        standalone_threads: Vec::new(),
+        unanchored_comments: Vec::new(),
+        outstanding_requests: Vec::new(),
+    }
+}
 
 #[tokio::test]
 async fn consumer_observes_changes_through_the_same_contract() {
@@ -46,24 +82,12 @@ async fn consumer_observes_changes_through_the_same_contract() {
         .seed_change_request(
             repository.clone(),
             ChangeRequest {
-                number,
-                title: "Review requests".to_owned(),
-                state: ChangeRequestState::Open,
                 draft: true,
-                commit_range: CommitRange {
-                    base_sha: "base".to_owned(),
-                    head_sha: "head".to_owned(),
-                },
-                author: ReviewActor {
-                    id: ReviewActorId::new("actor-author").expect("actor id"),
-                    login: "author".to_owned(),
-                    kind: ReviewActorKind::User,
-                },
-                updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
-                reviews: Vec::new(),
-                standalone_threads: Vec::new(),
-                unanchored_comments: Vec::new(),
-                outstanding_requests: Vec::new(),
+                ..change_request(
+                    number,
+                    "Review requests",
+                    head(&repository, "refs/heads/review-requests"),
+                )
             },
         )
         .await;
@@ -197,6 +221,8 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         state: ChangeRequestState::Open,
         draft: false,
         commit_range: range.clone(),
+        base_branch: "main".to_owned(),
+        head: Some(head(&repository, "refs/heads/review-threads")),
         author: author.clone(),
         updated_at: "2026-08-25T10:00:00Z".parse().expect("timestamp"),
         reviews: vec![Review {
@@ -480,4 +506,126 @@ async fn consumer_streams_release_assets_through_the_contract() {
         chunks,
         [Bytes::from_static(b"hello "), Bytes::from_static(b"world")]
     );
+}
+
+#[tokio::test]
+async fn fake_lists_every_open_change_request_proposing_a_head() {
+    let provider = FakeProvider::new();
+    let target = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let fork = Repository::new("contributor", "sandbox").expect("repository");
+    for (targeted, number, seeded_head, base_branch, state) in [
+        (
+            &target,
+            1,
+            head(&target, "refs/heads/feature"),
+            "main",
+            ChangeRequestState::Open,
+        ),
+        (
+            &target,
+            2,
+            head(&target, "refs/heads/feature"),
+            "release/1.1",
+            ChangeRequestState::Open,
+        ),
+        (
+            &target,
+            3,
+            head(&target, "refs/heads/feature"),
+            "main",
+            ChangeRequestState::Closed,
+        ),
+        (
+            &target,
+            7,
+            head(&target, "refs/heads/feature"),
+            "main",
+            ChangeRequestState::Merged {
+                merged_at: "2026-08-24T10:00:00Z".parse().expect("timestamp"),
+            },
+        ),
+        (
+            &target,
+            4,
+            head(&target, "refs/heads/release/1.1"),
+            "main",
+            ChangeRequestState::Open,
+        ),
+        (
+            &target,
+            5,
+            head(&fork, "refs/heads/feature"),
+            "main",
+            ChangeRequestState::Open,
+        ),
+        (
+            &fork,
+            6,
+            head(&fork, "refs/heads/feature"),
+            "main",
+            ChangeRequestState::Open,
+        ),
+    ] {
+        let number = ChangeRequestNumber::new(number).expect("number");
+        provider
+            .seed_change_request(
+                targeted.clone(),
+                ChangeRequest {
+                    state,
+                    base_branch: base_branch.to_owned(),
+                    ..change_request(
+                        number,
+                        &format!("Change request {}", number.get()),
+                        seeded_head,
+                    )
+                },
+            )
+            .await;
+    }
+    let numbers = async |targeted: &Repository, head: ChangeRequestHead| {
+        provider
+            .open_change_requests(targeted, &head)
+            .await
+            .expect("open change requests")
+            .into_iter()
+            .map(ChangeRequestNumber::get)
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        numbers(&target, head(&target, "refs/heads/no-such-branch")).await,
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        numbers(&target, head(&target, "refs/heads/release/1.1")).await,
+        [4]
+    );
+    let both = numbers(&target, head(&target, "refs/heads/feature")).await;
+    assert_eq!(
+        both,
+        [1, 2],
+        "3 is closed, 7 is merged, and 5 proposes the fork's branch of the same name"
+    );
+    let mut bases = Vec::new();
+    for number in both {
+        let number = ChangeRequestNumber::new(number).expect("number");
+        bases.push(
+            provider
+                .change_request(&target, number)
+                .await
+                .expect("observation")
+                .base_branch,
+        );
+    }
+    assert_eq!(
+        bases,
+        ["main", "release/1.1"],
+        "two change requests proposing one branch are told apart by the branch each targets"
+    );
+    assert_eq!(
+        numbers(&target, head(&fork, "refs/heads/feature")).await,
+        [5],
+        "a change request targeting this repository from a fork is found by naming the fork's head"
+    );
+    assert_eq!(numbers(&fork, head(&fork, "refs/heads/feature")).await, [6]);
 }

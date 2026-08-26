@@ -15,6 +15,14 @@ Glossary
         that branch. `ChangeRequest` is one complete observation of a change
         request and its code-review data. Its state is open, closed without
         merging, or merged with the time the platform recorded.
+    change request head:
+        The branch a change request proposes for merge together with the
+        repository holding that branch, which is the repository the change
+        request targets or a fork of it. `ChangeRequestHead` reads the branch
+        from the one ref spelling the code-review interface accepts,
+        `refs/heads/<branch>`. It is both how a caller holding only its
+        checkout addresses the open change requests that propose it and what
+        an observed change request reports, so the two agree.
     code review:
         The domain that acts on change requests so merging can be approved.
         It covers reviews, findings, standalone threads, unanchored

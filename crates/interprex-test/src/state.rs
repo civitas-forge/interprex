@@ -53,6 +53,10 @@ impl FakeProvider {
             .insert((repository, issue.number), issue);
     }
 
+    /// Seeds one change request into the repository it targets.
+    ///
+    /// The head it proposes is `change_request.head`, which names the
+    /// repository holding that branch and so can be a fork of `repository`.
     pub async fn seed_change_request(&self, repository: Repository, change_request: ChangeRequest) {
         self.state
             .write()

@@ -1,11 +1,135 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{ModelError, Repository, Result};
 
 platform_number!(ChangeRequestNumber);
 platform_number!(ReviewLine);
+
+const BRANCH_REF_PREFIX: &str = "refs/heads/";
+
+/// Characters `git check-ref-format` forbids anywhere in a ref.
+const FORBIDDEN_BRANCH_CHARACTERS: [char; 7] = ['~', '^', ':', '?', '*', '[', '\\'];
+
+/// Why a string names no branch a change request can propose.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum InvalidHeadRef {
+    #[error("head ref must be fully qualified as refs/heads/<branch>")]
+    NotABranchRef,
+    #[error("head ref names no branch")]
+    NoBranch,
+    #[error("branch name is one git refuses to create")]
+    InvalidBranchName,
+}
+
+/// The branch a change request proposes, and the repository holding it.
+///
+/// A change request belongs to the repository it targets, while its head
+/// branch can live in a fork of that repository, so the two are separate
+/// facts and a caller states both. Construction reads the branch out of a
+/// fully qualified head ref, so a value of this type always names a branch
+/// that repository could hold, and no provider has to guess either half.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(try_from = "SerializedHead", into = "SerializedHead")]
+pub struct ChangeRequestHead {
+    repository: Repository,
+    branch: String,
+}
+
+/// The serialized form of a head, which reads back through the same
+/// validation a caller's construction passes.
+#[derive(Clone, Deserialize, Serialize)]
+struct SerializedHead {
+    repository: Repository,
+    head_ref: String,
+}
+
+impl TryFrom<SerializedHead> for ChangeRequestHead {
+    type Error = InvalidHeadRef;
+
+    fn try_from(value: SerializedHead) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.repository, &value.head_ref)
+    }
+}
+
+impl From<ChangeRequestHead> for SerializedHead {
+    fn from(value: ChangeRequestHead) -> Self {
+        Self {
+            head_ref: format!("{BRANCH_REF_PREFIX}{}", value.branch),
+            repository: value.repository,
+        }
+    }
+}
+
+impl ChangeRequestHead {
+    /// Reads a fully qualified `refs/heads/<branch>` ref in `repository`.
+    ///
+    /// One spelling rather than two keeps every branch addressable: accepting a
+    /// bare branch name as well would leave a branch literally named
+    /// `refs/heads/main` unreachable, because that string also qualifies
+    /// branch `main`. Written this way it is `refs/heads/refs/heads/main` and
+    /// stays distinct.
+    pub fn new(
+        repository: Repository,
+        head_ref: &str,
+    ) -> std::result::Result<Self, InvalidHeadRef> {
+        Ok(Self {
+            repository,
+            branch: head_branch(head_ref)?.to_owned(),
+        })
+    }
+
+    #[must_use]
+    pub fn repository(&self) -> &Repository {
+        &self.repository
+    }
+
+    /// The branch this head names, without its `refs/heads/` qualification.
+    #[must_use]
+    pub fn branch(&self) -> &str {
+        &self.branch
+    }
+}
+
+fn head_branch(head_ref: &str) -> std::result::Result<&str, InvalidHeadRef> {
+    let branch = head_ref
+        .strip_prefix(BRANCH_REF_PREFIX)
+        .ok_or(InvalidHeadRef::NotABranchRef)?;
+    if branch.is_empty() {
+        return Err(InvalidHeadRef::NoBranch);
+    }
+    if creatable_branch_name(branch) {
+        Ok(branch)
+    } else {
+        Err(InvalidHeadRef::InvalidBranchName)
+    }
+}
+
+/// Whether git would create a branch of this name, by the rules
+/// `git check-ref-format` applies to `refs/heads/<branch>`.
+fn creatable_branch_name(branch: &str) -> bool {
+    if branch == "@"
+        || branch == "HEAD"
+        || branch.starts_with('-')
+        || branch.ends_with('.')
+        || branch.contains("..")
+        || branch.contains("@{")
+    {
+        return false;
+    }
+    if branch.chars().any(|character| {
+        character.is_ascii_control()
+            || character == ' '
+            || FORBIDDEN_BRANCH_CHARACTERS.contains(&character)
+    }) {
+        return false;
+    }
+    branch.split('/').all(|component| {
+        !component.is_empty() && !component.starts_with('.') && !component.ends_with(".lock")
+    })
+}
 
 macro_rules! opaque_review_id {
     ($name:ident, $field:literal, $entity:literal) => {
@@ -459,6 +583,22 @@ pub struct ChangeRequest {
     pub state: ChangeRequestState,
     pub draft: bool,
     pub commit_range: CommitRange,
+    /// The branch this change request targets, whose tip at observation time
+    /// is `commit_range.base_sha`.
+    ///
+    /// The branch is named because a sha cannot identify it: branches share
+    /// tips and advance between observations. Two open change requests
+    /// proposing the same head differ by this branch, so a caller choosing
+    /// among them reads a fact rather than inferring one.
+    pub base_branch: String,
+    /// The branch this change request proposes and the repository holding it,
+    /// which is this repository or a fork of it.
+    ///
+    /// `None` when the provider no longer identifies where the branch lived,
+    /// as GitHub reports for a change request whose fork was deleted. A branch
+    /// name alone is not a head, so it is absent rather than paired with a
+    /// guessed repository.
+    pub head: Option<ChangeRequestHead>,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     /// Platform reviews. Collection order carries no policy meaning.
@@ -498,6 +638,31 @@ pub trait CodeReviewsProvider: Send + Sync {
         repository: &Repository,
         number: ChangeRequestNumber,
     ) -> Result<ChangeRequest>;
+    /// Reads the number of every open change request in `repository` that
+    /// proposes `head`.
+    ///
+    /// A change request belongs to the repository it targets, and its head
+    /// branch can live in a fork of that repository, so `repository` and
+    /// `head.repository()` are stated separately and can differ. A caller
+    /// working from a git checkout names the repository the change request
+    /// targets and the branch it pushed, wherever that branch lives.
+    ///
+    /// A branch can be proposed by more than one open change request against
+    /// different bases, so every match is returned; choosing among them is the
+    /// caller's policy, made from `ChangeRequest::base_branch` after reading
+    /// each candidate through `change_request`. Order carries no policy
+    /// meaning, and an empty result means no open change request in
+    /// `repository` proposes that head.
+    ///
+    /// A match proposes exactly `head`: both the repository holding the branch
+    /// and the branch itself, so heads differing only by repository name are
+    /// different heads. `ChangeRequest::head` reports the same fact for a
+    /// change request read by number.
+    async fn open_change_requests(
+        &self,
+        repository: &Repository,
+        head: &ChangeRequestHead,
+    ) -> Result<Vec<ChangeRequestNumber>>;
     async fn resolve_thread(
         &self,
         repository: &Repository,
@@ -608,6 +773,80 @@ mod tests {
         }
     }
 
+    fn sandbox() -> Repository {
+        Repository::new("civitas-forge", "sandbox").expect("repository")
+    }
+
+    #[test]
+    fn head_reads_one_ref_spelling_so_every_branch_stays_addressable() {
+        for (head_ref, branch) in [
+            ("refs/heads/main", "main"),
+            ("refs/heads/feat/open-request", "feat/open-request"),
+            ("refs/heads/refs/heads/main", "refs/heads/main"),
+        ] {
+            let head = ChangeRequestHead::new(sandbox(), head_ref).expect("branch ref");
+            assert_eq!(head.branch(), branch);
+            assert_eq!(head.repository(), &sandbox());
+        }
+    }
+
+    #[test]
+    fn head_states_why_a_string_names_no_branch() {
+        for unqualified in ["", "main", "refs/tags/v1.1.0", "refs/remotes/origin/main"] {
+            assert_eq!(
+                ChangeRequestHead::new(sandbox(), unqualified),
+                Err(InvalidHeadRef::NotABranchRef),
+                "{unqualified:?}"
+            );
+        }
+        assert_eq!(
+            ChangeRequestHead::new(sandbox(), "refs/heads/"),
+            Err(InvalidHeadRef::NoBranch)
+        );
+        for uncreatable in [
+            "refs/heads/@",
+            "refs/heads/HEAD",
+            "refs/heads/-topic",
+            "refs/heads/main.",
+            "refs/heads/ma..in",
+            "refs/heads/ma@{in",
+            "refs/heads/ma:in",
+            "refs/heads/ma in",
+            "refs/heads/main\n",
+            "refs/heads/ma~in",
+            "refs/heads/ma[in",
+            "refs/heads/ma\\in",
+            "refs/heads/feat//open",
+            "refs/heads/feat/",
+            "refs/heads//feat",
+            "refs/heads/feat/.hidden",
+            "refs/heads/feat/open.lock",
+        ] {
+            assert_eq!(
+                ChangeRequestHead::new(sandbox(), uncreatable),
+                Err(InvalidHeadRef::InvalidBranchName),
+                "{uncreatable:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn head_keeps_the_branch_characters_git_permits() {
+        for permitted in [
+            "refs/heads/mai\u{00a0}n",
+            "refs/heads/feature.lockfile",
+            "refs/heads/rele.ase",
+            "refs/heads/ma@in",
+            "refs/heads/feat/-topic",
+            "refs/heads/feat/HEAD",
+        ] {
+            assert!(
+                ChangeRequestHead::new(sandbox(), permitted).is_ok(),
+                "{permitted:?}"
+            );
+        }
+    }
+
     #[test]
     fn findings_and_standalone_threads_remain_structurally_distinct() {
         let reviewer = actor("reviewer");
@@ -625,6 +864,14 @@ mod tests {
                 base_sha: "base".to_owned(),
                 head_sha: "head".to_owned(),
             },
+            base_branch: "main".to_owned(),
+            head: Some(
+                ChangeRequestHead::new(
+                    Repository::new("civitas-forge", "sandbox").expect("repository"),
+                    "refs/heads/author-threads",
+                )
+                .expect("head"),
+            ),
             author: author.clone(),
             updated_at: Utc.timestamp_opt(2, 0).single().expect("timestamp"),
             reviews: vec![review(

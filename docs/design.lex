@@ -79,6 +79,36 @@ Design
     that remains inconsistent is returned as unrepresentable data instead of
     being deleted or guessed.
 
+    `CodeReviewsProvider::open_change_requests` answers the reverse question:
+    given the repository a change request targets and the head it proposes,
+    which open change requests are those. It returns their numbers, so the
+    caller reads the observation it wants through `change_request`. A branch
+    can be proposed by more than one open change request against different
+    bases; choosing among them is caller policy, made from the branch each
+    targets, so every match is returned, order carries no policy meaning and
+    an empty result means no open change request proposes that head.
+
+    A change request belongs to the repository it targets, while its head
+    branch can live in a fork of that repository. `ChangeRequestHead` keeps
+    those two repositories separate: the caller states the repository targeted
+    and the head, and a provider infers neither from the other. GitHub filters
+    pull requests by a head written `owner:branch`, which names where the
+    branch lives, so the provider reads the targeted repository's pull requests
+    and writes the head's own repository into the filter. That filter addresses
+    an owner and a branch, not a repository, so another repository of the same
+    owner answers it; the provider compares each result's observed head against
+    the one asked for rather than trusting the filter to have been exact.
+
+    `ChangeRequestHead::new` reads the branch from one ref spelling,
+    `refs/heads/<branch>`. Accepting a bare branch name as well would leave a
+    branch named `refs/heads/main` unaddressable, because the same string also
+    qualifies branch `main`. Construction applies the rules
+    `git check-ref-format` applies to a branch: the forbidden characters,
+    `HEAD`, a leading `-`, a trailing `.`, `..`, `@{`, the name `@`, and empty,
+    dot-prefixed or `.lock` path components. A name git would refuse to create
+    is `InvalidHeadRef` where the caller writes it, and every provider receives
+    a head it can address.
+
     `ChangeRequestState` reports whether the change request is open, closed
     without merging or merged, and the merged variant carries the merge time
     the platform recorded. Whether a change landed is an observed fact, so no
@@ -87,7 +117,19 @@ Design
     combination of those three fields, and any state Interprex does not model,
     is returned as unrepresentable data.
 
-    The change request carries its current base and head commits. A review
+    The change request carries its current base and head commits, names the
+    branch it targets and carries the head it proposes. Branches are named
+    because a sha cannot identify one: branches share tips and advance between
+    observations. Two open change requests proposing the same head differ by
+    the branch each targets, so the choice `open_change_requests` leaves to the
+    caller is one the observation can answer, and a change request read by
+    number reports the same head that would have found it. A head is absent
+    when the provider no longer identifies the repository holding the branch,
+    as GitHub reports once a fork is deleted; a branch name without its
+    repository is not a head, so it is not paired with the targeted repository
+    instead.
+
+    A review
     carries only the reviewed head commit because GitHub does not retain the
     historical base commit for each review. Interprex does not pair a historical
     head with the current base and present it as a historical range.

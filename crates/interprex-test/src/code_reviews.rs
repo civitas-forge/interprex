@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, FindingResolution,
-    FindingResolutionRecord, FindingResolutionReply, Repository, Result, ReviewActor,
-    ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
-    ReviewThreadStatus,
+    ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckOutcome,
+    CodeReviewsProvider, FindingResolution, FindingResolutionRecord, FindingResolutionReply,
+    ProviderError, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment,
+    ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewTarget, ReviewTeam,
+    ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -23,6 +23,26 @@ impl CodeReviewsProvider for FakeProvider {
             .get(&(repository.clone(), number))
             .cloned()
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))
+    }
+
+    async fn open_change_requests(
+        &self,
+        repository: &Repository,
+        head: &ChangeRequestHead,
+    ) -> Result<Vec<ChangeRequestNumber>> {
+        Ok(self
+            .state
+            .read()
+            .await
+            .change_requests
+            .iter()
+            .filter(|((targeted, _), change_request)| {
+                targeted == repository
+                    && change_request.state == ChangeRequestState::Open
+                    && change_request.head.as_ref() == Some(head)
+            })
+            .map(|((_, number), _)| *number)
+            .collect())
     }
 
     async fn resolve_thread(
@@ -80,7 +100,7 @@ impl CodeReviewsProvider for FakeProvider {
             metadata_format, ..
         }) = &finding.resolution
         {
-            return Err(interprex::ProviderError::Unrepresentable {
+            return Err(ProviderError::Unrepresentable {
                 provider: "fake",
                 fact: format!(
                     "finding thread {} contains unsupported resolution metadata format {metadata_format}",
