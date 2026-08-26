@@ -10,17 +10,17 @@ Interprex
 
 2. Domains
 
-    code hosting:
+    Code Hosting:
         Read repository facts and merge settings, apply settings, read and update rulesets, and write encrypted repository secrets.
-    tracker:
+    Tracker:
         Read issues and read or update labels.
-    code review:
+    Code Review:
         Read change requests by number or by the head ref they propose, together with their reviews, findings, standalone threads, unanchored comments and outstanding review requests; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
         Read change requests, their mergeability, reviews, findings, standalone threads, unanchored comments, outstanding review requests and the checks recorded on a commit; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
         publish check results.
-    jobs:
+    Jobs:
         Dispatch jobs, read runs and cancel runs.
-    releases:
+    Releases:
         Read and create releases, stream uploads and stream downloads.
 
 3. Code Review Data
