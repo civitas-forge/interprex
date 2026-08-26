@@ -195,6 +195,16 @@ Design
     timestamp, so a caller measuring how long a request has stood reads an
     absent time as no measurement rather than an approximate one.
 
+    The outstanding-request list and the timeline are separate reads with no
+    transaction across them, so the time reported for a reviewer is the one on
+    that reviewer's latest surviving request event at the moment the timeline
+    was read. A reviewer re-requested between the two reads reports the newer
+    request's time beside the older request record, and a reviewer whose
+    request was withdrawn between them reports no time at all. Interprex does
+    not read either collection twice to close that window: a later observation
+    reports the settled state, and the absence of a cross-collection snapshot
+    already governs every other collection in this observation.
+
     The timeline is a paginated read of its own, and the times it carries
     describe outstanding requests only. The adapter therefore reads it when at
     least one outstanding request names a reviewer to match and skips it

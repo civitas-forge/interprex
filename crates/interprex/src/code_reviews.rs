@@ -135,6 +135,11 @@ pub struct ReviewRequest {
     /// provider never substitutes a nearby timestamp, so a caller measuring
     /// how long a request has been outstanding reads `None` as no measurement
     /// rather than an approximate one.
+    ///
+    /// Where the outstanding requests and the request events are separate
+    /// reads with no snapshot across them, this is the time on the target's
+    /// latest surviving request event when the events were read: a target
+    /// re-requested between the two reads reports the newer request's time.
     pub requested_at: Option<DateTime<Utc>>,
     pub as_code_owner: bool,
 }
