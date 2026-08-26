@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, Repository, Result,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewRequest, ReviewRequestId,
+    ChangeRequest, ChangeRequestNumber, CheckOutcome, CodeReviewsProvider, FindingResolution,
+    FindingResolutionRecord, FindingResolutionReply, Repository, Result, ReviewActor,
+    ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
     ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
     ReviewThreadStatus,
 };
@@ -35,22 +36,108 @@ impl CodeReviewsProvider for FakeProvider {
             .change_requests
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
-        let finding = change_request
+        if let Some(finding) = change_request
             .reviews
             .iter_mut()
             .flat_map(|review| review.findings.iter_mut())
-            .find(|thread| &thread.id == thread_id);
-        let thread = finding.or_else(|| {
-            change_request
-                .standalone_threads
-                .iter_mut()
-                .find(|thread| &thread.id == thread_id)
-        });
-        if let Some(thread) = thread {
+            .find(|thread| &thread.id == thread_id)
+        {
+            finding.status = ReviewThreadStatus::Resolved;
+            return Ok(());
+        }
+        if let Some(thread) = change_request
+            .standalone_threads
+            .iter_mut()
+            .find(|thread| &thread.id == thread_id)
+        {
             thread.status = ReviewThreadStatus::Resolved;
             return Ok(());
         }
         Err(missing(format!("review thread {}", thread_id.as_str())))
+    }
+
+    async fn resolve_finding(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        thread_id: &ReviewThreadId,
+        resolution: FindingResolution,
+        reply: &FindingResolutionReply,
+    ) -> Result<()> {
+        let mut state = self.state.write().await;
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let observed_at = change_request.updated_at;
+        let finding = change_request
+            .reviews
+            .iter_mut()
+            .flat_map(|review| review.findings.iter_mut())
+            .find(|thread| &thread.id == thread_id)
+            .ok_or_else(|| missing(format!("finding thread {}", thread_id.as_str())))?;
+        if let Some(FindingResolutionRecord::Unsupported {
+            metadata_format, ..
+        }) = &finding.resolution
+        {
+            return Err(interprex::ProviderError::Unrepresentable {
+                provider: "fake",
+                fact: format!(
+                    "finding thread {} contains unsupported resolution metadata format {metadata_format}",
+                    thread_id.as_str()
+                ),
+            });
+        }
+        if matches!(
+            &finding.resolution,
+            Some(FindingResolutionRecord::Supported {
+                resolution: recorded,
+                ..
+            }) if *recorded == resolution
+        ) {
+            finding.status = ReviewThreadStatus::Resolved;
+            return Ok(());
+        }
+        let author = ReviewActor {
+            id: ReviewActorId::new("fake-provider:authenticated-actor")
+                .expect("fake actor identity is nonempty"),
+            login: "fake-provider".to_owned(),
+            kind: ReviewActorKind::User,
+        };
+        let written_at = finding
+            .replies
+            .iter()
+            .map(|comment| comment.updated_at.unwrap_or(comment.created_at))
+            .chain([observed_at])
+            .max()
+            .expect("the observed change supplies one timestamp")
+            + std::time::Duration::from_micros(1);
+        let reply_number = finding
+            .replies
+            .iter()
+            .filter(|comment| comment.id.as_str().starts_with("fake-resolution:"))
+            .count()
+            + 1;
+        let reply_id = ReviewCommentId::new(format!(
+            "fake-resolution:{}:{reply_number}",
+            thread_id.as_str()
+        ))
+        .expect("fake resolution identity is nonempty");
+        let source_reply = ReviewComment {
+            id: reply_id,
+            author,
+            body: reply.as_str().to_owned(),
+            created_at: written_at,
+            updated_at: None,
+        };
+        let source_reply_id = source_reply.id.clone();
+        finding.replies.push(source_reply);
+        finding.resolution = Some(FindingResolutionRecord::Supported {
+            resolution,
+            source_reply_id,
+        });
+        finding.status = ReviewThreadStatus::Resolved;
+        Ok(())
     }
 
     async fn request_reviewers(

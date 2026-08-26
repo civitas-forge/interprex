@@ -2,11 +2,13 @@ use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
     AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestNumber, CodeHostingProvider,
-    CodeReviewsProvider, CommitRange, OpenClosed, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, OpenClosed, Release,
+    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -186,38 +188,41 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
                 submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
             },
             summary: Some("One concern".to_owned()),
-            findings: vec![ReviewThread {
-                id: ReviewThreadId::new("thread-1").expect("thread id"),
-                location: ReviewLocation {
-                    path: "src/lib.rs".to_owned(),
-                    anchor: ReviewAnchor::Lines {
-                        side: ReviewDiffSide::Right,
-                        original: ReviewLineRange {
-                            start: None,
-                            end: ReviewLine::new(10).expect("line"),
+            findings: vec![ReviewFinding {
+                thread: ReviewThread {
+                    id: ReviewThreadId::new("thread-1").expect("thread id"),
+                    location: ReviewLocation {
+                        path: "src/lib.rs".to_owned(),
+                        anchor: ReviewAnchor::Lines {
+                            side: ReviewDiffSide::Right,
+                            original: ReviewLineRange {
+                                start: None,
+                                end: ReviewLine::new(10).expect("line"),
+                            },
+                            current: Some(ReviewLineRange {
+                                start: None,
+                                end: ReviewLine::new(10).expect("line"),
+                            }),
                         },
-                        current: Some(ReviewLineRange {
-                            start: None,
-                            end: ReviewLine::new(10).expect("line"),
-                        }),
                     },
+                    outdated: false,
+                    status: ReviewThreadStatus::Open,
+                    comment: ReviewComment {
+                        id: ReviewCommentId::new("comment-1").expect("comment id"),
+                        author: reviewer.clone(),
+                        body: "question".to_owned(),
+                        created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                        updated_at: Some("2026-08-25T09:00:00Z".parse().expect("timestamp")),
+                    },
+                    replies: vec![ReviewComment {
+                        id: ReviewCommentId::new("comment-2").expect("comment id"),
+                        author: author.clone(),
+                        body: "answer".to_owned(),
+                        created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                        updated_at: Some("2026-08-25T09:30:00Z".parse().expect("timestamp")),
+                    }],
                 },
-                outdated: false,
-                status: ReviewThreadStatus::Open,
-                comment: ReviewComment {
-                    id: ReviewCommentId::new("comment-1").expect("comment id"),
-                    author: reviewer.clone(),
-                    body: "question".to_owned(),
-                    created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
-                    updated_at: Some("2026-08-25T09:00:00Z".parse().expect("timestamp")),
-                },
-                replies: vec![ReviewComment {
-                    id: ReviewCommentId::new("comment-2").expect("comment id"),
-                    author: author.clone(),
-                    body: "answer".to_owned(),
-                    created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
-                    updated_at: Some("2026-08-25T09:30:00Z".parse().expect("timestamp")),
-                }],
+                resolution: None,
             }],
         }],
         standalone_threads: vec![ReviewThread {
@@ -263,23 +268,150 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             .expect("review"),
         change_request
     );
+    let resolution = FindingResolution {
+        reason: FindingResolutionReason::Addressed,
+        addressing_severity: FindingSeverity::Major,
+    };
+    let explanation =
+        FindingResolutionReply::new("Addressed by validating the range before indexing.")
+            .expect("resolution explanation");
     provider
-        .resolve_thread(
+        .resolve_finding(
             &repository,
             number,
             &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            &explanation,
         )
         .await
-        .expect("resolve thread");
-    assert!(
-        provider
-            .change_request(&repository, number)
-            .await
-            .expect("review")
-            .reviews[0]
-            .findings[0]
-            .status
-            == ReviewThreadStatus::Resolved
+        .expect("resolve finding");
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review");
+    let finding = &observed.reviews[0].findings[0];
+    assert_eq!(finding.status, ReviewThreadStatus::Resolved);
+    let record = finding.resolution.as_ref().expect("resolution record");
+    assert_eq!(record.supported_resolution(), Some(resolution));
+    assert_eq!(
+        record.source_reply_id(),
+        &finding.replies.last().expect("reply").id
+    );
+    let resolution_reply = finding.resolution_reply().expect("linked resolution reply");
+    assert_eq!(resolution_reply.author.login, "fake-provider");
+    assert!(resolution_reply.created_at > change_request.updated_at);
+    assert_eq!(
+        finding.replies.last().map(|comment| comment.body.as_str()),
+        Some("Addressed by validating the range before indexing.")
+    );
+
+    let reply_count = finding.replies.len();
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            &FindingResolutionReply::new("A retry must not replace the recorded explanation.")
+                .expect("resolution explanation"),
+        )
+        .await
+        .expect("repeat identical resolution");
+    let repeated = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after retry");
+    assert_eq!(repeated.reviews[0].findings[0].replies.len(), reply_count);
+
+    let mut partial_write = repeated;
+    partial_write.reviews[0].findings[0].status = ReviewThreadStatus::Open;
+    provider
+        .seed_change_request(repository.clone(), partial_write)
+        .await;
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            &FindingResolutionReply::new(
+                "A partial-write retry only resolves the existing thread.",
+            )
+            .expect("resolution explanation"),
+        )
+        .await
+        .expect("recover partial resolution write");
+    let recovered = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after partial-write retry");
+    assert_eq!(
+        recovered.reviews[0].findings[0].status,
+        ReviewThreadStatus::Resolved
+    );
+    assert_eq!(recovered.reviews[0].findings[0].replies.len(), reply_count);
+
+    let mut unsupported = recovered.clone();
+    let source_reply_id = unsupported.reviews[0].findings[0]
+        .replies
+        .last()
+        .expect("resolution reply")
+        .id
+        .clone();
+    unsupported.reviews[0].findings[0].resolution = Some(FindingResolutionRecord::Unsupported {
+        metadata_format: "future:test-format".to_owned(),
+        source_reply_id,
+    });
+    provider
+        .seed_change_request(repository.clone(), unsupported)
+        .await;
+
+    let replacement = FindingResolution {
+        reason: FindingResolutionReason::WontFix,
+        addressing_severity: FindingSeverity::Minor,
+    };
+    let replacement_reply = FindingResolutionReply::new("The compatibility cost is not justified.")
+        .expect("resolution explanation");
+    let error = provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            replacement,
+            &replacement_reply,
+        )
+        .await
+        .expect_err("unsupported resolution format must not be overwritten");
+    assert!(error.to_string().contains("future:test-format"));
+    provider
+        .seed_change_request(repository.clone(), recovered)
+        .await;
+    provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            replacement,
+            &replacement_reply,
+        )
+        .await
+        .expect("record changed resolution");
+    let replaced = provider
+        .change_request(&repository, number)
+        .await
+        .expect("review after changed resolution");
+    let finding = &replaced.reviews[0].findings[0];
+    assert_eq!(finding.replies.len(), reply_count + 1);
+    assert_eq!(
+        finding
+            .resolution
+            .as_ref()
+            .and_then(interprex::FindingResolutionRecord::supported_resolution),
+        Some(replacement)
+    );
+    assert_eq!(
+        finding.replies[finding.replies.len() - 2].body,
+        "Addressed by validating the range before indexing."
     );
 }
 
