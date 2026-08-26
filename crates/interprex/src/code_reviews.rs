@@ -245,9 +245,38 @@ pub struct FindingResolution {
 /// The source reply identifier links to the addressing actor, explanation and
 /// platform timestamps in the containing thread's replies.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FindingResolutionRecord {
-    pub resolution: FindingResolution,
-    pub source_reply_id: ReviewCommentId,
+#[serde(rename_all = "snake_case", tag = "compatibility")]
+pub enum FindingResolutionRecord {
+    Supported {
+        resolution: FindingResolution,
+        source_reply_id: ReviewCommentId,
+    },
+    Unsupported {
+        metadata_version: u64,
+        source_reply_id: ReviewCommentId,
+    },
+}
+
+impl FindingResolutionRecord {
+    #[must_use]
+    pub fn supported_resolution(&self) -> Option<FindingResolution> {
+        match self {
+            Self::Supported { resolution, .. } => Some(*resolution),
+            Self::Unsupported { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn source_reply_id(&self) -> &ReviewCommentId {
+        match self {
+            Self::Supported {
+                source_reply_id, ..
+            }
+            | Self::Unsupported {
+                source_reply_id, ..
+            } => source_reply_id,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -293,31 +322,44 @@ pub struct ReviewLocation {
     pub anchor: ReviewAnchor,
 }
 
-/// One complete inline thread on the change request.
-///
-/// When nested in [`Review::findings`], this is a finding made in that review.
-/// When nested in [`ChangeRequest::standalone_threads`], it is a standalone
-/// thread that did not originate in a review. Replies never change that placement.
+/// The facts shared by findings and standalone inline threads.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewThread {
     pub id: ReviewThreadId,
     pub location: ReviewLocation,
     pub outdated: bool,
     pub status: ReviewThreadStatus,
-    /// The recorded conclusion when this thread is a finding.
-    ///
-    /// Standalone threads always contain `None` because finding resolutions
-    /// are conclusions about review findings, not arbitrary inline threads.
-    pub resolution: Option<FindingResolutionRecord>,
     pub comment: ReviewComment,
     pub replies: Vec<ReviewComment>,
 }
 
-impl ReviewThread {
+/// One inline thread attached to the review in which it originated.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReviewFinding {
+    #[serde(flatten)]
+    pub thread: ReviewThread,
+    pub resolution: Option<FindingResolutionRecord>,
+}
+
+impl std::ops::Deref for ReviewFinding {
+    type Target = ReviewThread;
+
+    fn deref(&self) -> &Self::Target {
+        &self.thread
+    }
+}
+
+impl std::ops::DerefMut for ReviewFinding {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.thread
+    }
+}
+
+impl ReviewFinding {
     /// Returns the reply that records this finding's resolution.
     #[must_use]
     pub fn resolution_reply(&self) -> Option<&ReviewComment> {
-        let reply_id = &self.resolution.as_ref()?.source_reply_id;
+        let reply_id = self.resolution.as_ref()?.source_reply_id();
         self.replies.iter().find(|reply| &reply.id == reply_id)
     }
 }
@@ -335,7 +377,7 @@ pub struct Review {
     pub revision: ReviewedRevision,
     pub state: ReviewState,
     pub summary: Option<String>,
-    pub findings: Vec<ReviewThread>,
+    pub findings: Vec<ReviewFinding>,
 }
 
 /// One complete observation of a change request and its code-review data.
@@ -398,11 +440,11 @@ pub trait CodeReviewsProvider: Send + Sync {
     /// Records why a finding is complete, records its assessed severity and
     /// marks its platform thread resolved.
     ///
-    /// `reply` is visible explanatory text. Providers may add their own visible
-    /// or machine-readable representation around it. Providers whose platforms
-    /// require more than one request can return an error after a partial write;
-    /// a later observation preserves the platform thread state and any valid
-    /// resolution record independently.
+    /// `reply` must contain visible explanatory text after trimming whitespace.
+    /// Providers may add their own visible or machine-readable representation
+    /// around it. Providers whose platforms require more than one request can
+    /// return an error after a partial write; a later observation preserves the
+    /// platform thread state and any valid resolution record independently.
     ///
     /// Repeating an already recorded resolution does not add another reply. If
     /// that record exists while the platform thread is open, the repeated call
@@ -477,13 +519,12 @@ mod tests {
             },
             outdated: false,
             status: ReviewThreadStatus::Open,
-            resolution: None,
             comment: comment(&format!("comment-{id}"), author),
             replies: Vec::new(),
         }
     }
 
-    fn review(id: &str, author: ReviewActor, findings: Vec<ReviewThread>) -> Review {
+    fn review(id: &str, author: ReviewActor, findings: Vec<ReviewFinding>) -> Review {
         Review {
             id: ReviewId::new(id).expect("review id"),
             author: ReviewAuthor::Other(author),
@@ -522,7 +563,10 @@ mod tests {
             reviews: vec![review(
                 "review-1",
                 reviewer.clone(),
-                vec![thread("finding", reviewer)],
+                vec![ReviewFinding {
+                    thread: thread("finding", reviewer),
+                    resolution: None,
+                }],
             )],
             standalone_threads: vec![thread("standalone", author)],
             unanchored_comments: Vec::new(),

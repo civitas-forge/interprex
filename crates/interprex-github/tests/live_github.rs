@@ -174,6 +174,7 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .reviews
         .iter()
         .flat_map(|submitted| submitted.findings.iter())
+        .map(|finding| &finding.thread)
         .chain(change_request.standalone_threads.iter())
     {
         assert!(!thread.id.as_str().is_empty());
@@ -229,6 +230,7 @@ async fn configured_change_request_observation_matches_current_provider_data() {
         .reviews
         .iter()
         .flat_map(|item| item.findings.iter())
+        .map(|finding| &finding.thread)
         .chain(change_request.standalone_threads.iter())
         .collect::<Vec<_>>();
     let open_finding_count = findings
@@ -302,10 +304,10 @@ async fn configured_finding_resolution_round_trips_through_the_real_provider() {
         .expect("configured finding remains observable");
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
     let record = finding.resolution.as_ref().expect("resolution record");
-    assert_eq!(record.resolution, expected);
+    assert_eq!(record.supported_resolution(), Some(expected));
     let source_reply = finding.resolution_reply().expect("linked resolution reply");
     assert!(!source_reply.author.login.is_empty());
-    assert_eq!(source_reply.id, record.source_reply_id);
+    assert_eq!(&source_reply.id, record.source_reply_id());
     assert!(finding.replies.iter().any(|reply| {
         reply
             .body

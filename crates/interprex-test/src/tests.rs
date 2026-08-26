@@ -5,9 +5,9 @@ use interprex::{
     CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason, FindingSeverity,
     OpenClosed, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
     RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
-    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId,
-    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
+    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -187,39 +187,41 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
                 submitted_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
             },
             summary: Some("One concern".to_owned()),
-            findings: vec![ReviewThread {
-                id: ReviewThreadId::new("thread-1").expect("thread id"),
-                location: ReviewLocation {
-                    path: "src/lib.rs".to_owned(),
-                    anchor: ReviewAnchor::Lines {
-                        side: ReviewDiffSide::Right,
-                        original: ReviewLineRange {
-                            start: None,
-                            end: ReviewLine::new(10).expect("line"),
+            findings: vec![ReviewFinding {
+                thread: ReviewThread {
+                    id: ReviewThreadId::new("thread-1").expect("thread id"),
+                    location: ReviewLocation {
+                        path: "src/lib.rs".to_owned(),
+                        anchor: ReviewAnchor::Lines {
+                            side: ReviewDiffSide::Right,
+                            original: ReviewLineRange {
+                                start: None,
+                                end: ReviewLine::new(10).expect("line"),
+                            },
+                            current: Some(ReviewLineRange {
+                                start: None,
+                                end: ReviewLine::new(10).expect("line"),
+                            }),
                         },
-                        current: Some(ReviewLineRange {
-                            start: None,
-                            end: ReviewLine::new(10).expect("line"),
-                        }),
                     },
+                    outdated: false,
+                    status: ReviewThreadStatus::Open,
+                    comment: ReviewComment {
+                        id: ReviewCommentId::new("comment-1").expect("comment id"),
+                        author: reviewer.clone(),
+                        body: "question".to_owned(),
+                        created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
+                        updated_at: Some("2026-08-25T09:00:00Z".parse().expect("timestamp")),
+                    },
+                    replies: vec![ReviewComment {
+                        id: ReviewCommentId::new("comment-2").expect("comment id"),
+                        author: author.clone(),
+                        body: "answer".to_owned(),
+                        created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
+                        updated_at: Some("2026-08-25T09:30:00Z".parse().expect("timestamp")),
+                    }],
                 },
-                outdated: false,
-                status: ReviewThreadStatus::Open,
                 resolution: None,
-                comment: ReviewComment {
-                    id: ReviewCommentId::new("comment-1").expect("comment id"),
-                    author: reviewer.clone(),
-                    body: "question".to_owned(),
-                    created_at: "2026-08-25T09:00:00Z".parse().expect("timestamp"),
-                    updated_at: Some("2026-08-25T09:00:00Z".parse().expect("timestamp")),
-                },
-                replies: vec![ReviewComment {
-                    id: ReviewCommentId::new("comment-2").expect("comment id"),
-                    author: author.clone(),
-                    body: "answer".to_owned(),
-                    created_at: "2026-08-25T09:30:00Z".parse().expect("timestamp"),
-                    updated_at: Some("2026-08-25T09:30:00Z".parse().expect("timestamp")),
-                }],
             }],
         }],
         standalone_threads: vec![ReviewThread {
@@ -230,7 +232,6 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
             },
             outdated: false,
             status: ReviewThreadStatus::Open,
-            resolution: None,
             comment: ReviewComment {
                 id: ReviewCommentId::new("comment-3").expect("comment id"),
                 author: author.clone(),
@@ -270,6 +271,17 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         reason: FindingResolutionReason::Addressed,
         addressing_severity: FindingSeverity::Major,
     };
+    let error = provider
+        .resolve_finding(
+            &repository,
+            number,
+            &ReviewThreadId::new("thread-1").expect("thread id"),
+            resolution,
+            "   ",
+        )
+        .await
+        .expect_err("blank explanation must fail");
+    assert!(error.to_string().contains("must contain an explanation"));
     provider
         .resolve_finding(
             &repository,
@@ -287,10 +299,10 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     let finding = &observed.reviews[0].findings[0];
     assert_eq!(finding.status, ReviewThreadStatus::Resolved);
     let record = finding.resolution.as_ref().expect("resolution record");
-    assert_eq!(record.resolution, resolution);
+    assert_eq!(record.supported_resolution(), Some(resolution));
     assert_eq!(
-        record.source_reply_id,
-        finding.replies.last().expect("reply").id
+        record.source_reply_id(),
+        &finding.replies.last().expect("reply").id
     );
     let resolution_reply = finding.resolution_reply().expect("linked resolution reply");
     assert_eq!(resolution_reply.author.login, "fake-provider");
@@ -363,7 +375,10 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     let finding = &replaced.reviews[0].findings[0];
     assert_eq!(finding.replies.len(), reply_count + 1);
     assert_eq!(
-        finding.resolution.as_ref().map(|record| record.resolution),
+        finding
+            .resolution
+            .as_ref()
+            .and_then(interprex::FindingResolutionRecord::supported_resolution),
         Some(replacement)
     );
     assert_eq!(

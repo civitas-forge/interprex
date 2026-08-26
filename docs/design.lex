@@ -115,11 +115,12 @@ Design
     `other` merely because unavailable actors receive distinct placeholder
     identifiers.
 
-    A review thread retains its initial comment, ordered replies, open or
-    resolved platform status, optional finding resolution and outdated status.
-    `ReviewLocation` stores the file path once and an anchor. A line anchor
-    retains its original range, diff side and current mapped range when GitHub
-    supplies one. A file anchor does not invent line data.
+    `ReviewThread` retains the facts shared by inline threads: its initial
+    comment, ordered replies, open or resolved platform status and outdated
+    status. `ReviewFinding` combines those facts with an optional finding
+    resolution. `ReviewLocation` stores the file path once and an anchor. A line
+    anchor retains its original range, diff side and current mapped range when
+    GitHub supplies one. A file anchor does not invent line data.
 
     A thread whose initial comment names a review is nested under that review as
     a finding. This includes a change author's self-review and a draft review.
@@ -133,11 +134,13 @@ Design
     `WONT_FIX` means it will not be addressed. `FindingResolution` contains that
     reason and the addressing user's severity assessment.
     `FindingResolutionRecord` links to the reply that identifies the actor,
-    explanation and timestamps. It does not replace `ReviewThreadStatus`: a
-    manually resolved or legacy thread can have no finding resolution, and an
-    interrupted provider operation can record a finding resolution before the
-    platform thread becomes resolved. Standalone threads never contain a
-    finding resolution.
+    explanation and timestamps. Its supported variant contains the understood
+    conclusion; its unsupported variant preserves a newer metadata version
+    without treating an older record as current. It does not replace
+    `ReviewThreadStatus`: a manually resolved or legacy thread can have no
+    finding resolution, and an interrupted provider operation can record a
+    finding resolution before the platform thread becomes resolved. Standalone
+    `ReviewThread` values have no finding-resolution field.
 
     `CodeReviewsProvider::resolve_finding` takes the conclusion, addressing
     severity and visible explanatory reply. A successful operation records the

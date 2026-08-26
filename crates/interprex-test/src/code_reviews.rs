@@ -35,18 +35,20 @@ impl CodeReviewsProvider for FakeProvider {
             .change_requests
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
-        let finding = change_request
+        if let Some(finding) = change_request
             .reviews
             .iter_mut()
             .flat_map(|review| review.findings.iter_mut())
-            .find(|thread| &thread.id == thread_id);
-        let thread = finding.or_else(|| {
-            change_request
-                .standalone_threads
-                .iter_mut()
-                .find(|thread| &thread.id == thread_id)
-        });
-        if let Some(thread) = thread {
+            .find(|thread| &thread.id == thread_id)
+        {
+            finding.status = ReviewThreadStatus::Resolved;
+            return Ok(());
+        }
+        if let Some(thread) = change_request
+            .standalone_threads
+            .iter_mut()
+            .find(|thread| &thread.id == thread_id)
+        {
             thread.status = ReviewThreadStatus::Resolved;
             return Ok(());
         }
@@ -61,6 +63,12 @@ impl CodeReviewsProvider for FakeProvider {
         resolution: FindingResolution,
         reply: &str,
     ) -> Result<()> {
+        if reply.trim().is_empty() {
+            return Err(interprex::ProviderError::InvalidInput {
+                provider: "fake",
+                fact: "finding resolution reply must contain an explanation".to_owned(),
+            });
+        }
         let mut state = self.state.write().await;
         let change_request = state
             .change_requests
@@ -73,11 +81,13 @@ impl CodeReviewsProvider for FakeProvider {
             .flat_map(|review| review.findings.iter_mut())
             .find(|thread| &thread.id == thread_id)
             .ok_or_else(|| missing(format!("finding thread {}", thread_id.as_str())))?;
-        if finding
-            .resolution
-            .as_ref()
-            .is_some_and(|record| record.resolution == resolution)
-        {
+        if matches!(
+            &finding.resolution,
+            Some(FindingResolutionRecord::Supported {
+                resolution: recorded,
+                ..
+            }) if *recorded == resolution
+        ) {
             finding.status = ReviewThreadStatus::Resolved;
             return Ok(());
         }
@@ -115,7 +125,7 @@ impl CodeReviewsProvider for FakeProvider {
         };
         let source_reply_id = source_reply.id.clone();
         finding.replies.push(source_reply);
-        finding.resolution = Some(FindingResolutionRecord {
+        finding.resolution = Some(FindingResolutionRecord::Supported {
             resolution,
             source_reply_id,
         });

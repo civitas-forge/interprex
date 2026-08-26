@@ -15,10 +15,10 @@ use interprex::{
     CommitRange, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
     FindingSeverity, OpenClosed, ProviderError, Repository, Result, Review, ReviewActor,
     ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor,
-    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId,
+    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
+    ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
+    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -236,22 +236,25 @@ fn finding_resolution(body: &str) -> ParsedFindingResolution {
     })
 }
 
-fn latest_finding_resolution(
-    replies: &[ReviewComment],
-) -> std::result::Result<Option<FindingResolutionRecord>, u64> {
+fn latest_finding_resolution(replies: &[ReviewComment]) -> Option<FindingResolutionRecord> {
     for comment in replies.iter().rev() {
         match finding_resolution(&comment.body) {
             ParsedFindingResolution::Absent => {}
             ParsedFindingResolution::Supported(resolution) => {
-                return Ok(Some(FindingResolutionRecord {
+                return Some(FindingResolutionRecord::Supported {
                     resolution,
                     source_reply_id: comment.id.clone(),
-                }));
+                });
             }
-            ParsedFindingResolution::UnsupportedVersion(version) => return Err(version),
+            ParsedFindingResolution::UnsupportedVersion(metadata_version) => {
+                return Some(FindingResolutionRecord::Unsupported {
+                    metadata_version,
+                    source_reply_id: comment.id.clone(),
+                });
+            }
         }
     }
-    Ok(None)
+    None
 }
 
 const MARK_READY: &str = r#"
@@ -868,7 +871,7 @@ fn normalize_change_request(
             .collect::<Result<Vec<_>>>()?;
         let resolution = review_position
             .is_some()
-            .then(|| latest_finding_resolution(&replies).unwrap_or(None))
+            .then(|| latest_finding_resolution(&replies))
             .flatten();
         let normalized = ReviewThread {
             id: ReviewThreadId::new(thread.id).map_err(|error| ProviderError::Unrepresentable {
@@ -882,12 +885,14 @@ fn normalize_change_request(
             } else {
                 ReviewThreadStatus::Open
             },
-            resolution,
             comment: normalize_comment(initial)?,
             replies,
         };
         if let Some(position) = review_position {
-            normalized_reviews[position].findings.push(normalized);
+            normalized_reviews[position].findings.push(ReviewFinding {
+                thread: normalized,
+                resolution,
+            });
         } else {
             standalone_threads.push(normalized);
         }
@@ -1189,6 +1194,12 @@ impl CodeReviewsProvider for GithubProvider {
         resolution: FindingResolution,
         reply: &str,
     ) -> Result<()> {
+        if reply.trim().is_empty() {
+            return Err(ProviderError::InvalidInput {
+                provider: "github",
+                fact: "finding resolution reply must contain an explanation".to_owned(),
+            });
+        }
         let change_request = self.change_request(repository, number).await?;
         let finding = change_request
             .reviews
@@ -1198,20 +1209,25 @@ impl CodeReviewsProvider for GithubProvider {
             .ok_or_else(|| ProviderError::NotFound {
                 entity: format!("finding thread {}", thread_id.as_str()),
             })?;
-        if let Err(version) = latest_finding_resolution(&finding.replies) {
+        if let Some(FindingResolutionRecord::Unsupported {
+            metadata_version, ..
+        }) = &finding.resolution
+        {
             return Err(ProviderError::Unrepresentable {
                 provider: "github",
                 fact: format!(
-                    "finding thread {} contains unsupported resolution metadata version {version}",
+                    "finding thread {} contains unsupported resolution metadata version {metadata_version}",
                     thread_id.as_str()
                 ),
             });
         }
-        if finding
-            .resolution
-            .as_ref()
-            .is_some_and(|record| record.resolution == resolution)
-        {
+        if matches!(
+            &finding.resolution,
+            Some(FindingResolutionRecord::Supported {
+                resolution: recorded,
+                ..
+            }) if *recorded == resolution
+        ) {
             return if finding.status == ReviewThreadStatus::Resolved {
                 Ok(())
             } else {
@@ -1327,9 +1343,9 @@ mod tests {
 
     use interprex::{
         CheckConclusion, CheckOutcome, CodeReviewsProvider, FindingResolution,
-        FindingResolutionReason, FindingSeverity, ProviderError, Repository, ReviewActorKind,
-        ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget, ReviewTarget,
-        ReviewTeamKind, ReviewThreadStatus,
+        FindingResolutionReason, FindingResolutionRecord, FindingSeverity, ProviderError,
+        Repository, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation,
+        ReviewRequestTarget, ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1463,8 +1479,8 @@ mod tests {
         assert_eq!(finding.replies[0].author.login, "arthur-debert");
         assert_eq!(finding.status, ReviewThreadStatus::Resolved);
         let record = finding.resolution.as_ref().expect("resolution record");
-        assert_eq!(record.resolution, expected_resolution);
-        assert_eq!(record.source_reply_id, finding.replies[0].id);
+        assert_eq!(record.supported_resolution(), Some(expected_resolution));
+        assert_eq!(record.source_reply_id(), &finding.replies[0].id);
         assert_eq!(
             finding
                 .resolution_reply()
@@ -1620,8 +1636,17 @@ mod tests {
         .expect("unsupported future resolution metadata remains observable as replies");
 
         let finding = &change_request.reviews[0].findings[0];
-        assert_eq!(finding.resolution, None);
-        assert_eq!(latest_finding_resolution(&finding.replies), Err(2));
+        assert!(matches!(
+            &finding.resolution,
+            Some(FindingResolutionRecord::Unsupported {
+                metadata_version: 2,
+                source_reply_id,
+            }) if source_reply_id.as_str() == "PRRC_future_resolution"
+        ));
+        assert_eq!(
+            finding.resolution,
+            latest_finding_resolution(&finding.replies)
+        );
     }
 
     #[test]
@@ -1806,7 +1831,6 @@ mod tests {
             change_request.standalone_threads[0].id.as_str(),
             expected_id
         );
-        assert_eq!(change_request.standalone_threads[0].resolution, None);
         assert_eq!(
             change_request
                 .reviews
