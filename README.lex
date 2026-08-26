@@ -16,6 +16,7 @@ Interprex
         Read issues and read or update labels.
     code review:
         Read change requests by number or by the head ref they propose, together with their reviews, findings, standalone threads, unanchored comments and outstanding review requests; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
+        Read change requests, their mergeability, reviews, findings, standalone threads, unanchored comments, outstanding review requests and the checks recorded on a commit; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
         publish check results.
     jobs:
         Dispatch jobs, read runs and cancel runs.
@@ -30,6 +31,8 @@ Interprex
 
     `ChangeRequestHead` holds that head, reading its branch from one ref spelling, `refs/heads/<branch>`. One spelling keeps every branch addressable, and a name git would refuse to create is refused here rather than sent as a query no change request could answer.
 
+    A change request also carries its mergeability: mergeable, conflicted, or unknown while the platform has not finished computing the merge. Mergeability reports that merge computation alone. Required checks, approvals and branch rules are separate facts, so a mergeable change request can still be one the platform refuses to merge.
+
     Each review records its author, the reviewing application when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 
     The review author is one of change author, another known actor or an actor whose relationship is unknown. The change-author variant refers to the change request's author instead of storing a second, independently writable copy. Unknown means the provider did not return enough identity information to compare the actors; it does not mean other. Interprex returns this fact and leaves decisions about independent review evidence to the caller.
@@ -37,6 +40,8 @@ Interprex
     A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location.
 
     An outstanding review request records the actor or team asked to review, the address that can ask that target again, and when the platform recorded the request. A caller enforcing a review timeout reads that time from one observation instead of keeping its own record of when it asked. The time is absent when the provider cannot match the request to a request event, either because the platform no longer names the target or because the event has left the retained history, and no provider fills it with a nearby time.
+
+    The checks recorded on a commit are read by commit rather than by change request. Each check carries its name, that commit, its status and its published summary. A check that has not finished is pending and has no conclusion; a completed check carries its conclusion and the time it finished. Interprex neither decides which checks a merge requires nor what a failing one means: the required check names come from the repository's rulesets and the decision belongs to the caller. On GitHub this reads check runs; GitHub's legacy commit statuses are a separate mechanism and are not reported.
 
     A finding resolution uses GitHub's three resolution reasons: `ADDRESSED` when the review comment was addressed, `INVALID` when the review comment is invalid and `WONT_FIX` when it will not be addressed. It also records the addressing user's severity assessment. This conclusion is separate from the platform thread's open or resolved status: manual and legacy resolutions may have no Interprex conclusion, while a partially completed write may leave a conclusion on a platform thread that is still open. Interprex does not infer rounds, stale reviewers, severity or next actions from unstructured review prose.
 

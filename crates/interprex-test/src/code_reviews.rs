@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckOutcome,
-    CodeReviewsProvider, FindingResolution, FindingResolutionRecord, FindingResolutionReply,
-    ProviderError, Repository, Result, ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment,
-    ReviewCommentId, ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewTarget, ReviewTeam,
-    ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
+    CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
+    FindingResolutionReply, ProviderError, Repository, Result, ReviewActor, ReviewActorId,
+    ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
+    ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -208,6 +209,17 @@ impl CodeReviewsProvider for FakeProvider {
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
         change_request.draft = false;
         Ok(())
+    }
+
+    async fn checks(&self, repository: &Repository, head_sha: &str) -> Result<Vec<CheckRun>> {
+        Ok(self
+            .state
+            .read()
+            .await
+            .check_runs
+            .get(&(repository.clone(), head_sha.to_owned()))
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn publish_check(

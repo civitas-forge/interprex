@@ -2,9 +2,9 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use interprex::{
-    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, DispatchInputs, Issue, IssueNumber,
-    Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings, Ruleset, RunId,
-    WorkflowRun,
+    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
+    IssueNumber, Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
+    Ruleset, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -21,6 +21,7 @@ pub(crate) struct State {
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
+    pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
     pub(crate) runs: BTreeMap<(Repository, RunId), WorkflowRun>,
@@ -63,6 +64,21 @@ impl FakeProvider {
             .await
             .change_requests
             .insert((repository, change_request.number), change_request);
+    }
+
+    /// Seeds the checks observed on one commit, replacing any already seeded
+    /// for that commit.
+    pub async fn seed_check_runs(
+        &self,
+        repository: Repository,
+        head_sha: impl Into<String>,
+        runs: Vec<CheckRun>,
+    ) {
+        self.state
+            .write()
+            .await
+            .check_runs
+            .insert((repository, head_sha.into()), runs);
     }
 
     pub async fn seed_run(&self, repository: Repository, run: WorkflowRun) {

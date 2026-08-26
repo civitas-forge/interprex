@@ -571,6 +571,25 @@ pub enum ChangeRequestState {
     Merged { merged_at: DateTime<Utc> },
 }
 
+/// Whether the platform can currently merge the change request's source into
+/// its target branch.
+///
+/// This reports the platform's merge computation and nothing else. Required
+/// checks, approvals and branch rules are separate facts, so a mergeable
+/// change request can still be one the platform refuses to merge.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Mergeability {
+    /// The platform reports no conflict between the source and the target.
+    Mergeable,
+    /// The platform reports a conflict that a person must resolve.
+    Conflicted,
+    /// The platform published no answer. GitHub computes the merge after the
+    /// read arrives and reports nothing until that finishes, so this is an
+    /// observed platform state rather than a failure to read the fact.
+    Unknown,
+}
+
 /// One complete observation of a change request and its code-review data.
 ///
 /// The provider completely paginates every declared collection and never
@@ -599,6 +618,7 @@ pub struct ChangeRequest {
     /// name alone is not a head, so it is absent rather than paired with a
     /// guessed repository.
     pub head: Option<ChangeRequestHead>,
+    pub mergeability: Mergeability,
     pub author: ReviewActor,
     pub updated_at: DateTime<Utc>,
     /// Platform reviews. Collection order carries no policy meaning.
@@ -611,7 +631,11 @@ pub struct ChangeRequest {
     pub outstanding_requests: Vec<ReviewRequest>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// The conclusion a check reached once it finished.
+///
+/// The variants cover every conclusion GitHub reports for a check run, so a
+/// read never has to discard one and a write can express any of them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckConclusion {
     Success,
@@ -620,8 +644,46 @@ pub enum CheckConclusion {
     Cancelled,
     TimedOut,
     ActionRequired,
+    Skipped,
+    Stale,
 }
 
+/// Whether an observed check has finished, and what it concluded when it has.
+///
+/// A check that has not finished has no conclusion, so the two facts stay in
+/// one value rather than in an optional field that could contradict a status.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    /// The check exists on the commit and has reached no conclusion. GitHub's
+    /// `queued`, `waiting`, `requested`, `pending` and `in_progress` statuses
+    /// all name this state.
+    Pending,
+    Completed {
+        conclusion: CheckConclusion,
+        completed_at: DateTime<Utc>,
+    },
+}
+
+/// One check the platform recorded against a commit.
+///
+/// `name` is the identifier a required-check rule matches, which is
+/// `RequiredCheck::context` on the code-hosting side. Interprex does not
+/// perform that match.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CheckRun {
+    pub name: String,
+    pub head_sha: String,
+    pub status: CheckStatus,
+    /// The check's published summary text, when it published nonblank text.
+    pub summary: Option<String>,
+}
+
+/// A finished check result to publish.
+///
+/// This write shape is deliberately narrower than the observed [`CheckRun`]:
+/// Interprex publishes only a result that has concluded, so the conclusion and
+/// the summary are both required.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CheckOutcome {
     pub name: String,
@@ -700,6 +762,19 @@ pub trait CodeReviewsProvider: Send + Sync {
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()>;
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()>;
+    /// Reads every check recorded on one commit, completely paginated.
+    ///
+    /// Checks that have not concluded are returned with
+    /// [`CheckStatus::Pending`] rather than omitted, so a caller can tell a
+    /// missing check from a running one. Collection order carries no meaning.
+    ///
+    /// Which of these checks a merge requires comes from the repository's
+    /// rulesets, and what a failing required check means for the change
+    /// request is the caller's policy. Interprex performs neither step.
+    ///
+    /// A platform that also keeps a separate legacy commit-status mechanism,
+    /// as GitHub does, does not report those statuses here.
+    async fn checks(&self, repository: &Repository, head_sha: &str) -> Result<Vec<CheckRun>>;
     async fn publish_check(
         &self,
         repository: &Repository,
@@ -872,6 +947,7 @@ mod tests {
                 )
                 .expect("head"),
             ),
+            mergeability: Mergeability::Mergeable,
             author: author.clone(),
             updated_at: Utc.timestamp_opt(2, 0).single().expect("timestamp"),
             reviews: vec![review(
@@ -942,6 +1018,72 @@ mod tests {
         let reply = FindingResolutionReply::new("Addressed in the current revision.")
             .expect("visible explanation");
         assert_eq!(reply.as_str(), "Addressed in the current revision.");
+    }
+
+    #[test]
+    fn mergeability_keeps_an_uncomputed_merge_distinct_from_a_conflicted_one() {
+        for (mergeability, expected) in [
+            (Mergeability::Mergeable, "mergeable"),
+            (Mergeability::Conflicted, "conflicted"),
+            (Mergeability::Unknown, "unknown"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(mergeability).expect("serializes mergeability"),
+                serde_json::json!(expected)
+            );
+        }
+        assert_ne!(Mergeability::Unknown, Mergeability::Conflicted);
+    }
+
+    #[test]
+    fn an_observed_check_carries_a_conclusion_only_once_it_has_completed() {
+        let pending = CheckRun {
+            name: "quality".to_owned(),
+            head_sha: "head".to_owned(),
+            status: CheckStatus::Pending,
+            summary: None,
+        };
+        let completed = CheckRun {
+            status: CheckStatus::Completed {
+                conclusion: CheckConclusion::TimedOut,
+                completed_at: Utc.timestamp_opt(3, 0).single().expect("timestamp"),
+            },
+            summary: Some("The job exceeded its limit.".to_owned()),
+            ..pending.clone()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&pending.status).expect("serializes pending status"),
+            serde_json::json!("pending")
+        );
+        assert_eq!(
+            serde_json::to_value(&completed.status).expect("serializes completed status"),
+            serde_json::json!({
+                "completed": {
+                    "conclusion": "timed_out",
+                    "completed_at": "1970-01-01T00:00:03Z"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn check_conclusions_cover_every_conclusion_a_check_can_report() {
+        for (conclusion, expected) in [
+            (CheckConclusion::Success, "success"),
+            (CheckConclusion::Failure, "failure"),
+            (CheckConclusion::Neutral, "neutral"),
+            (CheckConclusion::Cancelled, "cancelled"),
+            (CheckConclusion::TimedOut, "timed_out"),
+            (CheckConclusion::ActionRequired, "action_required"),
+            (CheckConclusion::Skipped, "skipped"),
+            (CheckConclusion::Stale, "stale"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(conclusion).expect("serializes conclusion"),
+                serde_json::json!(expected)
+            );
+        }
     }
 
     #[test]

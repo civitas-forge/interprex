@@ -23,10 +23,16 @@ Glossary
         `refs/heads/<branch>`. It is both how a caller holding only its
         checkout addresses the open change requests that propose it and what
         an observed change request reports, so the two agree.
+    mergeability:
+        Whether the platform can merge a change request's source into its
+        target: mergeable, conflicted, or unknown while the platform has not
+        finished computing the merge. It reports that merge computation alone,
+        not required checks, approvals or branch rules.
     code review:
         The domain that acts on change requests so merging can be approved.
-        It covers reviews, findings, standalone threads, unanchored
-        comments, review requests and check results.
+        It covers mergeability, reviews, findings, standalone threads,
+        unanchored comments, review requests, the checks on a commit and
+        published check results.
     review:
         One provider review record acting on a change request: its author,
         reviewing application when known, reviewed head commit, summary and
@@ -60,6 +66,12 @@ Glossary
         time belongs to the request still standing, and it is absent when the
         provider matches the request to no retained request event, as it never
         can for a target the provider cannot identify.
+    check:
+        One recorded verification of a commit, with its name, the commit, its
+        status and its published summary. A check that has not finished is
+        pending and has no conclusion; a completed check carries its conclusion
+        and the time it finished. On GitHub these are check runs; GitHub's
+        separate legacy commit statuses are not read.
     reviewing application:
         The provider application through which an actor created or submitted
         a review (`via_app`). It is attribution, not the actor and not the

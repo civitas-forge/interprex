@@ -41,9 +41,10 @@ Design
     tracker:
         Issues and labels.
     code review:
-        Change requests, reviews and their findings, standalone threads,
-        unanchored comments, finding resolutions, outstanding review requests,
-        check results and the draft-to-ready transition.
+        Change requests, their mergeability, reviews and their findings,
+        standalone threads, unanchored comments, finding resolutions,
+        outstanding review requests, the checks on a commit, published check
+        results and the draft-to-ready transition.
     jobs:
         Dispatch, run observation and cancellation.
     releases:
@@ -133,6 +134,54 @@ Design
     carries only the reviewed head commit because GitHub does not retain the
     historical base commit for each review. Interprex does not pair a historical
     head with the current base and present it as a historical range.
+
+    `ChangeRequest::mergeability` carries the platform's answer for the current
+    source and target: mergeable, conflicted, or unknown. GitHub starts
+    computing the merge when a read arrives and reports `null` until that
+    computation finishes, so unknown is an observed platform state rather than
+    a read that failed or a value Interprex chose in place of one.
+
+    GitHub's `mergeable_state` string is deliberately absent from the model.
+    Its `clean`, `dirty` and `unknown` values restate mergeability, while
+    `blocked`, `behind`, `unstable` and `draft` report GitHub's own evaluation
+    of required checks, approvals, branch currency and the draft flag. Every
+    input to that evaluation is already returned as a separate fact: check
+    outcomes, reviews, rulesets and `draft`. Returning GitHub's verdict beside
+    those facts would hand the caller a second, differently shaped answer to a
+    question [#5] leaves to the caller.
+
+    `CodeReviewsProvider::checks` reads the checks recorded on one commit,
+    completely paginated. A caller reads them for whichever commit it cares
+    about, usually the change request's current head. `CheckStatus` holds the
+    conclusion inside its completed variant, following `ReviewState`: a check
+    that has not finished has no conclusion to report, so no combination of the
+    returned facts can contradict itself. GitHub's `queued`, `waiting`,
+    `requested`, `pending` and `in_progress` statuses all become `Pending`,
+    because each states only that no conclusion exists yet. `CheckConclusion`
+    has one variant for each conclusion GitHub reports, `skipped` and `stale`
+    included, so a read never discards one; GitHub's create-check-run route
+    accepts the same eight values, so `publish_check` can write any of them.
+
+    The observed `CheckRun` stays separate from the written `CheckOutcome`,
+    which always carries a conclusion because Interprex publishes only finished
+    results. A status GitHub adds later, a conclusion Interprex does not model,
+    a completed check missing its conclusion or completion time, and a running
+    check that reports either, are all returned as unrepresentable data.
+
+    GitHub returns check runs in an envelope keyed `check_runs` beside a
+    `total_count` rather than as a bare array. Octocrab's `Page` recognizes a
+    fixed set of envelope keys that excludes this one, so this read pages by
+    number instead of following `Link` headers, and stops at a short page or
+    once it holds the reported total.
+
+    GitHub's legacy commit statuses are a separate mechanism from check runs,
+    with their own endpoint. This domain reads check runs only, so a caller
+    that needs commit statuses cannot obtain them here.
+
+    Interprex does not intersect check names with a ruleset's required check
+    names, decide that a change request is ready, or answer whether the
+    platform would accept the merge. Those are caller decisions over the
+    returned facts.
 
     Every review record remains independent, including repeated reviews by the
     same actor against the same head and reviews without findings. Collection
