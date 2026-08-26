@@ -32,6 +32,8 @@ Interprex
 
     A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location.
 
+    An outstanding review request records the actor or team asked to review, the address that can ask that target again, and when the platform recorded the request. A caller enforcing a review timeout reads that time from one observation instead of keeping its own record of when it asked. The time is absent when the provider cannot match the request to a request event, either because the platform no longer names the target or because the event has left the retained history, and no provider fills it with a nearby time.
+
     A finding resolution uses GitHub's three resolution reasons: `ADDRESSED` when the review comment was addressed, `INVALID` when the review comment is invalid and `WONT_FIX` when it will not be addressed. It also records the addressing user's severity assessment. This conclusion is separate from the platform thread's open or resolved status: manual and legacy resolutions may have no Interprex conclusion, while a partially completed write may leave a conclusion on a platform thread that is still open. Interprex does not infer rounds, stale reviewers, severity or next actions from unstructured review prose.
 
 4. Workspace Crates

@@ -46,9 +46,12 @@ Glossary
         A comment on the change request with no source location.
     review request:
         One currently outstanding request for an actor or team to review a
-        change request. The observed target and the provider address that
-        can request it again are separate facts. It describes current state,
-        not request history.
+        change request. The observed target, the provider address that can
+        request it again and the time the platform recorded the request are
+        separate facts. It describes current state, not request history: the
+        time belongs to the request still standing, and it is absent when the
+        provider matches the request to no retained request event, as it never
+        can for a target the provider cannot identify.
     reviewing application:
         The provider application through which an actor created or submitted
         a review (`via_app`). It is attribution, not the actor and not the

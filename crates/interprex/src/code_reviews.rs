@@ -124,6 +124,23 @@ pub struct ReviewRequest {
     /// available. This is independent of the target's observed actor or team
     /// category.
     pub request_target: Option<ReviewRequestTarget>,
+    /// When the platform recorded the request that is still outstanding.
+    ///
+    /// A platform can list its outstanding requests without timing them, so a
+    /// provider reads the request events separately and matches each
+    /// outstanding request to the event that created it. A provider reports
+    /// `None` when that match fails: the request predates the retained event
+    /// history, or the target carries no identity to match against, which is
+    /// the case for every [`ReviewTarget::Unavailable`] a provider returns. A
+    /// provider never substitutes a nearby timestamp, so a caller measuring
+    /// how long a request has been outstanding reads `None` as no measurement
+    /// rather than an approximate one.
+    ///
+    /// Where the outstanding requests and the request events are separate
+    /// reads with no snapshot across them, this is the time on the target's
+    /// latest surviving request event when the events were read: a target
+    /// re-requested between the two reads reports the newer request's time.
+    pub requested_at: Option<DateTime<Utc>>,
     pub as_code_owner: bool,
 }
 
@@ -691,6 +708,7 @@ mod tests {
                 kind: ReviewTeamKind::Organization,
             }),
             request_target: None,
+            requested_at: None,
             as_code_owner: false,
         };
         let enterprise_team = ReviewRequest {
@@ -702,6 +720,7 @@ mod tests {
                 kind: ReviewTeamKind::Enterprise,
             }),
             request_target: Some(ReviewRequestTarget::Team("security".to_owned())),
+            requested_at: Utc.timestamp_opt(3, 0).single(),
             as_code_owner: false,
         };
 
@@ -709,6 +728,11 @@ mod tests {
         assert_eq!(
             enterprise_team.request_target,
             Some(ReviewRequestTarget::Team("security".to_owned()))
+        );
+        assert_eq!(organization_team.requested_at, None);
+        assert_eq!(
+            enterprise_team.requested_at,
+            Utc.timestamp_opt(3, 0).single()
         );
     }
 }

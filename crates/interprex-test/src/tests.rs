@@ -92,6 +92,20 @@ async fn consumer_observes_changes_through_the_same_contract() {
         targets
     );
 
+    let request_times = observed
+        .outstanding_requests
+        .iter()
+        .map(|request| request.requested_at.expect("recorded request time"))
+        .collect::<Vec<_>>();
+    assert!(
+        request_times[0] > observed.updated_at,
+        "a request is made after the observation that provoked it"
+    );
+    assert!(
+        request_times[1] > request_times[0],
+        "requests made in one call remain ordered by when they were made"
+    );
+
     let first_request_ids = observed
         .outstanding_requests
         .iter()
@@ -108,11 +122,20 @@ async fn consumer_observes_changes_through_the_same_contract() {
         .request_reviewers(&repository, other_number, &targets)
         .await
         .expect("request same reviewers on another change request");
-    let other_request_ids = provider
+    let other_requests = provider
         .change_request(&repository, other_number)
         .await
         .expect("other change request")
-        .outstanding_requests
+        .outstanding_requests;
+    assert_eq!(
+        other_requests
+            .iter()
+            .map(|request| request.requested_at.expect("recorded request time"))
+            .collect::<Vec<_>>(),
+        request_times,
+        "the fake reads request times from the seeded observation, not the clock"
+    );
+    let other_request_ids = other_requests
         .into_iter()
         .map(|request| request.id)
         .collect::<Vec<_>>();

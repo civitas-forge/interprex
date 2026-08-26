@@ -1,0 +1,36 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "timelineItems": {
+          "pageInfo": { "hasNextPage": true, "endCursor": "timeline-page-1" },
+          "nodes": [
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-06-23T09:00:00Z",
+              "requestedReviewer": {
+                "__typename": "Bot",
+                "id": "BOT_kwDOReviewer"
+              }
+            },
+            {
+              "__typename": "ReviewRequestedEvent",
+              "createdAt": "2026-06-23T09:05:00Z",
+              "requestedReviewer": {
+                "__typename": "Team",
+                "id": "T_kwDOMaintainers"
+              }
+            },
+            {
+              "__typename": "ReviewRequestRemovedEvent",
+              "requestedReviewer": {
+                "__typename": "Team",
+                "id": "T_kwDOMaintainers"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

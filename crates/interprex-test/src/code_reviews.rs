@@ -151,6 +151,7 @@ impl CodeReviewsProvider for FakeProvider {
             .change_requests
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let observed_at = change_request.updated_at;
         for target in reviewers {
             if change_request
                 .outstanding_requests
@@ -159,9 +160,22 @@ impl CodeReviewsProvider for FakeProvider {
             {
                 continue;
             }
+            let requested_at = change_request
+                .outstanding_requests
+                .iter()
+                .filter_map(|request| request.requested_at)
+                .chain([observed_at])
+                .max()
+                .expect("the observed change supplies one timestamp")
+                + std::time::Duration::from_micros(1);
             change_request
                 .outstanding_requests
-                .push(fake_review_request(repository, number, target));
+                .push(fake_review_request(
+                    repository,
+                    number,
+                    target,
+                    requested_at,
+                ));
         }
         Ok(())
     }
@@ -191,10 +205,18 @@ impl CodeReviewsProvider for FakeProvider {
     }
 }
 
+/// Builds the request the fake records for one newly requested target.
+///
+/// `requested_at` comes from the seeded observation rather than the wall
+/// clock: the caller advances it past the change request's last update and
+/// past every request already outstanding, so a test that seeds the same
+/// change request twice reads the same times both times and still sees
+/// requests ordered by when they were made.
 fn fake_review_request(
     repository: &Repository,
     number: ChangeRequestNumber,
     target: &ReviewRequestTarget,
+    requested_at: chrono::DateTime<chrono::Utc>,
 ) -> ReviewRequest {
     let request_target = target.clone();
     let (identity, target) = match target {
@@ -248,6 +270,7 @@ fn fake_review_request(
         .expect("fake request identity is nonempty"),
         target,
         request_target: Some(request_target),
+        requested_at: Some(requested_at),
         as_code_owner: false,
     }
 }

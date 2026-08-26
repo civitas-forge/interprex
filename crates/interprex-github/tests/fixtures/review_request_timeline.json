@@ -1,0 +1,71 @@
+{
+  "repository": {
+    "pullRequest": {
+      "timelineItems": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:00:00Z",
+            "requestedReviewer": {
+              "__typename": "Bot",
+              "id": "BOT_kwDOReviewer"
+            }
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:05:00Z",
+            "requestedReviewer": {
+              "__typename": "User",
+              "id": "U_kwDOReviewer"
+            }
+          },
+          {
+            "__typename": "ReviewRequestRemovedEvent",
+            "requestedReviewer": {
+              "__typename": "User",
+              "id": "U_kwDOReviewer"
+            }
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:15:00Z",
+            "requestedReviewer": {
+              "__typename": "Team",
+              "id": "T_kwDOMaintainers"
+            }
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:20:00Z",
+            "requestedReviewer": {
+              "__typename": "Mannequin",
+              "id": "M_kwDOImported"
+            }
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:25:00Z",
+            "requestedReviewer": {
+              "__typename": "EnterpriseTeam",
+              "id": "ET_kwDOPlatform"
+            }
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:30:00Z",
+            "requestedReviewer": null
+          },
+          {
+            "__typename": "ReviewRequestedEvent",
+            "createdAt": "2026-06-23T09:35:00Z",
+            "requestedReviewer": {
+              "__typename": "User",
+              "id": "U_kwDOReviewer"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
