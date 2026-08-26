@@ -165,7 +165,7 @@ opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
 opaque_review_id!(ReviewRequestId, "review request id", "review request");
 opaque_review_id!(ReviewActorId, "review actor id", "review actor");
 opaque_review_id!(ReviewTeamId, "review team id", "review team");
-opaque_review_id!(ReviewAppId, "review app id", "review app");
+opaque_review_id!(ProviderAppId, "provider app id", "provider application");
 
 /// Two commit endpoints whose relationship is meaningful to the caller.
 ///
@@ -270,9 +270,12 @@ pub struct ReviewRequest {
 
 /// The GitHub App or equivalent provider application that produced a review or
 /// published a check.
+///
+/// This is attribution. It is neither the actor a review is credited to nor
+/// the identity a provider authenticated as.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ReviewApp {
-    pub id: ReviewAppId,
+pub struct ProviderApp {
+    pub id: ProviderAppId,
     pub slug: String,
     pub name: String,
 }
@@ -551,7 +554,7 @@ impl ReviewFinding {
 pub struct Review {
     pub id: ReviewId,
     pub author: ReviewAuthor,
-    pub via_app: Option<ReviewApp>,
+    pub via_app: Option<ProviderApp>,
     pub revision: ReviewedRevision,
     pub state: ReviewState,
     pub summary: Option<String>,
@@ -634,9 +637,12 @@ pub struct ChangeRequest {
 
 /// The conclusion an observed check reached once it finished.
 ///
-/// The variants cover every conclusion GitHub reports for a check run, so a
-/// read never has to discard one. Publishing uses the narrower
-/// [`PublishedCheckConclusion`].
+/// The variants cover the conclusions GitHub reports for a check run, so a
+/// read never has to discard one. That set is wider than the one a client may
+/// write: GitHub sets `stale` itself, and GitHub Actions reports
+/// `startup_failure` for a workflow that never started, which the jobs domain
+/// also models as `RunConclusion::StartupFailure`. Publishing uses the
+/// narrower [`PublishedCheckConclusion`].
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckConclusion {
@@ -648,6 +654,7 @@ pub enum CheckConclusion {
     ActionRequired,
     Skipped,
     Stale,
+    StartupFailure,
 }
 
 /// The conclusion a published check can report.
@@ -697,7 +704,7 @@ pub struct CheckRun {
     pub name: String,
     pub head_sha: String,
     /// The application that published the check, when the platform names one.
-    pub via_app: Option<ReviewApp>,
+    pub via_app: Option<ProviderApp>,
     pub status: CheckStatus,
     /// The check's published summary text, when it published nonblank text.
     pub summary: Option<String>,
@@ -790,14 +797,18 @@ pub trait CodeReviewsProvider: Send + Sync {
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()>;
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()>;
-    /// Reads the current run of each check on one commit, completely
-    /// paginated.
+    /// Reads the current checks on one commit, completely paginated.
     ///
-    /// A rerun replaces the run it repeated, so each check name appears once
-    /// and superseded runs are not reported. A check that has not concluded is
-    /// returned with [`CheckStatus::Pending`] rather than omitted, so a caller
-    /// can tell a missing check from a running one. Collection order carries
-    /// no meaning.
+    /// A rerun replaces the run it repeated, so the collection holds each
+    /// check's most recent run and no superseded one. Two applications can
+    /// still publish a check of the same name; `via_app` is what separates
+    /// them. A check that has not concluded is returned with
+    /// [`CheckStatus::Pending`] rather than omitted, so a caller can tell a
+    /// missing check from a running one. Collection order carries no meaning.
+    ///
+    /// A platform can report less than it holds: GitHub answers from at most
+    /// the 1,000 most recent check suites on a commit and gives no signal that
+    /// it stopped there, so a commit past that limit is reported short.
     ///
     /// Which of these checks a merge requires comes from the repository's
     /// rulesets, and what a failing required check means for the change
@@ -1101,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn check_conclusions_cover_every_conclusion_a_check_can_report() {
+    fn check_conclusions_cover_every_conclusion_a_check_reports() {
         for (conclusion, expected) in [
             (CheckConclusion::Success, "success"),
             (CheckConclusion::Failure, "failure"),
@@ -1111,6 +1122,7 @@ mod tests {
             (CheckConclusion::ActionRequired, "action_required"),
             (CheckConclusion::Skipped, "skipped"),
             (CheckConclusion::Stale, "stale"),
+            (CheckConclusion::StartupFailure, "startup_failure"),
         ] {
             assert_eq!(
                 serde_json::to_value(conclusion).expect("serializes conclusion"),

@@ -37,8 +37,9 @@ Glossary
         published check results.
     review:
         One provider review record acting on a change request: its author,
-        reviewing application when known, reviewed head commit, summary and
-        findings. Its state distinguishes a draft from a submitted review.
+        the provider application that produced it when known, reviewed head
+        commit, summary and findings. Its state distinguishes a draft from a
+        submitted review.
     finding:
         An inline review thread attached to the review in which it
         originated. Its initial comment, replies, source location,
@@ -73,13 +74,14 @@ Glossary
         status, the application that published it, its published summary and
         its location. A check that has not finished is pending and has no
         conclusion; a completed check carries its conclusion and the time it
-        finished. A read returns the current run of each check name, so a rerun
+        finished. A read returns each check's most recent run, so a rerun
         replaces the run it repeated. On GitHub these are check runs; GitHub's
         separate legacy commit statuses are not read.
-    reviewing application:
-        The provider application through which an actor created or submitted
-        a review (`via_app`). It is attribution, not the actor and not the
-        authentication identity.
+    provider application:
+        The application through which an actor created or submitted a review,
+        or that published a check (`via_app`). It is attribution, not the
+        actor and not the authentication identity. A required-check rule can
+        name the application that must publish a check.
     authentication identity:
         The principal under which a provider authenticates an operation,
         such as a GitHub user or a named app installation. It is never who a

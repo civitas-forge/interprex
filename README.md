@@ -74,8 +74,8 @@ reports that merge computation alone. Required checks, approvals and branch
 rules are separate facts, so a mergeable change request can still be one the
 platform refuses to merge.
 
-Each review records its author, the reviewing application when known, the
-reviewed head commit, its summary and its inline findings. Its state
+Each review records its author, the provider application that produced it when
+known, the reviewed head commit, its summary and its inline findings. Its state
 distinguishes a draft from a submitted review; a submitted review also carries
 its disposition and submission time.
 
@@ -99,14 +99,17 @@ because the platform no longer names the target or because the event has left
 the retained history, and no provider fills it with a nearby time.
 
 Checks are read by commit rather than by change request, and the read returns
-the current run of each check: a rerun replaces the run it repeated, so each
-check name appears once. Each check carries its name, that commit, its status,
-the application that published it, its published summary and where a person can
-read it. A check that has not finished is pending and has no conclusion; a
-completed check carries its conclusion and the time it finished. Publishing a
-check uses a narrower conclusion vocabulary than reading one, because a platform
-can report conclusions it refuses to accept from a client, such as GitHub's
-`stale`.
+each check's most recent run: a rerun replaces the run it repeated. Two
+applications can still publish a check of the same name, and the publishing
+application is what separates them. GitHub answers from at most its 1,000 most
+recent check suites on a commit without signalling that it stopped there, so a
+commit past that limit is reported short. Each check carries its name, that
+commit, its status, the application that published it, its published summary and
+where a person can read it. A check that has not finished is pending and has no
+conclusion; a completed check carries its conclusion and the time it finished.
+Publishing a check uses a narrower conclusion vocabulary than reading one,
+because a platform can report conclusions it refuses to accept from a client,
+such as GitHub's `stale`.
 
 Interprex neither decides which checks a merge requires nor what a failing one
 means: the required check names come from the repository's rulesets, as does the

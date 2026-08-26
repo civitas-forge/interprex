@@ -4,9 +4,9 @@ use interprex::{
     AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestHead, ChangeRequestNumber,
     ChangeRequestState, CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider,
     CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
-    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, Release,
-    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp,
+    ProviderAppId, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
+    RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
     ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
     ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
     ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
@@ -484,8 +484,8 @@ async fn consumer_observes_seeded_checks_per_commit_through_the_contract() {
         CheckRun {
             name: "quality".to_owned(),
             head_sha: "head".to_owned(),
-            via_app: Some(ReviewApp {
-                id: ReviewAppId::new("1042").expect("app id"),
+            via_app: Some(ProviderApp {
+                id: ProviderAppId::new("1042").expect("app id"),
                 slug: "quality-app".to_owned(),
                 name: "Quality App".to_owned(),
             }),

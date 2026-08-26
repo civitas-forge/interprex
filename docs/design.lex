@@ -143,22 +143,28 @@ Design
 
     GitHub's `mergeable_state` string is deliberately absent from the model.
     Its `clean`, `dirty` and `unknown` values restate mergeability, while
-    `blocked`, `behind`, `unstable` and `draft` report GitHub's own evaluation
-    of required checks, approvals, branch currency and the draft flag. Every
-    input to that evaluation is already returned as a separate fact: observed
-    checks, reviews, rulesets and `draft`. Returning GitHub's verdict beside
-    those facts would hand the caller a second, differently shaped answer to a
-    question [#5] leaves to the caller.
+    `blocked`, `behind`, `unstable` and `draft` are the verdict of GitHub's own
+    policy evaluation over required checks, approvals, branch currency and the
+    draft flag. That verdict is the answer [#5] leaves to the caller, so
+    Interprex returns the observed facts it owns instead: mergeability, checks,
+    reviews, rulesets and `draft`. It does not claim those facts reconstruct
+    GitHub's verdict. Branch currency, for one, is a git fact that [#1] keeps
+    outside this library, and a caller that needs it compares the commits
+    itself.
 
-    `CodeReviewsProvider::checks` reads the current run of each check on one
-    commit, completely paginated. A caller reads them for whichever commit it
+    `CodeReviewsProvider::checks` reads the current checks on one commit,
+    completely paginated. A caller reads them for whichever commit it
     cares about, usually the change request's current head. The request sends
     GitHub's `filter=latest` explicitly: a rerun replaces the run it repeated,
-    so each check name appears once and superseded runs are not reported. That
-    is the collection the trait declares; a caller that wants the earlier runs
-    of a rerun check cannot get them here. GitHub also returns runs from at
-    most the 1,000 most recent check suites on a commit and gives no signal
-    that it truncated, so a commit past that limit is reported short.
+    so the collection holds each check's most recent run and no superseded one,
+    and a caller that wants the earlier runs cannot get them here. That is not
+    a promise that a name appears once. Two applications, workflows or check
+    suites can publish a check of the same name on one commit, and `via_app`
+    is what separates them, exactly as a required-status-check rule separates
+    them by `integration_id`. GitHub also answers from at most the 1,000 most
+    recent check suites on a commit and gives no signal that it stopped there,
+    so a commit past that limit is reported short; the trait documents that
+    limit alongside the read.
 
     `CheckStatus` holds the conclusion inside its completed variant, following
     `ReviewState`: a check that has not finished has no conclusion to report,
@@ -182,7 +188,7 @@ Design
     names the check by context and may also name the application that must
     publish it, as `RequiredCheck::integration_id`. Both identifiers are the
     same GitHub app identifier, a number in the ruleset and its text form in
-    `ReviewApp::id`. Interprex returns both facts and compares neither.
+    `ProviderApp::id`. Interprex returns both facts and compares neither.
 
     A status GitHub adds later, a conclusion Interprex does not model, a
     completed check missing its conclusion or completion time, and a running
@@ -226,8 +232,8 @@ Design
     `ReviewAuthor::relationship` returns the category and
     `ReviewAuthor::actor` returns the actor, using the change request's author
     for the change-author variant. `via_app` separately attributes the
-    reviewing application. Neither the author nor the app is the
-    authentication identity.
+    provider application that produced the review. Neither the author nor the
+    app is the authentication identity.
 
     A caller may decide that only `other` reviews count as independent evidence.
     Interprex does not make that policy decision, and `unknown` never becomes

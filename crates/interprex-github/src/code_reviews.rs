@@ -19,8 +19,8 @@ use interprex::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion,
     CheckOutcome, CheckRun, CheckStatus, CodeReviewsProvider, CommitRange, FindingResolution,
     FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
-    Mergeability, ProviderError, PublishedCheckConclusion, Repository, Result, Review, ReviewActor,
-    ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor,
+    Mergeability, ProviderApp, ProviderAppId, ProviderError, PublishedCheckConclusion, Repository,
+    Result, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor,
     ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId,
     ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
     ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
@@ -793,9 +793,9 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
     })
 }
 
-fn normalize_app(app: GithubApp) -> Result<ReviewApp> {
-    Ok(ReviewApp {
-        id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
+fn normalize_app(app: GithubApp) -> Result<ProviderApp> {
+    Ok(ProviderApp {
+        id: ProviderAppId::new(app.id.to_string()).map_err(|error| {
             ProviderError::Unrepresentable {
                 provider: "github",
                 fact: error.to_string(),
@@ -1299,6 +1299,7 @@ fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
         "action_required" => Ok(CheckConclusion::ActionRequired),
         "skipped" => Ok(CheckConclusion::Skipped),
         "stale" => Ok(CheckConclusion::Stale),
+        "startup_failure" => Ok(CheckConclusion::StartupFailure),
         other => Err(ProviderError::Unrepresentable {
             provider: "github",
             fact: format!("unknown check run conclusion {other}"),
@@ -2894,6 +2895,7 @@ mod tests {
             ("action_required", CheckConclusion::ActionRequired),
             ("skipped", CheckConclusion::Skipped),
             ("stale", CheckConclusion::Stale),
+            ("startup_failure", CheckConclusion::StartupFailure),
         ] {
             let run = normalize_check_run(check_run("completed", Some(reported)))
                 .expect("normalizes every reported conclusion");
