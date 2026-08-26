@@ -147,10 +147,10 @@ Design
     policy evaluation over required checks, approvals, branch currency and the
     draft flag. That verdict is the answer [#5] leaves to the caller, so
     Interprex returns the observed facts it owns instead: mergeability, checks,
-    reviews, rulesets and `draft`. It does not claim those facts reconstruct
-    GitHub's verdict. Branch currency, for one, is a git fact that [#1] keeps
-    outside this library, and a caller that needs it compares the commits
-    itself.
+    reviews, `base_branch` for selecting the rules that govern the target, and
+    `draft`. It does not claim those facts reconstruct GitHub's verdict.
+    Branch currency, for one, is a git fact that [#1] keeps outside this
+    library, and a caller that needs it compares the commits itself.
 
     `CodeReviewsProvider::checks` reads the current checks on one commit,
     completely paginated. A caller reads them for whichever commit it
