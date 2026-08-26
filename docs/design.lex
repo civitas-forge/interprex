@@ -176,11 +176,26 @@ Design
 
     `CheckStatus` holds the conclusion inside its completed variant, following
     `ReviewState`: a check that has not finished has no conclusion to report,
-    so no combination of the returned facts can contradict itself. GitHub's
-    `queued`, `waiting`, `requested`, `pending` and `in_progress` statuses all
-    become `Pending`, because each states only that no conclusion exists yet. `CheckConclusion`
-    has one variant for each conclusion GitHub reports, `skipped` and `stale`
-    included, so a read never discards one.
+    so no combination of the returned facts can contradict itself.
+    `CheckStatus::conclusion` returns that conclusion, or nothing while the
+    check is unfinished, for a caller that needs only this much.
+
+    The variants before `Completed` are GitHub's own unfinished statuses, one
+    each for `requested`, `queued`, `pending`, `waiting` and `in_progress`.
+    They stay distinct because they do not mean the same thing to a person
+    waiting on the check: queued is progress, while a run held back by a
+    concurrency limit or an unsatisfied deployment protection rule is not, and
+    Interprex does not decide which of those distinctions a caller reports on.
+    `Pending` therefore names the one state GitHub calls `pending`, not every
+    unfinished one.
+
+    `CheckConclusion` covers the conclusions a check run reports, so a read
+    never discards one. It holds one value GitHub's documented response enum
+    omits, `stale`, which GitHub sets on a run itself. It omits
+    `startup_failure`: GitHub reports that for a check suite that failed before
+    its runs began and states that it does not apply to check runs, so a run
+    reporting it is unrepresentable data rather than a modelled state, and the
+    jobs domain keeps `RunConclusion::StartupFailure`, where it is observable.
 
     The observed `CheckRun` stays separate from the written `CheckOutcome`,
     which always carries a conclusion because Interprex publishes only finished
