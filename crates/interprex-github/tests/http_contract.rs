@@ -851,6 +851,8 @@ fn check_run_page(names: impl IntoIterator<Item = String>, total_count: usize) -
                 "status": "completed",
                 "conclusion": "success",
                 "completed_at": "2026-08-24T10:04:00Z",
+                "app": { "id": 1042, "slug": "quality-app", "name": "Quality App" },
+                "html_url": "https://github.invalid/runs/1",
                 "output": { "title": name, "summary": "settled" }
             })
         })
@@ -869,6 +871,8 @@ async fn code_review_domain_returns_check_runs_from_every_page() {
             "status": "in_progress",
             "conclusion": null,
             "completed_at": null,
+            "app": null,
+            "html_url": null,
             "output": { "title": null, "summary": null }
         }]
     })
@@ -882,6 +886,14 @@ async fn code_review_domain_returns_check_runs_from_every_page() {
 
     assert_eq!(runs.len(), 101);
     assert_eq!(runs[0].name, "check-1");
+    assert_eq!(
+        runs[0]
+            .via_app
+            .as_ref()
+            .map(|app| app.id.as_str().to_owned()),
+        Some("1042".to_owned()),
+        "the publishing app is the identifier a ruleset names as integration_id"
+    );
     assert_eq!(
         runs[0].status,
         CheckStatus::Completed {
@@ -899,11 +911,11 @@ async fn code_review_domain_returns_check_runs_from_every_page() {
     assert_eq!(requests.len(), 2);
     assert_user_request(
         &requests[0],
-        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=1 ",
+        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=1&filter=latest ",
     );
     assert_user_request(
         &requests[1],
-        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=2 ",
+        "GET /repos/civitas-forge/interprex-sandbox/commits/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/check-runs?per_page=100&page=2&filter=latest ",
     );
 }
 

@@ -6,10 +6,10 @@ use interprex::{
     CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
     FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, Release,
     ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId,
+    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
+    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -484,17 +484,25 @@ async fn consumer_observes_seeded_checks_per_commit_through_the_contract() {
         CheckRun {
             name: "quality".to_owned(),
             head_sha: "head".to_owned(),
+            via_app: Some(ReviewApp {
+                id: ReviewAppId::new("1042").expect("app id"),
+                slug: "quality-app".to_owned(),
+                name: "Quality App".to_owned(),
+            }),
             status: CheckStatus::Completed {
                 conclusion: CheckConclusion::Failure,
                 completed_at: "2026-08-25T09:40:00Z".parse().expect("timestamp"),
             },
             summary: Some("clippy reported one warning".to_owned()),
+            html_url: Some("https://github.invalid/runs/1".to_owned()),
         },
         CheckRun {
             name: "integration".to_owned(),
             head_sha: "head".to_owned(),
+            via_app: None,
             status: CheckStatus::Pending,
             summary: None,
+            html_url: None,
         },
     ];
     provider

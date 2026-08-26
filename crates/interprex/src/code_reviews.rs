@@ -268,7 +268,8 @@ pub struct ReviewRequest {
     pub as_code_owner: bool,
 }
 
-/// The GitHub App or equivalent provider application that produced a review.
+/// The GitHub App or equivalent provider application that produced a review or
+/// published a check.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewApp {
     pub id: ReviewAppId,
@@ -631,10 +632,11 @@ pub struct ChangeRequest {
     pub outstanding_requests: Vec<ReviewRequest>,
 }
 
-/// The conclusion a check reached once it finished.
+/// The conclusion an observed check reached once it finished.
 ///
 /// The variants cover every conclusion GitHub reports for a check run, so a
-/// read never has to discard one and a write can express any of them.
+/// read never has to discard one. Publishing uses the narrower
+/// [`PublishedCheckConclusion`].
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckConclusion {
@@ -646,6 +648,23 @@ pub enum CheckConclusion {
     ActionRequired,
     Skipped,
     Stale,
+}
+
+/// The conclusion a published check can report.
+///
+/// This is narrower than the observed [`CheckConclusion`] by one variant:
+/// GitHub sets `stale` on a check run itself and refuses it from a client, so
+/// no value here can produce that request.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PublishedCheckConclusion {
+    Success,
+    Failure,
+    Neutral,
+    Cancelled,
+    TimedOut,
+    ActionRequired,
+    Skipped,
 }
 
 /// Whether an observed check has finished, and what it concluded when it has.
@@ -667,28 +686,37 @@ pub enum CheckStatus {
 
 /// One check the platform recorded against a commit.
 ///
-/// `name` is the identifier a required-check rule matches, which is
-/// `RequiredCheck::context` on the code-hosting side. Interprex does not
-/// perform that match.
+/// A required-check rule names the check it requires by `name`, which is
+/// `RequiredCheck::context` on the code-hosting side, and may also name the
+/// application that must publish it, which is `RequiredCheck::integration_id`.
+/// `via_app` carries that application as the platform reported it: on GitHub
+/// both identifiers are the same app identifier, written as text here and as a
+/// number there. Interprex performs no part of that comparison.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CheckRun {
     pub name: String,
     pub head_sha: String,
+    /// The application that published the check, when the platform names one.
+    pub via_app: Option<ReviewApp>,
     pub status: CheckStatus,
     /// The check's published summary text, when it published nonblank text.
     pub summary: Option<String>,
+    /// Where a person can read the check on the platform, when it published a
+    /// location.
+    pub html_url: Option<String>,
 }
 
 /// A finished check result to publish.
 ///
 /// This write shape is deliberately narrower than the observed [`CheckRun`]:
 /// Interprex publishes only a result that has concluded, so the conclusion and
-/// the summary are both required.
+/// the summary are both required, and only conclusions a client may set are
+/// representable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CheckOutcome {
     pub name: String,
     pub head_sha: String,
-    pub conclusion: CheckConclusion,
+    pub conclusion: PublishedCheckConclusion,
     pub summary: String,
 }
 
@@ -762,11 +790,14 @@ pub trait CodeReviewsProvider: Send + Sync {
         reviewers: &[ReviewRequestTarget],
     ) -> Result<()>;
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()>;
-    /// Reads every check recorded on one commit, completely paginated.
+    /// Reads the current run of each check on one commit, completely
+    /// paginated.
     ///
-    /// Checks that have not concluded are returned with
-    /// [`CheckStatus::Pending`] rather than omitted, so a caller can tell a
-    /// missing check from a running one. Collection order carries no meaning.
+    /// A rerun replaces the run it repeated, so each check name appears once
+    /// and superseded runs are not reported. A check that has not concluded is
+    /// returned with [`CheckStatus::Pending`] rather than omitted, so a caller
+    /// can tell a missing check from a running one. Collection order carries
+    /// no meaning.
     ///
     /// Which of these checks a merge requires comes from the repository's
     /// rulesets, and what a failing required check means for the change
@@ -1040,8 +1071,10 @@ mod tests {
         let pending = CheckRun {
             name: "quality".to_owned(),
             head_sha: "head".to_owned(),
+            via_app: None,
             status: CheckStatus::Pending,
             summary: None,
+            html_url: None,
         };
         let completed = CheckRun {
             status: CheckStatus::Completed {

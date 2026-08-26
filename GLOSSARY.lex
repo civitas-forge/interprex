@@ -24,10 +24,12 @@ Glossary
         checkout addresses the open change requests that propose it and what
         an observed change request reports, so the two agree.
     mergeability:
-        Whether the platform can merge a change request's source into its
-        target: mergeable, conflicted, or unknown while the platform has not
-        finished computing the merge. It reports that merge computation alone,
-        not required checks, approvals or branch rules.
+        Whether the platform found a conflict between a change request's source
+        and its target: mergeable, conflicted, or unknown while the platform
+        has not finished computing the merge. It reports that conflict
+        computation alone. A mergeable change request can still be one the
+        platform refuses to merge over required checks, approvals or branch
+        rules.
     code review:
         The domain that acts on change requests so merging can be approved.
         It covers mergeability, reviews, findings, standalone threads,
@@ -68,9 +70,11 @@ Glossary
         can for a target the provider cannot identify.
     check:
         One recorded verification of a commit, with its name, the commit, its
-        status and its published summary. A check that has not finished is
-        pending and has no conclusion; a completed check carries its conclusion
-        and the time it finished. On GitHub these are check runs; GitHub's
+        status, the application that published it, its published summary and
+        its location. A check that has not finished is pending and has no
+        conclusion; a completed check carries its conclusion and the time it
+        finished. A read returns the current run of each check name, so a rerun
+        replaces the run it repeated. On GitHub these are check runs; GitHub's
         separate legacy commit statuses are not read.
     reviewing application:
         The provider application through which an actor created or submitted

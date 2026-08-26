@@ -7,9 +7,10 @@
 //! resolution, complete comment sequences and outstanding requests. The
 //! provider joins them here so callers never correlate GitHub entities.
 //!
-//! Checks are read separately, per commit, from GitHub's check-runs endpoint.
-//! GitHub's legacy commit statuses are a different mechanism with its own
-//! endpoint and are not read here.
+//! Checks are read separately, per commit, from GitHub's check-runs endpoint,
+//! which reports the current run of each check name. GitHub's legacy commit
+//! statuses are a different mechanism with its own endpoint and are not read
+//! here.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,12 +19,12 @@ use interprex::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion,
     CheckOutcome, CheckRun, CheckStatus, CodeReviewsProvider, CommitRange, FindingResolution,
     FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
-    Mergeability, ProviderError, Repository, Result, Review, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    Mergeability, ProviderError, PublishedCheckConclusion, Repository, Result, Review, ReviewActor,
+    ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewApp, ReviewAppId, ReviewAuthor,
+    ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId,
+    ReviewLine, ReviewLineRange, ReviewLocation, ReviewRelationship, ReviewRequest,
+    ReviewRequestId, ReviewRequestTarget, ReviewState, ReviewTarget, ReviewTeam, ReviewTeamId,
+    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -431,6 +432,10 @@ struct GithubCheckRun {
     status: String,
     conclusion: Option<String>,
     completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The app that published the run. It carries the same identifier a
+    /// ruleset reports as `integration_id`.
+    app: Option<GithubApp>,
+    html_url: Option<String>,
     output: Option<GithubCheckRunOutput>,
 }
 
@@ -788,6 +793,19 @@ fn actor(id: String, login: String, kind: &str) -> Result<ReviewActor> {
     })
 }
 
+fn normalize_app(app: GithubApp) -> Result<ReviewApp> {
+    Ok(ReviewApp {
+        id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
+            ProviderError::Unrepresentable {
+                provider: "github",
+                fact: error.to_string(),
+            }
+        })?,
+        slug: app.slug,
+        name: app.name,
+    })
+}
+
 fn rest_actor(user: GithubUser) -> Result<ReviewActor> {
     let kind = user.kind.ok_or_else(|| ProviderError::Unrepresentable {
         provider: "github",
@@ -1096,18 +1114,7 @@ fn normalize_change_request(
             author: review_author,
             via_app: review
                 .performed_via_github_app
-                .map(|app| {
-                    Ok(ReviewApp {
-                        id: ReviewAppId::new(app.id.to_string()).map_err(|error| {
-                            ProviderError::Unrepresentable {
-                                provider: "github",
-                                fact: error.to_string(),
-                            }
-                        })?,
-                        slug: app.slug,
-                        name: app.name,
-                    })
-                })
+                .map(normalize_app)
                 .transpose()?,
             revision: ReviewedRevision {
                 head_sha: review.commit_id,
@@ -1351,24 +1358,25 @@ fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
     Ok(CheckRun {
         name: value.name,
         head_sha: value.head_sha,
+        via_app: value.app.map(normalize_app).transpose()?,
         status,
         summary: value
             .output
             .and_then(|output| output.summary)
             .filter(|summary| !summary.trim().is_empty()),
+        html_url: value.html_url,
     })
 }
 
-fn conclusion(value: &CheckConclusion) -> &'static str {
+fn conclusion(value: &PublishedCheckConclusion) -> &'static str {
     match value {
-        CheckConclusion::Success => "success",
-        CheckConclusion::Failure => "failure",
-        CheckConclusion::Neutral => "neutral",
-        CheckConclusion::Cancelled => "cancelled",
-        CheckConclusion::TimedOut => "timed_out",
-        CheckConclusion::ActionRequired => "action_required",
-        CheckConclusion::Skipped => "skipped",
-        CheckConclusion::Stale => "stale",
+        PublishedCheckConclusion::Success => "success",
+        PublishedCheckConclusion::Failure => "failure",
+        PublishedCheckConclusion::Neutral => "neutral",
+        PublishedCheckConclusion::Cancelled => "cancelled",
+        PublishedCheckConclusion::TimedOut => "timed_out",
+        PublishedCheckConclusion::ActionRequired => "action_required",
+        PublishedCheckConclusion::Skipped => "skipped",
     }
 }
 
@@ -1511,6 +1519,9 @@ impl GithubProvider {
                     Some(&[
                         ("per_page", CHECK_RUNS_PER_PAGE.to_string()),
                         ("page", page.to_string()),
+                        // GitHub's default, sent explicitly: the current run of
+                        // each check name, with superseded reruns left out.
+                        ("filter", "latest".to_owned()),
                     ]),
                 )
                 .await
@@ -1879,9 +1890,9 @@ mod tests {
     use interprex::{
         ChangeRequestHead, ChangeRequestState, CheckConclusion, CheckOutcome, CheckStatus,
         CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionRecord,
-        FindingSeverity, Mergeability, ProviderError, Repository, Result, ReviewActorKind,
-        ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget, ReviewTarget,
-        ReviewTeamKind, ReviewThreadStatus,
+        FindingSeverity, Mergeability, ProviderError, PublishedCheckConclusion, Repository, Result,
+        ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewLocation, ReviewRequestTarget,
+        ReviewTarget, ReviewTeamKind, ReviewThreadStatus,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -1918,6 +1929,8 @@ mod tests {
             completed_at: conclusion
                 .is_some()
                 .then(|| "2026-08-24T10:04:00Z".parse().expect("completion time")),
+            app: None,
+            html_url: None,
             output: None,
         }
     }
@@ -2837,6 +2850,13 @@ mod tests {
             runs[0].summary.as_deref(),
             Some("clippy reported one warning")
         );
+        let publisher = runs[0].via_app.as_ref().expect("publishing app");
+        assert_eq!(publisher.id.as_str(), "1042");
+        assert_eq!(publisher.slug, "quality-app");
+        assert_eq!(
+            runs[0].html_url.as_deref(),
+            Some("https://github.com/civitas-forge/interprex-sandbox/runs/41")
+        );
         assert_eq!(runs[1].status, CheckStatus::Pending);
         assert_eq!(runs[1].summary, None);
         assert_eq!(
@@ -2847,6 +2867,8 @@ mod tests {
             }
         );
         assert_eq!(runs[2].summary, None, "blank output text is not a summary");
+        assert_eq!(runs[2].via_app, None);
+        assert_eq!(runs[2].html_url, None);
     }
 
     #[test]
@@ -2937,6 +2959,26 @@ mod tests {
     }
 
     #[test]
+    fn every_publishable_conclusion_maps_to_a_value_github_accepts_from_a_client() {
+        for (publishable, expected) in [
+            (PublishedCheckConclusion::Success, "success"),
+            (PublishedCheckConclusion::Failure, "failure"),
+            (PublishedCheckConclusion::Neutral, "neutral"),
+            (PublishedCheckConclusion::Cancelled, "cancelled"),
+            (PublishedCheckConclusion::TimedOut, "timed_out"),
+            (PublishedCheckConclusion::ActionRequired, "action_required"),
+            (PublishedCheckConclusion::Skipped, "skipped"),
+        ] {
+            let written = super::conclusion(&publishable);
+            assert_eq!(written, expected);
+            assert_ne!(
+                written, "stale",
+                "GitHub sets stale itself and refuses it from a client"
+            );
+        }
+    }
+
+    #[test]
     fn an_uncomputed_merge_stays_distinct_from_a_conflicted_one() {
         let mergeability = |mergeable: Option<bool>| {
             let mut pull_request: GithubPullRequest =
@@ -3003,7 +3045,7 @@ mod tests {
                 &CheckOutcome {
                     name: "reviewer".to_owned(),
                     head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-                    conclusion: CheckConclusion::Success,
+                    conclusion: PublishedCheckConclusion::Success,
                     summary: "settled".to_owned(),
                 },
             )

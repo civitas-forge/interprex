@@ -145,27 +145,47 @@ Design
     Its `clean`, `dirty` and `unknown` values restate mergeability, while
     `blocked`, `behind`, `unstable` and `draft` report GitHub's own evaluation
     of required checks, approvals, branch currency and the draft flag. Every
-    input to that evaluation is already returned as a separate fact: check
-    outcomes, reviews, rulesets and `draft`. Returning GitHub's verdict beside
+    input to that evaluation is already returned as a separate fact: observed
+    checks, reviews, rulesets and `draft`. Returning GitHub's verdict beside
     those facts would hand the caller a second, differently shaped answer to a
     question [#5] leaves to the caller.
 
-    `CodeReviewsProvider::checks` reads the checks recorded on one commit,
-    completely paginated. A caller reads them for whichever commit it cares
-    about, usually the change request's current head. `CheckStatus` holds the
-    conclusion inside its completed variant, following `ReviewState`: a check
-    that has not finished has no conclusion to report, so no combination of the
-    returned facts can contradict itself. GitHub's `queued`, `waiting`,
-    `requested`, `pending` and `in_progress` statuses all become `Pending`,
-    because each states only that no conclusion exists yet. `CheckConclusion`
+    `CodeReviewsProvider::checks` reads the current run of each check on one
+    commit, completely paginated. A caller reads them for whichever commit it
+    cares about, usually the change request's current head. The request sends
+    GitHub's `filter=latest` explicitly: a rerun replaces the run it repeated,
+    so each check name appears once and superseded runs are not reported. That
+    is the collection the trait declares; a caller that wants the earlier runs
+    of a rerun check cannot get them here. GitHub also returns runs from at
+    most the 1,000 most recent check suites on a commit and gives no signal
+    that it truncated, so a commit past that limit is reported short.
+
+    `CheckStatus` holds the conclusion inside its completed variant, following
+    `ReviewState`: a check that has not finished has no conclusion to report,
+    so no combination of the returned facts can contradict itself. GitHub's
+    `queued`, `waiting`, `requested`, `pending` and `in_progress` statuses all
+    become `Pending`, because each states only that no conclusion exists yet. `CheckConclusion`
     has one variant for each conclusion GitHub reports, `skipped` and `stale`
-    included, so a read never discards one; GitHub's create-check-run route
-    accepts the same eight values, so `publish_check` can write any of them.
+    included, so a read never discards one.
 
     The observed `CheckRun` stays separate from the written `CheckOutcome`,
     which always carries a conclusion because Interprex publishes only finished
-    results. A status GitHub adds later, a conclusion Interprex does not model,
-    a completed check missing its conclusion or completion time, and a running
+    results. Their conclusion vocabularies are separate for the same reason
+    `ReviewRequestTarget` is narrower than `ReviewTarget`: GitHub sets `stale`
+    on a check run itself and refuses that conclusion from a client, so
+    `CheckOutcome` uses `PublishedCheckConclusion`, which has no such variant.
+    A request GitHub would reject is therefore not constructible rather than
+    checked at the boundary.
+
+    A check run also carries the application that published it, as `via_app`,
+    and where a person can read it, as `html_url`. A required-status-check rule
+    names the check by context and may also name the application that must
+    publish it, as `RequiredCheck::integration_id`. Both identifiers are the
+    same GitHub app identifier, a number in the ruleset and its text form in
+    `ReviewApp::id`. Interprex returns both facts and compares neither.
+
+    A status GitHub adds later, a conclusion Interprex does not model, a
+    completed check missing its conclusion or completion time, and a running
     check that reports either, are all returned as unrepresentable data.
 
     GitHub returns check runs in an envelope keyed `check_runs` beside a
