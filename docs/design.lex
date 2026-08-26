@@ -180,6 +180,27 @@ Design
     Unavailable targets remain present. A request describes current state and
     is not proof that a review exists.
 
+    A request also carries the time the platform recorded it, when the provider
+    can observe one. GitHub's outstanding-request records carry no time, so the
+    GitHub adapter reads the change request's review-requested and
+    review-request-removed timeline events, completely paginated, and matches
+    each outstanding request to the latest request event for the same reviewer
+    identifier that no later removal discarded. A reviewer requested, removed
+    and requested again therefore reports the latest request. User, bot and
+    mannequin identifiers are matched separately from team identifiers, so a
+    team and a user never take each other's time however their slug and login
+    are spelled. A request whose target GitHub no longer names has no
+    identifier to match and reports no time, as does a request whose event has
+    left the retained timeline. The adapter never substitutes a nearby
+    timestamp, so a caller measuring how long a request has stood reads an
+    absent time as no measurement rather than an approximate one.
+
+    The timeline is a paginated read of its own, and the times it carries
+    describe outstanding requests only. The adapter therefore reads it when at
+    least one outstanding request names a reviewer to match and skips it
+    entirely otherwise, so an observation with no outstanding reviewer costs
+    no additional round trip.
+
     Interprex returns these observations without assigning review rounds,
     choosing a previous review, deciding that a reviewer is stale, classifying
     finding severity from prose or recommending a next action. The caller

@@ -482,6 +482,7 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
             "\"isResolved\": false",
         ),
         include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("fixtures/unanchored_comments.json").to_owned(),
         r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"PRRC_resolution"}}}}"#
             .to_owned(),
@@ -507,10 +508,10 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
         .expect("resolve finding");
 
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 7);
-    assert_user_request(&requests[5], "POST /graphql ");
+    assert_eq!(requests.len(), 8);
     assert_user_request(&requests[6], "POST /graphql ");
-    let (_, reply_body) = requests[5]
+    assert_user_request(&requests[7], "POST /graphql ");
+    let (_, reply_body) = requests[6]
         .split_once("\r\n\r\n")
         .expect("reply request body");
     let reply_body: serde_json::Value =
@@ -531,7 +532,7 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
     assert!(posted.contains("\"resolution_reason\":\"INVALID\""));
     assert!(posted.contains("\"addressing_severity\":\"minor\""));
 
-    let (_, resolve_body) = requests[6]
+    let (_, resolve_body) = requests[7]
         .split_once("\r\n\r\n")
         .expect("resolve request body");
     let resolve_body: serde_json::Value =
@@ -549,6 +550,8 @@ async fn code_review_domain_reads_one_complete_observation() {
         include_str!("fixtures/code_review_reviews.json"),
         include_str!("fixtures/review_threads_response.json"),
         include_str!("fixtures/review_requests_response.json"),
+        include_str!("fixtures/review_request_timeline_first_page.json"),
+        include_str!("fixtures/review_request_timeline_second_page.json"),
         include_str!("fixtures/unanchored_comments.json"),
     ])
     .await;
@@ -595,6 +598,26 @@ async fn code_review_domain_reads_one_complete_observation() {
             .is_empty()
     );
     assert_eq!(change_request.outstanding_requests.len(), 2);
+    assert_eq!(
+        change_request
+            .outstanding_requests
+            .iter()
+            .map(|request| request.requested_at)
+            .collect::<Vec<_>>(),
+        [
+            Some(
+                "2026-06-23T09:00:00Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .expect("request timestamp")
+            ),
+            Some(
+                "2026-06-23T09:15:00Z"
+                    .parse::<chrono::DateTime<chrono::Utc>>()
+                    .expect("request timestamp")
+            ),
+        ],
+        "the re-request on the second timeline page supersedes the removal on the first"
+    );
     assert_eq!(change_request.unanchored_comments.len(), 1);
     let requests = requests.await.expect("captured requests");
     assert_user_request(
@@ -607,8 +630,10 @@ async fn code_review_domain_reads_one_complete_observation() {
     );
     assert_user_request(&requests[2], "POST /graphql ");
     assert_user_request(&requests[3], "POST /graphql ");
+    assert_user_request(&requests[4], "POST /graphql ");
+    assert_user_request(&requests[5], "POST /graphql ");
     assert_user_request(
-        &requests[4],
+        &requests[6],
         "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100 ",
     );
     let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
@@ -645,6 +670,52 @@ async fn code_review_domain_reads_one_complete_observation() {
             .expect("GraphQL document")
             .contains("organization { login }")
     );
+    let (_, body) = requests[4].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    let timeline_query = body["query"].as_str().expect("GraphQL document").to_owned();
+    assert!(timeline_query.contains("timelineItems"));
+    assert!(
+        timeline_query
+            .contains("itemTypes: [REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT]")
+    );
+    assert!(timeline_query.contains("ReviewRequestedEvent"));
+    assert!(timeline_query.contains("ReviewRequestRemovedEvent"));
+    assert_eq!(body["variables"]["number"], 5);
+    assert_eq!(body["variables"]["cursor"], serde_json::Value::Null);
+    let (_, body) = requests[5].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert_eq!(body["query"], serde_json::json!(timeline_query));
+    assert_eq!(body["variables"]["cursor"], "timeline-page-1");
+}
+
+#[tokio::test]
+async fn code_review_domain_reads_no_timeline_without_an_outstanding_request() {
+    let mut review_requests: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/review_requests_response.json"))
+            .expect("review request fixture");
+    review_requests["data"]["repository"]["pullRequest"]["reviewRequests"]["nodes"] =
+        serde_json::json!([]);
+    let (uri, requests) = json_responses(vec![
+        include_str!("fixtures/pull_request.json").to_owned(),
+        include_str!("fixtures/code_review_reviews.json").to_owned(),
+        include_str!("fixtures/review_threads_response.json").to_owned(),
+        serde_json::to_string(&review_requests).expect("review request response"),
+        include_str!("fixtures/unanchored_comments.json").to_owned(),
+    ])
+    .await;
+
+    let change_request = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("change request");
+
+    assert!(change_request.outstanding_requests.is_empty());
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 5);
+    assert_user_request(
+        &requests[4],
+        "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100 ",
+    );
 }
 
 #[tokio::test]
@@ -660,6 +731,7 @@ async fn code_review_domain_preserves_a_standalone_thread() {
         include_str!("fixtures/code_review_reviews.json").to_owned(),
         threads,
         include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("fixtures/unanchored_comments.json").to_owned(),
     ])
     .await;
@@ -697,6 +769,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
         include_str!("fixtures/code_review_reviews.json").to_owned(),
         include_str!("fixtures/review_threads_response.json").to_owned(),
         include_str!("fixtures/review_requests_response.json").to_owned(),
+        include_str!("fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("fixtures/unanchored_comments.json").to_owned(),
     ])
     .await;
@@ -709,7 +782,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
     assert_eq!(change_request.reviews.len(), 11);
     assert_eq!(change_request.reviews[0].findings.len(), 1);
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
     assert_user_request(
         &requests[3],
         "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 ",

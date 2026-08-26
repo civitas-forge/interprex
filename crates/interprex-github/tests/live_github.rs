@@ -203,7 +203,10 @@ async fn configured_change_request_observation_matches_current_provider_data() {
                 assert!(!team.slug.is_empty());
                 assert!(!team.name.is_empty());
             }
-            ReviewTarget::Unavailable => {}
+            ReviewTarget::Unavailable => assert!(
+                request.requested_at.is_none(),
+                "a target with no identity has no request event to match"
+            ),
         }
     }
     let author_review_count = change_request

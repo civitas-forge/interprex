@@ -102,6 +102,45 @@ query ReviewRequests($owner: String!, $name: String!, $number: Int!, $cursor: St
   }
 }"#;
 
+const REVIEW_REQUEST_TIMELINE: &str = r#"
+query ReviewRequestTimeline($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      timelineItems(
+        first: 100
+        after: $cursor
+        itemTypes: [REVIEW_REQUESTED_EVENT, REVIEW_REQUEST_REMOVED_EVENT]
+      ) {
+        nodes {
+          __typename
+          ... on ReviewRequestedEvent {
+            createdAt
+            requestedReviewer {
+              __typename
+              ... on User { id }
+              ... on Bot { id }
+              ... on Mannequin { id }
+              ... on Team { id }
+              ... on EnterpriseTeam { id }
+            }
+          }
+          ... on ReviewRequestRemovedEvent {
+            requestedReviewer {
+              __typename
+              ... on User { id }
+              ... on Bot { id }
+              ... on Mannequin { id }
+              ... on Team { id }
+              ... on EnterpriseTeam { id }
+            }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}"#;
+
 const RESOLVE_THREAD: &str = r#"
 mutation ResolveReviewThread($threadId: ID!) {
   resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
@@ -517,6 +556,135 @@ struct RequestedReviewerOrganization {
     login: String,
 }
 
+#[derive(Deserialize)]
+struct TimelineData {
+    repository: TimelineRepository,
+}
+
+#[derive(Deserialize)]
+struct TimelineRepository {
+    #[serde(rename = "pullRequest")]
+    pull_request: TimelinePullRequest,
+}
+
+#[derive(Deserialize)]
+struct TimelinePullRequest {
+    #[serde(rename = "timelineItems")]
+    timeline_items: TimelineConnection,
+}
+
+#[derive(Deserialize)]
+struct TimelineConnection {
+    nodes: Vec<TimelineItemNode>,
+    #[serde(rename = "pageInfo")]
+    page_info: PageInfo,
+}
+
+/// The request and removal events selected by `REVIEW_REQUEST_TIMELINE`.
+///
+/// The query restricts `timelineItems` to these two types, so an item of any
+/// other type fails to deserialize instead of being read as one of them.
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum TimelineItemNode {
+    ReviewRequestedEvent {
+        #[serde(rename = "createdAt")]
+        created_at: chrono::DateTime<chrono::Utc>,
+        #[serde(rename = "requestedReviewer")]
+        requested_reviewer: Option<TimelineReviewerNode>,
+    },
+    /// A removal discards the request it superseded, so only the reviewer it
+    /// names is read; where it sits in the sequence says when it happened.
+    ReviewRequestRemovedEvent {
+        #[serde(rename = "requestedReviewer")]
+        requested_reviewer: Option<TimelineReviewerNode>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "__typename")]
+enum TimelineReviewerNode {
+    User { id: String },
+    Bot { id: String },
+    Mannequin { id: String },
+    Team { id: String },
+    EnterpriseTeam { id: String },
+}
+
+/// The reviewer identity that joins an outstanding request to its events.
+///
+/// Actor and team identifiers are compared separately, so a user and a team
+/// never match each other whatever their login and slug say.
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+enum ReviewTargetKey {
+    Actor(String),
+    Team(String),
+}
+
+impl TimelineReviewerNode {
+    fn key(&self) -> ReviewTargetKey {
+        match self {
+            Self::User { id } | Self::Bot { id } | Self::Mannequin { id } => {
+                ReviewTargetKey::Actor(id.clone())
+            }
+            Self::Team { id } | Self::EnterpriseTeam { id } => ReviewTargetKey::Team(id.clone()),
+        }
+    }
+}
+
+impl ReviewRequestNode {
+    /// The identity to look up in the timeline, absent for a target GitHub no
+    /// longer names.
+    fn target_key(&self) -> Option<ReviewTargetKey> {
+        match self.requested_reviewer.as_ref()? {
+            RequestedReviewerNode::User { id, .. }
+            | RequestedReviewerNode::Bot { id, .. }
+            | RequestedReviewerNode::Mannequin { id, .. } => {
+                Some(ReviewTargetKey::Actor(id.clone()))
+            }
+            RequestedReviewerNode::Team { id, .. }
+            | RequestedReviewerNode::EnterpriseTeam { id, .. } => {
+                Some(ReviewTargetKey::Team(id.clone()))
+            }
+        }
+    }
+}
+
+/// The request time still in force for each reviewer identity.
+///
+/// GitHub returns timeline items in ascending creation order, so replaying
+/// them leaves each identity holding its most recent request, and a removal
+/// discards the request it superseded. A reviewer requested, removed and
+/// requested again therefore reports the latest request.
+fn outstanding_request_times(
+    events: &[TimelineItemNode],
+) -> BTreeMap<ReviewTargetKey, chrono::DateTime<chrono::Utc>> {
+    let mut times = BTreeMap::new();
+    for event in events {
+        match event {
+            TimelineItemNode::ReviewRequestedEvent {
+                created_at,
+                requested_reviewer: Some(reviewer),
+            } => {
+                times.insert(reviewer.key(), *created_at);
+            }
+            TimelineItemNode::ReviewRequestRemovedEvent {
+                requested_reviewer: Some(reviewer),
+            } => {
+                times.remove(&reviewer.key());
+            }
+            TimelineItemNode::ReviewRequestedEvent {
+                requested_reviewer: None,
+                ..
+            }
+            | TimelineItemNode::ReviewRequestRemovedEvent {
+                requested_reviewer: None,
+            } => {}
+        }
+    }
+    times
+}
+
 fn continuation_cursor(
     page_info: &PageInfo,
     operation: &'static str,
@@ -690,7 +858,13 @@ fn normalize_unanchored_comment(value: GithubUnanchoredComment) -> Result<Review
     })
 }
 
-fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
+fn normalize_review_request(
+    value: ReviewRequestNode,
+    request_times: &BTreeMap<ReviewTargetKey, chrono::DateTime<chrono::Utc>>,
+) -> Result<ReviewRequest> {
+    let requested_at = value
+        .target_key()
+        .and_then(|key| request_times.get(&key).copied());
     let (target, request_target) = match value.requested_reviewer {
         Some(RequestedReviewerNode::User { id, login }) => (
             ReviewTarget::Actor(actor(id, login.clone(), "User")?),
@@ -744,6 +918,7 @@ fn normalize_review_request(value: ReviewRequestNode) -> Result<ReviewRequest> {
         })?,
         target,
         request_target,
+        requested_at,
         as_code_owner: value.as_code_owner,
     })
 }
@@ -787,6 +962,7 @@ fn normalize_change_request(
     mut reviews: Vec<GithubReview>,
     threads: Vec<ThreadNode>,
     review_requests: Vec<ReviewRequestNode>,
+    request_events: Vec<TimelineItemNode>,
     unanchored_comments: Vec<GithubUnanchoredComment>,
 ) -> Result<ChangeRequest> {
     let author_provider_id = value.user.as_ref().map(|user| user.node_id.clone());
@@ -937,9 +1113,10 @@ fn normalize_change_request(
         }
     }
 
+    let request_times = outstanding_request_times(&request_events);
     let outstanding_requests = review_requests
         .into_iter()
-        .map(normalize_review_request)
+        .map(|request| normalize_review_request(request, &request_times))
         .collect::<Result<Vec<_>>>()?;
     let mut unanchored_comments = unanchored_comments
         .into_iter()
@@ -1163,6 +1340,41 @@ impl GithubProvider {
             cursor = Some(next_cursor);
         }
     }
+
+    async fn github_review_request_events(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+    ) -> Result<Vec<TimelineItemNode>> {
+        let mut cursor: Option<String> = None;
+        let mut events = Vec::new();
+        loop {
+            let data: TimelineData = self
+                .user()?
+                .graphql(&json!({
+                    "query": REVIEW_REQUEST_TIMELINE,
+                    "variables": {
+                        "owner": repository.owner(),
+                        "name": repository.name(),
+                        "number": number.get(),
+                        "cursor": cursor,
+                    }
+                }))
+                .await
+                .map_err(|error| external("read review request events", error))?;
+            let connection = data.repository.pull_request.timeline_items;
+            let next_cursor = continuation_cursor(
+                &connection.page_info,
+                "read review request events",
+                "review request events",
+            )?;
+            events.extend(connection.nodes);
+            let Some(next_cursor) = next_cursor else {
+                return Ok(events);
+            };
+            cursor = Some(next_cursor);
+        }
+    }
 }
 
 #[async_trait]
@@ -1180,12 +1392,25 @@ impl CodeReviewsProvider for GithubProvider {
             threads = self.github_review_threads(repository, number).await?;
         }
         let requests = self.github_review_requests(repository, number).await?;
+        // The timeline is a whole paginated read on its own and the request
+        // times it carries describe outstanding requests only, so it is read
+        // when at least one outstanding request names a reviewer to match.
+        let request_events = if requests
+            .iter()
+            .any(|request| request.target_key().is_some())
+        {
+            self.github_review_request_events(repository, number)
+                .await?
+        } else {
+            Vec::new()
+        };
         let unanchored_comments = self.github_unanchored_comments(repository, number).await?;
         normalize_change_request(
             pull_request,
             reviews,
             threads,
             requests,
+            request_events,
             unanchored_comments,
         )
     }
@@ -1386,9 +1611,21 @@ mod tests {
 
     use super::{
         GithubPullRequest, GithubReview, GithubUnanchoredComment, ParsedFindingResolution,
-        ReviewRequestsData, ThreadsData, finding_resolution, github_resolution_reply,
-        latest_finding_resolution, normalize_change_request,
+        ReviewRequestNode, ReviewRequestsData, ThreadsData, TimelineData, TimelineItemNode,
+        finding_resolution, github_resolution_reply, latest_finding_resolution,
+        normalize_change_request,
     };
+
+    fn review_request_timeline() -> TimelineData {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/review_request_timeline.json"
+        ))
+        .expect("review request timeline fixture")
+    }
+
+    fn requested_at(time: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+        Some(time.parse().expect("request timestamp"))
+    }
 
     #[test]
     fn github_reply_keeps_visible_labels_and_hidden_canonical_metadata() {
@@ -1469,11 +1706,13 @@ mod tests {
         let unanchored_comments: Vec<GithubUnanchoredComment> =
             serde_json::from_str(include_str!("../tests/fixtures/unanchored_comments.json"))
                 .expect("unanchored comments fixture");
+        let timeline = review_request_timeline();
         let change_request = normalize_change_request(
             pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
             requests.repository.pull_request.review_requests.nodes,
+            timeline.repository.pull_request.timeline_items.nodes,
             unanchored_comments,
         )
         .expect("normalizes");
@@ -1622,8 +1861,184 @@ mod tests {
             change_request.outstanding_requests[5].target,
             ReviewTarget::Unavailable
         );
+        assert_eq!(
+            change_request
+                .outstanding_requests
+                .iter()
+                .map(|request| request.requested_at)
+                .collect::<Vec<_>>(),
+            [
+                requested_at("2026-06-23T09:00:00Z"),
+                requested_at("2026-06-23T09:35:00Z"),
+                requested_at("2026-06-23T09:15:00Z"),
+                requested_at("2026-06-23T09:20:00Z"),
+                requested_at("2026-06-23T09:25:00Z"),
+                None,
+            ]
+        );
         assert_eq!(change_request.unanchored_comments.len(), 1);
         assert!(change_request.unanchored_comments[0].updated_at.is_some());
+    }
+
+    fn correlated_request_times(
+        review_requests: serde_json::Value,
+        request_events: serde_json::Value,
+    ) -> Vec<Option<chrono::DateTime<chrono::Utc>>> {
+        let pull_request: GithubPullRequest =
+            serde_json::from_str(include_str!("../tests/fixtures/pull_request.json"))
+                .expect("pull request fixture");
+        let review_requests: Vec<ReviewRequestNode> =
+            serde_json::from_value(review_requests).expect("review request nodes");
+        let request_events: Vec<TimelineItemNode> =
+            serde_json::from_value(request_events).expect("review request events");
+
+        normalize_change_request(
+            pull_request,
+            Vec::new(),
+            Vec::new(),
+            review_requests,
+            request_events,
+            Vec::new(),
+        )
+        .expect("normalizes")
+        .outstanding_requests
+        .into_iter()
+        .map(|request| request.requested_at)
+        .collect()
+    }
+
+    #[test]
+    fn a_re_requested_reviewer_reports_the_latest_request() {
+        let times = correlated_request_times(
+            serde_json::json!([{
+                "id": "PRR_kwDORequestUser",
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                    "__typename": "User",
+                    "id": "U_kwDOReviewer",
+                    "login": "alice"
+                }
+            }]),
+            serde_json::json!([
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T09:00:00Z",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                },
+                {
+                    "__typename": "ReviewRequestRemovedEvent",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                },
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T11:00:00Z",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                }
+            ]),
+        );
+
+        assert_eq!(times, [requested_at("2026-06-23T11:00:00Z")]);
+    }
+
+    #[test]
+    fn a_removed_request_leaves_a_later_reviewer_uncorrelated() {
+        let times = correlated_request_times(
+            serde_json::json!([{
+                "id": "PRR_kwDORequestUser",
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                    "__typename": "User",
+                    "id": "U_kwDOReviewer",
+                    "login": "alice"
+                }
+            }]),
+            serde_json::json!([
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T09:00:00Z",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                },
+                {
+                    "__typename": "ReviewRequestRemovedEvent",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                }
+            ]),
+        );
+
+        assert_eq!(times, [None]);
+    }
+
+    #[test]
+    fn a_team_and_a_user_sharing_a_name_do_not_take_each_others_request_times() {
+        let times = correlated_request_times(
+            serde_json::json!([
+                {
+                    "id": "PRR_kwDORequestUser",
+                    "asCodeOwner": false,
+                    "requestedReviewer": {
+                        "__typename": "User",
+                        "id": "U_kwDOReviewers",
+                        "login": "reviewers"
+                    }
+                },
+                {
+                    "id": "PRR_kwDORequestTeam",
+                    "asCodeOwner": false,
+                    "requestedReviewer": {
+                        "__typename": "Team",
+                        "id": "T_kwDOReviewers",
+                        "slug": "reviewers",
+                        "name": "reviewers",
+                        "organization": { "login": "civitas-forge" }
+                    }
+                }
+            ]),
+            serde_json::json!([
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T09:00:00Z",
+                    "requestedReviewer": { "__typename": "Team", "id": "T_kwDOReviewers" }
+                },
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T10:00:00Z",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewers" }
+                }
+            ]),
+        );
+
+        assert_eq!(
+            times,
+            [
+                requested_at("2026-06-23T10:00:00Z"),
+                requested_at("2026-06-23T09:00:00Z")
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unavailable_target_reports_no_request_time() {
+        let times = correlated_request_times(
+            serde_json::json!([{
+                "id": "PRR_kwDORequestUnavailable",
+                "asCodeOwner": false,
+                "requestedReviewer": null
+            }]),
+            serde_json::json!([
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T09:00:00Z",
+                    "requestedReviewer": null
+                },
+                {
+                    "__typename": "ReviewRequestedEvent",
+                    "createdAt": "2026-06-23T10:00:00Z",
+                    "requestedReviewer": { "__typename": "User", "id": "U_kwDOReviewer" }
+                }
+            ]),
+        );
+
+        assert_eq!(times, [None]);
     }
 
     #[test]
@@ -1661,6 +2076,7 @@ mod tests {
             threads.repository.pull_request.review_threads.nodes,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         )
         .expect("unsupported future resolution metadata remains observable as replies");
 
@@ -1689,9 +2105,15 @@ mod tests {
                 .expect("review fixture");
         reviews[0].user.as_mut().expect("reviewer").kind = Some("Repository".to_owned());
 
-        let error =
-            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("unknown actor kind must be unrepresentable");
+        let error = normalize_change_request(
+            pull_request,
+            reviews,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("unknown actor kind must be unrepresentable");
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown review actor kind")
@@ -1708,9 +2130,15 @@ mod tests {
                 .expect("review fixture");
         reviews[0].user.as_mut().expect("reviewer").kind = None;
 
-        let error =
-            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("missing actor type must be unrepresentable");
+        let error = normalize_change_request(
+            pull_request,
+            reviews,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("missing actor type must be unrepresentable");
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("has no type")
@@ -1724,9 +2152,15 @@ mod tests {
                 .expect("pull request fixture");
         pull_request.state = "reopening".to_owned();
 
-        let error =
-            normalize_change_request(pull_request, Vec::new(), Vec::new(), Vec::new(), Vec::new())
-                .expect_err("unknown state must be unrepresentable");
+        let error = normalize_change_request(
+            pull_request,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("unknown state must be unrepresentable");
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("unknown change request state")
@@ -1755,12 +2189,14 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         )
         .expect("normalizes a change request closed without merging");
         assert_eq!(closed.state, ChangeRequestState::Closed);
 
         let merged = normalize_change_request(
             pull_request_with_merge_facts("closed", true, Some("2026-08-24T11:00:00Z")),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1810,6 +2246,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
                 Vec::new(),
+                Vec::new(),
             )
             .expect_err("contradictory merge facts must be unrepresentable");
             assert!(
@@ -1829,9 +2266,15 @@ mod tests {
                 .expect("review fixture");
         reviews[0].submitted_at = None;
 
-        let error =
-            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("submitted review without time must be unrepresentable");
+        let error = normalize_change_request(
+            pull_request,
+            reviews,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("submitted review without time must be unrepresentable");
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("has no submission time")
@@ -1858,6 +2301,7 @@ mod tests {
             pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         )
@@ -1890,6 +2334,7 @@ mod tests {
             pull_request,
             reviews,
             threads.repository.pull_request.review_threads.nodes,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         )
@@ -1939,6 +2384,7 @@ mod tests {
             threads.repository.pull_request.review_threads.nodes,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
         )
         .expect("normalizes standalone thread");
 
@@ -1968,9 +2414,15 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/code_review_reviews.json"))
                 .expect("review fixture");
 
-        let change_request =
-            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect("deleted author remains readable");
+        let change_request = normalize_change_request(
+            pull_request,
+            reviews,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("deleted author remains readable");
         assert_eq!(change_request.author.kind, ReviewActorKind::Placeholder);
         assert_eq!(change_request.author.login, "ghost");
         assert!(
@@ -1990,9 +2442,15 @@ mod tests {
                 .expect("review fixture");
         reviews[10].submitted_at = Some("2026-06-23T22:10:00Z".parse().expect("submission time"));
 
-        let error =
-            normalize_change_request(pull_request, reviews, Vec::new(), Vec::new(), Vec::new())
-                .expect_err("draft review with a submission time must be unrepresentable");
+        let error = normalize_change_request(
+            pull_request,
+            reviews,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect_err("draft review with a submission time must be unrepresentable");
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. } if fact.contains("has a submission time")
