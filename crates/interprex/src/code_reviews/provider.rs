@@ -65,10 +65,14 @@ pub trait CodeReviewsProvider: Send + Sync {
         resolution: FindingResolution,
         reply: &FindingResolutionReply,
     ) -> Result<()>;
-    /// Adds each target to the outstanding reviewer set.
+    /// Requests each target and then confirms that every target appears in a
+    /// current observation of the outstanding reviewer set.
     ///
     /// A target already present remains one request, so repeating the same call
-    /// reaches the same observable state.
+    /// reaches the same observable state. An error can follow a partial write;
+    /// targets the provider did record remain outstanding. Success confirms
+    /// only the post-request observation: it does not guarantee that a target
+    /// remains outstanding after that observation.
     async fn request_reviewers(
         &self,
         repository: &Repository,

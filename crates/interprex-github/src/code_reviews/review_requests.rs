@@ -249,6 +249,29 @@ impl ReviewRequestNode {
             }
         }
     }
+
+    pub(super) fn matches_request_target(&self, target: &ReviewRequestTarget) -> bool {
+        match (&self.requested_reviewer, target) {
+            (
+                Some(RequestedReviewerNode::User { login, .. }),
+                ReviewRequestTarget::User(target),
+            ) => login == target,
+            (Some(RequestedReviewerNode::Bot { login, .. }), ReviewRequestTarget::Bot(target)) => {
+                bot_login(login) == bot_login(target)
+            }
+            (
+                Some(RequestedReviewerNode::Team {
+                    slug, organization, ..
+                }),
+                ReviewRequestTarget::Team(target),
+            ) => target == &format!("{}/{}", organization.login, slug),
+            _ => false,
+        }
+    }
+}
+
+fn bot_login(login: &str) -> &str {
+    login.strip_suffix("[bot]").unwrap_or(login)
 }
 
 /// The request time still in force for each reviewer identity.

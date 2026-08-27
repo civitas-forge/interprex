@@ -3,7 +3,7 @@ use std::time::Duration;
 use interprex::{
     ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckStatus,
     CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionReply,
-    FindingSeverity, Mergeability, Repository, ReviewRequestTarget, ReviewThreadId,
+    FindingSeverity, Mergeability, ProviderError, Repository, ReviewRequestTarget, ReviewThreadId,
 };
 use tokio::time::timeout;
 
@@ -55,6 +55,11 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
     let (uri, requests) = json_responses(vec![
         include_str!("../fixtures/pull_request.json"),
         r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
+            {"id":"PRR_user","asCodeOwner":false,"requestedReviewer":{"__typename":"User","id":"U_alice","login":"alice"}},
+            {"id":"PRR_bot","asCodeOwner":false,"requestedReviewer":{"__typename":"Bot","id":"B_copilot","login":"copilot-pull-request-reviewer[bot]"}},
+            {"id":"PRR_team","asCodeOwner":false,"requestedReviewer":{"__typename":"Team","id":"T_maintainers","slug":"maintainers","name":"Maintainers","organization":{"login":"civitas-forge"}}}
+        ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
     ])
     .await;
     provider(uri)
@@ -71,13 +76,14 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
         .expect("review request");
     let requests = timeout(Duration::from_secs(1), requests)
         .await
-        .expect("provider sent both requests")
+        .expect("provider sent all requests")
         .expect("captured requests");
     assert_user_request(
         &requests[0],
         "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
     );
     assert_user_request(&requests[1], "POST /graphql ");
+    assert_user_request(&requests[2], "POST /graphql ");
     let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
     let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
     assert!(
@@ -99,6 +105,130 @@ async fn code_review_domain_requests_users_bots_and_teams_through_the_login_muta
         body["variables"]["teamSlugs"],
         serde_json::json!(["civitas-forge/maintainers"])
     );
+    let (_, body) = requests[2].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert!(
+        body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("reviewRequests")
+    );
+    assert!(
+        !body["query"]
+            .as_str()
+            .expect("GraphQL document")
+            .contains("timelineItems")
+    );
+}
+
+#[tokio::test]
+async fn code_review_domain_requests_reject_an_accepted_mutation_that_records_nothing() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("../fixtures/pull_request.json"),
+        r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+    ])
+    .await;
+
+    let error = provider(uri)
+        .request_reviewers(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &[ReviewRequestTarget::User("alice".to_owned())],
+        )
+        .await
+        .expect_err("an unrecorded reviewer must fail confirmation");
+
+    assert!(matches!(
+        error,
+        ProviderError::External {
+            provider: "github",
+            operation: "request code reviewers",
+            ref message,
+        } if message == "GitHub did not record outstanding review requests for: user `alice`; confirmed outstanding review requests for: none"
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
+#[tokio::test]
+async fn code_review_domain_requests_report_the_confirmed_partial_result() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("../fixtures/pull_request.json"),
+        r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
+            {"id":"PRR_user","asCodeOwner":false,"requestedReviewer":{"__typename":"User","id":"U_alice","login":"alice"}}
+        ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+    ])
+    .await;
+
+    let error = provider(uri)
+        .request_reviewers(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &[
+                ReviewRequestTarget::Team("civitas-forge/maintainers".to_owned()),
+                ReviewRequestTarget::User("alice".to_owned()),
+                ReviewRequestTarget::Bot("review-bot".to_owned()),
+            ],
+        )
+        .await
+        .expect_err("a partial result must fail confirmation");
+
+    assert!(matches!(
+        error,
+        ProviderError::External {
+            provider: "github",
+            operation: "request code reviewers",
+            ref message,
+        } if message == "GitHub did not record outstanding review requests for: team `civitas-forge/maintainers`, bot `review-bot`; confirmed outstanding review requests for: user `alice`"
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
+#[tokio::test]
+async fn code_review_domain_requests_confirm_existing_targets_across_pages() {
+    let (uri, requests) = json_responses(vec![
+        include_str!("../fixtures/pull_request.json"),
+        r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
+            {"id":"PRR_bot","asCodeOwner":false,"requestedReviewer":{"__typename":"Bot","id":"B_review","login":"review-bot"}}
+        ],"pageInfo":{"hasNextPage":true,"endCursor":"request-page-1"}}}}}}"#,
+        r#"{"data":{"repository":{"pullRequest":{"reviewRequests":{"nodes":[
+            {"id":"PRR_team","asCodeOwner":false,"requestedReviewer":{"__typename":"Team","id":"T_maintainers","slug":"maintainers","name":"Maintainers","organization":{"login":"civitas-forge"}}}
+        ],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}}"#,
+    ])
+    .await;
+
+    provider(uri)
+        .request_reviewers(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &[
+                ReviewRequestTarget::Bot("review-bot[bot]".to_owned()),
+                ReviewRequestTarget::Team("civitas-forge/maintainers".to_owned()),
+            ],
+        )
+        .await
+        .expect("existing requests satisfy confirmation");
+
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 4);
+    for request in &requests[2..] {
+        assert_user_request(request, "POST /graphql ");
+        let (_, body) = request.split_once("\r\n\r\n").expect("request body");
+        let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+        let query = body["query"].as_str().expect("GraphQL document");
+        assert!(query.contains("reviewRequests"));
+        assert!(!query.contains("timelineItems"));
+    }
+    let (_, first_page) = requests[2].split_once("\r\n\r\n").expect("request body");
+    let first_page: serde_json::Value =
+        serde_json::from_str(first_page).expect("JSON request body");
+    assert_eq!(first_page["variables"]["cursor"], serde_json::Value::Null);
+    let (_, second_page) = requests[3].split_once("\r\n\r\n").expect("request body");
+    let second_page: serde_json::Value =
+        serde_json::from_str(second_page).expect("JSON request body");
+    assert_eq!(second_page["variables"]["cursor"], "request-page-1");
 }
 
 #[tokio::test]
