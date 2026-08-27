@@ -27,13 +27,11 @@ tracker
 code review
 
 : Read change requests by number or by the head ref they propose, together with
-their reviews, findings, standalone threads, unanchored comments and outstanding
-review requests; record finding resolutions and addressing severity, resolve
-threads, request reviewers, mark a change request ready and Read change
-requests, their mergeability, reviews, findings, standalone threads, unanchored
-comments, outstanding review requests and the checks recorded on a commit;
-record finding resolutions and addressing severity, resolve threads, request
-reviewers, mark a change request ready and publish check results.
+their reviews, findings, standalone threads, unanchored comments, outstanding
+review requests and checks; inspect the actual identity category at a
+review-request address when the provider supports that capability; record
+finding resolutions and addressing severity, resolve threads, request reviewers,
+mark a change request ready and publish check results.
 
 jobs
 
@@ -97,6 +95,14 @@ observation instead of keeping its own record of when it asked. The time is
 absent when the provider cannot match the request to a request event, either
 because the platform no longer names the target or because the event has left
 the retained history, and no provider fills it with a nearby time.
+
+`ReviewTargetsProvider` is an optional capability separate from
+`CodeReviewsProvider`. Its singular inspection reports whether one configured
+address resolves to the requested user, bot or team category, resolves to an
+identity of another category, or cannot be resolved with the current
+credentials. An unresolved address may be absent or merely invisible to those
+credentials. A matching inspection does not promise that the identity can be
+assigned to the repository or that a later review request will be delivered.
 
 Checks are read by commit rather than by change request. Each check carries its
 name, that commit, its status, the application that published it, its published

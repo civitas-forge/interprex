@@ -21,8 +21,10 @@ pub use identities::{
     ProviderApp, ProviderAppId, ReviewActor, ReviewActorId, ReviewActorKind, ReviewCommentId,
     ReviewId, ReviewRequestId, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
 };
-pub use provider::CodeReviewsProvider;
-pub use review_requests::{ReviewRequest, ReviewRequestTarget, ReviewTarget};
+pub use provider::{CodeReviewsProvider, ReviewTargetsProvider};
+pub use review_requests::{
+    ReviewRequest, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
+};
 pub use review_threads::{
     ReviewAnchor, ReviewComment, ReviewDiffSide, ReviewLine, ReviewLineRange, ReviewLocation,
     ReviewThread, ReviewThreadStatus,
