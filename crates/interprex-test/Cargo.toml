@@ -1,17 +1,22 @@
 [package]
 name = "interprex-test"
 description = "Stateful in-memory Interprex provider for consumer tests"
+categories = ["development-tools::testing"]
+documentation = "https://docs.rs/interprex-test"
 edition.workspace = true
+keywords = ["fake", "mock", "provider", "testing"]
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-publish = false
 
 [dependencies]
 async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
-interprex = { path = "../interprex" }
+interprex = { path = "../interprex", version = "2.0.1" }
 secrecy.workspace = true
 tokio.workspace = true
 

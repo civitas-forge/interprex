@@ -1,10 +1,15 @@
 [package]
 name = "interprex-github"
 description = "GitHub provider for all Interprex development-platform domains"
+categories = ["development-tools"]
+documentation = "https://docs.rs/interprex-github"
 edition.workspace = true
+keywords = ["code-review", "devops", "github", "provider", "workflow"]
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-publish = false
 
 [dependencies]
 async-trait.workspace = true
@@ -19,7 +24,7 @@ http-body-util.workspace = true
 jsonwebtoken.workspace = true
 octocrab.workspace = true
 percent-encoding.workspace = true
-interprex = { path = "../interprex" }
+interprex = { path = "../interprex", version = "2.0.1" }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true

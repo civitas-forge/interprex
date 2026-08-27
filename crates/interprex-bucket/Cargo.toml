@@ -1,10 +1,15 @@
 [package]
 name = "interprex-bucket"
 description = "Vendor-neutral object-store record client"
+categories = ["development-tools"]
+documentation = "https://docs.rs/interprex-bucket"
 edition.workspace = true
+keywords = ["blob", "gcs", "object-store", "storage"]
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
-publish = false
 
 [dependencies]
 
