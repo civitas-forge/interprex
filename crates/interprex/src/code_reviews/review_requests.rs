@@ -25,6 +25,60 @@ pub enum ReviewRequestTarget {
     Team(String),
 }
 
+/// What a provider can currently observe at one review-request address.
+///
+/// A matching result confirms only that the address resolves to the requested
+/// category of actor or team. It does not establish that the identity can be
+/// assigned to a particular change request, that an application is installed,
+/// or that a later review request will be delivered.
+///
+/// [`Self::NotResolvable`] means the target was not found or was not visible
+/// to the credentials used for the inspection. It is not proof that the target
+/// does not exist.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewRequestTargetInspection {
+    Matching(ReviewTarget),
+    KindMismatch(ReviewTarget),
+    NotResolvable,
+}
+
+impl ReviewRequestTargetInspection {
+    /// Classifies a provider observation against the category the caller
+    /// requested.
+    ///
+    /// Providers pass through the identity and category they observed. This
+    /// constructor owns the matching rules so adapters never infer an actor
+    /// category from [`ReviewRequestTarget`].
+    #[must_use]
+    pub fn from_observation(requested: &ReviewRequestTarget, observed: ReviewTarget) -> Self {
+        let matching = match (requested, &observed) {
+            (
+                ReviewRequestTarget::User(_),
+                ReviewTarget::Actor(ReviewActor {
+                    kind: super::ReviewActorKind::User | super::ReviewActorKind::EnterpriseUser,
+                    ..
+                }),
+            )
+            | (
+                ReviewRequestTarget::Bot(_),
+                ReviewTarget::Actor(ReviewActor {
+                    kind: super::ReviewActorKind::Bot,
+                    ..
+                }),
+            )
+            | (ReviewRequestTarget::Team(_), ReviewTarget::Team(_)) => true,
+            (_, ReviewTarget::Unavailable) => return Self::NotResolvable,
+            _ => false,
+        };
+        if matching {
+            Self::Matching(observed)
+        } else {
+            Self::KindMismatch(observed)
+        }
+    }
+}
+
 /// One outstanding request, including one whose target became unavailable.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReviewRequest {
@@ -59,7 +113,107 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::{ReviewTeamId, ReviewTeamKind};
+    use crate::{ReviewActorId, ReviewActorKind, ReviewTeamId, ReviewTeamKind};
+
+    fn actor(kind: ReviewActorKind) -> ReviewTarget {
+        ReviewTarget::Actor(ReviewActor {
+            id: ReviewActorId::new("actor").expect("actor id"),
+            login: "reviewer".to_owned(),
+            kind,
+        })
+    }
+
+    #[test]
+    fn inspection_classifies_actual_actor_kinds() {
+        for kind in [ReviewActorKind::User, ReviewActorKind::EnterpriseUser] {
+            let observed = actor(kind);
+            assert_eq!(
+                ReviewRequestTargetInspection::from_observation(
+                    &ReviewRequestTarget::User("reviewer".to_owned()),
+                    observed.clone(),
+                ),
+                ReviewRequestTargetInspection::Matching(observed)
+            );
+        }
+
+        for kind in [
+            ReviewActorKind::Bot,
+            ReviewActorKind::Placeholder,
+            ReviewActorKind::Organization,
+        ] {
+            let observed = actor(kind);
+            assert_eq!(
+                ReviewRequestTargetInspection::from_observation(
+                    &ReviewRequestTarget::User("reviewer".to_owned()),
+                    observed.clone(),
+                ),
+                ReviewRequestTargetInspection::KindMismatch(observed)
+            );
+        }
+
+        let bot = actor(ReviewActorKind::Bot);
+        assert_eq!(
+            ReviewRequestTargetInspection::from_observation(
+                &ReviewRequestTarget::Bot("reviewer".to_owned()),
+                bot.clone(),
+            ),
+            ReviewRequestTargetInspection::Matching(bot)
+        );
+        for kind in [
+            ReviewActorKind::User,
+            ReviewActorKind::EnterpriseUser,
+            ReviewActorKind::Placeholder,
+            ReviewActorKind::Organization,
+        ] {
+            let observed = actor(kind);
+            assert_eq!(
+                ReviewRequestTargetInspection::from_observation(
+                    &ReviewRequestTarget::Bot("reviewer".to_owned()),
+                    observed.clone(),
+                ),
+                ReviewRequestTargetInspection::KindMismatch(observed)
+            );
+        }
+    }
+
+    #[test]
+    fn inspection_classifies_actor_team_and_unavailable_boundaries() {
+        let team = ReviewTarget::Team(ReviewTeam {
+            id: ReviewTeamId::new("team").expect("team id"),
+            slug: "maintainers".to_owned(),
+            name: "Maintainers".to_owned(),
+            kind: ReviewTeamKind::Organization,
+        });
+        assert_eq!(
+            ReviewRequestTargetInspection::from_observation(
+                &ReviewRequestTarget::Team("example/maintainers".to_owned()),
+                team.clone(),
+            ),
+            ReviewRequestTargetInspection::Matching(team.clone())
+        );
+        assert_eq!(
+            ReviewRequestTargetInspection::from_observation(
+                &ReviewRequestTarget::Bot("maintainers".to_owned()),
+                team.clone(),
+            ),
+            ReviewRequestTargetInspection::KindMismatch(team)
+        );
+        let user = actor(ReviewActorKind::User);
+        assert_eq!(
+            ReviewRequestTargetInspection::from_observation(
+                &ReviewRequestTarget::Team("example/maintainers".to_owned()),
+                user.clone(),
+            ),
+            ReviewRequestTargetInspection::KindMismatch(user)
+        );
+        assert_eq!(
+            ReviewRequestTargetInspection::from_observation(
+                &ReviewRequestTarget::Team("example/maintainers".to_owned()),
+                ReviewTarget::Unavailable,
+            ),
+            ReviewRequestTargetInspection::NotResolvable
+        );
+    }
 
     #[test]
     fn observed_target_kind_and_request_address_are_independent() {

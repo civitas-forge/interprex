@@ -3,13 +3,187 @@ use std::time::Duration;
 use interprex::{
     ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckStatus,
     CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionReply,
-    FindingSeverity, Mergeability, ProviderError, Repository, ReviewRequestTarget, ReviewThreadId,
+    FindingSeverity, Mergeability, ProviderError, Repository, ReviewActorKind, ReviewRequestTarget,
+    ReviewRequestTargetInspection, ReviewTarget, ReviewTargetsProvider, ReviewTeamKind,
+    ReviewThreadId,
 };
 use tokio::time::timeout;
 
 use super::http_fixture::{
     assert_user_request, json_responses, provider, repository, rest_filtered_pages, server,
+    status_json_responses,
 };
+
+const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+
+#[tokio::test]
+async fn review_target_inspection_finds_a_bot_after_the_user_spelling_is_missing() {
+    let (uri, requests) = status_json_responses(vec![
+        ("404 Not Found", NOT_FOUND),
+        (
+            "200 OK",
+            r#"{"node_id":"BOT_review","login":"review-bot[bot]","type":"Bot"}"#,
+        ),
+    ])
+    .await;
+
+    let inspection = provider(uri)
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::User("review-bot".to_owned()),
+        )
+        .await
+        .expect("target inspection");
+
+    assert!(matches!(
+        inspection,
+        ReviewRequestTargetInspection::KindMismatch(ReviewTarget::Actor(actor))
+            if actor.login == "review-bot[bot]" && actor.kind == ReviewActorKind::Bot
+    ));
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(&requests[0], "GET /users/review%2Dbot ");
+    assert_user_request(&requests[1], "GET /users/review%2Dbot%5Bbot%5D ");
+}
+
+#[tokio::test]
+async fn user_inspection_stops_when_the_exact_spelling_exists() {
+    let (uri, requests) = status_json_responses(vec![(
+        "200 OK",
+        r#"{"node_id":"U_review","login":"review-bot","type":"User"}"#,
+    )])
+    .await;
+
+    let inspection = provider(uri)
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::User("review-bot".to_owned()),
+        )
+        .await
+        .expect("target inspection");
+
+    assert!(matches!(
+        inspection,
+        ReviewRequestTargetInspection::Matching(ReviewTarget::Actor(actor))
+            if actor.login == "review-bot" && actor.kind == ReviewActorKind::User
+    ));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 1);
+    assert_user_request(&requests[0], "GET /users/review%2Dbot ");
+}
+
+#[tokio::test]
+async fn bot_inspection_prefers_the_canonical_suffix() {
+    let (uri, requests) = status_json_responses(vec![(
+        "200 OK",
+        r#"{"node_id":"BOT_review","login":"review-bot[bot]","type":"Bot"}"#,
+    )])
+    .await;
+
+    let inspection = provider(uri)
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::Bot("review-bot".to_owned()),
+        )
+        .await
+        .expect("target inspection");
+
+    assert!(matches!(
+        inspection,
+        ReviewRequestTargetInspection::Matching(ReviewTarget::Actor(actor))
+            if actor.kind == ReviewActorKind::Bot
+    ));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 1);
+    assert_user_request(&requests[0], "GET /users/review%2Dbot%5Bbot%5D ");
+}
+
+#[tokio::test]
+async fn review_target_inspection_distinguishes_unresolvable_from_operational_failure() {
+    let (missing_uri, missing_requests) = status_json_responses(vec![
+        ("404 Not Found", NOT_FOUND),
+        ("404 Not Found", NOT_FOUND),
+    ])
+    .await;
+    assert_eq!(
+        provider(missing_uri)
+            .inspect_review_request_target(
+                &repository(),
+                &ReviewRequestTarget::User("unknown".to_owned()),
+            )
+            .await
+            .expect("missing is an inspection outcome"),
+        ReviewRequestTargetInspection::NotResolvable
+    );
+    assert_eq!(missing_requests.await.expect("captured requests").len(), 2);
+
+    let (failure_uri, failure_requests) = status_json_responses(vec![(
+        "500 Internal Server Error",
+        r#"{"message":"service unavailable","documentation_url":"https://docs.github.test"}"#,
+    )])
+    .await;
+    let error = provider(failure_uri)
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::User("unknown".to_owned()),
+        )
+        .await
+        .expect_err("operational failure remains an error");
+    assert!(matches!(
+        error,
+        ProviderError::External {
+            provider: "github",
+            operation: "inspect review request target",
+            ..
+        }
+    ));
+    assert_eq!(
+        failure_requests.await.expect("captured requests").len(),
+        1,
+        "a non-404 failure must stop fallback lookup"
+    );
+}
+
+#[tokio::test]
+async fn review_target_inspection_normalizes_organization_teams() {
+    let (uri, requests) = status_json_responses(vec![(
+        "200 OK",
+        r#"{"node_id":"T_maintainers","slug":"maintainers","name":"Maintainers"}"#,
+    )])
+    .await;
+    let inspection = provider(uri)
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::Team("civitas-forge/maintainers".to_owned()),
+        )
+        .await
+        .expect("team inspection");
+    assert!(matches!(
+        inspection,
+        ReviewRequestTargetInspection::Matching(ReviewTarget::Team(team))
+            if team.id.as_str() == "T_maintainers"
+                && team.slug == "maintainers"
+                && team.name == "Maintainers"
+                && team.kind == ReviewTeamKind::Organization
+    ));
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(&requests[0], "GET /orgs/civitas%2Dforge/teams/maintainers ");
+}
+
+#[tokio::test]
+async fn review_target_inspection_rejects_a_malformed_team_before_transport() {
+    let error = provider("http://127.0.0.1:1".to_owned())
+        .inspect_review_request_target(
+            &repository(),
+            &ReviewRequestTarget::Team("maintainers".to_owned()),
+        )
+        .await
+        .expect_err("malformed team address");
+    assert!(matches!(
+        error,
+        ProviderError::InvalidInput { provider: "github", ref fact }
+            if fact.contains("organization/team-slug")
+    ));
+}
 
 #[tokio::test]
 async fn code_review_domain_lists_open_change_requests_for_a_fork_head_across_pages() {

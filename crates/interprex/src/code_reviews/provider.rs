@@ -2,7 +2,8 @@ use async_trait::async_trait;
 
 use super::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
-    FindingResolution, FindingResolutionReply, ReviewRequestTarget, ReviewThreadId,
+    FindingResolution, FindingResolutionReply, ReviewRequestTarget, ReviewRequestTargetInspection,
+    ReviewThreadId,
 };
 use crate::{Repository, Result};
 
@@ -113,4 +114,26 @@ pub trait CodeReviewsProvider: Send + Sync {
         app_name: &str,
         outcome: &CheckOutcome,
     ) -> Result<()>;
+}
+
+/// Optional provider capability for inspecting review-request targets.
+///
+/// This trait is separate from [`CodeReviewsProvider`] so providers that
+/// cannot inspect target identities do not advertise the operation and
+/// existing implementations remain source compatible.
+#[async_trait]
+pub trait ReviewTargetsProvider: Send + Sync {
+    /// Inspects one target using the credentials and provider context for
+    /// `repository`.
+    ///
+    /// The result reports the identity and category the provider actually
+    /// observed. A matching result is not an assignability check and does not
+    /// promise that a later request will be recorded or delivered. Callers
+    /// that need to validate several targets can inspect them individually
+    /// before persisting any of them.
+    async fn inspect_review_request_target(
+        &self,
+        repository: &Repository,
+        target: &ReviewRequestTarget,
+    ) -> Result<ReviewRequestTargetInspection>;
 }

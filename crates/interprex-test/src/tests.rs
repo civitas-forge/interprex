@@ -8,8 +8,9 @@ use interprex::{
     ProviderAppId, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
     RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
     ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewState,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget,
+    ReviewRequestTargetInspection, ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
 };
 
 use crate::FakeProvider;
@@ -195,6 +196,40 @@ async fn consumer_observes_changes_through_the_same_contract() {
             .iter()
             .all(|id| !other_repository_ids.contains(id)),
         "fake review request ids must be scoped to their repository"
+    );
+}
+
+#[tokio::test]
+async fn consumer_inspects_only_explicitly_seeded_review_targets() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let configured = ReviewRequestTarget::User("review-bot".to_owned());
+    let observed = ReviewTarget::Actor(ReviewActor {
+        id: ReviewActorId::new("actor-review-bot").expect("actor id"),
+        login: "review-bot[bot]".to_owned(),
+        kind: ReviewActorKind::Bot,
+    });
+    provider
+        .seed_review_request_target(repository.clone(), configured.clone(), observed.clone())
+        .await;
+
+    assert_eq!(
+        provider
+            .inspect_review_request_target(&repository, &configured)
+            .await
+            .expect("seeded target inspection"),
+        ReviewRequestTargetInspection::KindMismatch(observed)
+    );
+    assert_eq!(
+        provider
+            .inspect_review_request_target(
+                &repository,
+                &ReviewRequestTarget::Bot("review-bot".to_owned()),
+            )
+            .await
+            .expect("unseeded target inspection"),
+        ReviewRequestTargetInspection::NotResolvable,
+        "the fake must not invent a bot observation from a bot request target"
     );
 }
 

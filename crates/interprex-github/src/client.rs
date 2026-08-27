@@ -172,16 +172,20 @@ pub(crate) fn read_error(
     entity: impl Into<String>,
     error: octocrab::Error,
 ) -> ProviderError {
-    if matches!(
-        &error,
-        octocrab::Error::GitHub { source, .. } if source.status_code.as_u16() == 404
-    ) {
+    if is_not_found(&error) {
         ProviderError::NotFound {
             entity: entity.into(),
         }
     } else {
         external(operation, error)
     }
+}
+
+pub(crate) fn is_not_found(error: &octocrab::Error) -> bool {
+    matches!(
+        error,
+        octocrab::Error::GitHub { source, .. } if source.status_code.as_u16() == 404
+    )
 }
 
 #[cfg(test)]

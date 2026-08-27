@@ -7,7 +7,7 @@ use bytes::Bytes;
 use interprex::{
     AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
     IssueNumber, Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
-    Ruleset, RunId, WorkflowRun,
+    ReviewRequestTarget, ReviewTarget, Ruleset, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -24,6 +24,7 @@ pub(crate) struct State {
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
+    pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
     pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
@@ -67,6 +68,29 @@ impl FakeProvider {
             .await
             .change_requests
             .insert((repository, change_request.number), change_request);
+    }
+
+    /// Seeds the provider observation returned for one review-request target.
+    ///
+    /// The target category is part of the lookup key while `observed` supplies
+    /// the actual actor or team category. Keeping them separate lets tests
+    /// model a request target that resolves to the wrong kind without the fake
+    /// inferring identity facts from the requested enum variant.
+    pub async fn seed_review_request_target(
+        &self,
+        repository: Repository,
+        target: ReviewRequestTarget,
+        observed: ReviewTarget,
+    ) {
+        let mut state = self.state.write().await;
+        state
+            .review_target_observations
+            .retain(|(seeded_repository, seeded_target, _)| {
+                seeded_repository != &repository || seeded_target != &target
+            });
+        state
+            .review_target_observations
+            .push((repository, target, observed));
     }
 
     /// Seeds observed checks, each on the commit it names, replacing whatever

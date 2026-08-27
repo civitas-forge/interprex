@@ -17,7 +17,8 @@ use async_trait::async_trait;
 use interprex::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
     CodeReviewsProvider, FindingResolution, FindingResolutionRecord, FindingResolutionReply,
-    ProviderError, Repository, Result, ReviewRequestTarget, ReviewThreadId, ReviewThreadStatus,
+    ProviderError, Repository, Result, ReviewRequestTarget, ReviewRequestTargetInspection,
+    ReviewTargetsProvider, ReviewThreadId, ReviewThreadStatus,
 };
 use octocrab::Page;
 use serde::Deserialize;
@@ -31,6 +32,7 @@ mod checks;
 mod finding_resolutions;
 mod review_requests;
 mod review_threads;
+mod target_inspections;
 
 use change_requests::{
     GithubPullRequestNumber, head_filter, normalize_change_request, number, observed_head,
@@ -372,6 +374,17 @@ impl CodeReviewsProvider for GithubProvider {
             .await
             .map_err(|error| external("publish change request check", error))?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ReviewTargetsProvider for GithubProvider {
+    async fn inspect_review_request_target(
+        &self,
+        repository: &Repository,
+        target: &ReviewRequestTarget,
+    ) -> Result<ReviewRequestTargetInspection> {
+        self.github_review_request_target(repository, target).await
     }
 }
 

@@ -33,8 +33,8 @@ Glossary
     code review:
         The domain that acts on change requests so merging can be approved.
         It covers mergeability, reviews, findings, standalone threads,
-        unanchored comments, review requests, the checks on a commit and
-        published check results.
+        unanchored comments, review requests, review-request target inspection,
+        the checks on a commit and published check results.
     review:
         One provider review record acting on a change request: its author,
         the provider application that produced it when known, reviewed head

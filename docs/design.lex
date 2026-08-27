@@ -6,7 +6,7 @@ Design
 
 1. Shape
 
-    `interprex` defines provider-neutral values and five domain interfaces. It depends on no provider. `interprex-github` implements those interfaces with GitHub REST and GraphQL. GitHub identifiers and response types remain private to that crate. `interprex-test` implements the same interfaces with state held in memory so consumer rules use the public interface without a network or third-party account.
+    `interprex` defines provider-neutral values for five domains and asynchronous provider traits. It depends on no provider. `interprex-github` implements those traits with GitHub REST and GraphQL. GitHub identifiers and response types remain private to that crate. `interprex-test` implements the same traits with state held in memory so consumer rules use the public interface without a network or third-party account.
 
     `interprex-bucket` is independent from the development-platform crates. It provides create-only records over an injected `ObjectStore`; its guaranteed behavior is [./contracts/records.lex].
 
@@ -14,7 +14,7 @@ Design
 
 2. Domains
 
-    The five domain interfaces can use different providers in one process. Selection of a tracker provider does not select the code-review or jobs provider.
+    The five domains can use different providers in one process. Selection of a tracker provider does not select the code-review or jobs provider.
 
     `ProviderSelections::from_lookup` reads each selection independently from `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`, `INTERPREX_CODE_REVIEWS_PROVIDER`, `INTERPREX_JOBS_PROVIDER` and `INTERPREX_RELEASES_PROVIDER`. An unset or blank selection defaults to `github`. These selections name providers; callers still construct the corresponding implementations.
 
@@ -23,7 +23,7 @@ Design
     Tracker:
         Issues and labels.
     Code Review:
-        Change requests, their mergeability, reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, the checks on a commit, published check results and the draft-to-ready transition.
+        Change requests, their mergeability, reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, review-request target inspection, the checks on a commit, published check results and the draft-to-ready transition.
     Jobs:
         Dispatch, run observation and cancellation.
     Releases:
@@ -107,6 +107,8 @@ Design
     GitHub stores the canonical finding resolution in a versioned JSON envelope inside an HTML comment in the reply body. The same reply shows text labels and a severity badge for people reading the thread. The badge is redundant presentation: the adapter never fetches or interprets its image URL. GitHub currently has no generally applicable field that both accepts and returns a finding resolution. The adapter reads a terminal metadata envelope from raw reply bodies. Malformed envelopes are ordinary text. An unsupported newer version stops fallback to an older record, and the current adapter refuses to write over that newer format.
 
     Outstanding review requests preserve their actor or team target, the provider address that can request that target again when available, and whether GitHub requested the target as a code owner. The address is not inferred from actor or team category: an observed organization team may lack an address, while an enterprise team may have one on another provider. Unavailable targets remain present. A request describes current state and is not proof that a review exists.
+
+    Providers may implement `ReviewTargetsProvider` to inspect what one `ReviewRequestTarget` names before a caller requests a review. `CodeReviewsProvider::request_reviewers` separately writes that request and confirms it in the observed outstanding reviewer set.
 
     After GitHub accepts `requestReviewsByLogin`, the adapter reads the outstanding `reviewRequests` collection, completely paginated, and returns success only when it observes every supplied target. It does not read timeline events for this confirmation because those events do not determine the current outstanding set. A target that was already outstanding satisfies the confirmation. If GitHub records only some targets, the adapter returns an external-operation error naming the missing inputs and the confirmed inputs; GitHub retains the requests it recorded. This observation is not a transaction with the mutation, so a target removed before the confirmation read is reported as missing, and a target can be removed after a successful return.
 

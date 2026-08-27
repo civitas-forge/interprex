@@ -4,8 +4,8 @@ use interprex::{
     CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
     FindingResolutionReply, ProviderError, Repository, Result, ReviewActor, ReviewActorId,
     ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewTarget, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
-    ReviewThreadStatus,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget, ReviewTargetsProvider,
+    ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -234,6 +234,31 @@ impl CodeReviewsProvider for FakeProvider {
             outcome.clone(),
         ));
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ReviewTargetsProvider for FakeProvider {
+    async fn inspect_review_request_target(
+        &self,
+        repository: &Repository,
+        target: &ReviewRequestTarget,
+    ) -> Result<ReviewRequestTargetInspection> {
+        Ok(self
+            .state
+            .read()
+            .await
+            .review_target_observations
+            .iter()
+            .find(|(seeded_repository, seeded_target, _)| {
+                seeded_repository == repository && seeded_target == target
+            })
+            .map_or(
+                ReviewRequestTargetInspection::NotResolvable,
+                |(_, _, observed)| {
+                    ReviewRequestTargetInspection::from_observation(target, observed.clone())
+                },
+            ))
     }
 }
 
