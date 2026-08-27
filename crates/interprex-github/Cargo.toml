@@ -24,7 +24,7 @@ http-body-util.workspace = true
 jsonwebtoken.workspace = true
 octocrab.workspace = true
 percent-encoding.workspace = true
-interprex = { path = "../interprex", version = "2.0.1" }
+interprex = { path = "../interprex", version = "2.1.0" }
 secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
