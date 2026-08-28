@@ -66,14 +66,18 @@ pub trait CodeReviewsProvider: Send + Sync {
         resolution: FindingResolution,
         reply: &FindingResolutionReply,
     ) -> Result<()>;
-    /// Requests each target and then confirms that every target appears in a
-    /// current observation of the outstanding reviewer set.
+    /// Asks the platform to add each target to the outstanding reviewer set.
     ///
     /// A target already present remains one request, so repeating the same call
-    /// reaches the same observable state. An error can follow a partial write;
-    /// targets the provider did record remain outstanding. Success confirms
-    /// only the post-request observation: it does not guarantee that a target
-    /// remains outstanding after that observation.
+    /// reaches the same observable state.
+    ///
+    /// Success reports the platform's acceptance, nothing more: a platform can
+    /// accept a request and record nothing, as GitHub does for a bot it cannot
+    /// assign. Whether a request stands recorded is a fact of the outstanding
+    /// reviewer set, read through [`Self::change_request`]; what a target
+    /// names is answered before requesting by
+    /// [`ReviewTargetsProvider::inspect_review_request_target`], where a
+    /// provider offers it.
     async fn request_reviewers(
         &self,
         repository: &Repository,
