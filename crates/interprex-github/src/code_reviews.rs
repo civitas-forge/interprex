@@ -299,37 +299,7 @@ impl CodeReviewsProvider for GithubProvider {
             }))
             .await
             .map_err(|error| external("request code reviewers", error))?;
-        let outstanding = self.github_review_requests(repository, number).await?;
-        let (confirmed, missing): (Vec<_>, Vec<_>) = reviewers.iter().partition(|target| {
-            outstanding
-                .iter()
-                .any(|request| request.matches_request_target(target))
-        });
-        if missing.is_empty() {
-            Ok(())
-        } else {
-            let missing = missing
-                .into_iter()
-                .map(review_request_target_label)
-                .collect::<Vec<_>>()
-                .join(", ");
-            let confirmed = if confirmed.is_empty() {
-                "none".to_owned()
-            } else {
-                confirmed
-                    .into_iter()
-                    .map(review_request_target_label)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            Err(ProviderError::External {
-                provider: "github",
-                operation: "request code reviewers",
-                message: format!(
-                    "GitHub did not record outstanding review requests for: {missing}; confirmed outstanding review requests for: {confirmed}"
-                ),
-            })
-        }
+        Ok(())
     }
 
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()> {
@@ -385,13 +355,5 @@ impl ReviewTargetsProvider for GithubProvider {
         target: &ReviewRequestTarget,
     ) -> Result<ReviewRequestTargetInspection> {
         self.github_review_request_target(repository, target).await
-    }
-}
-
-fn review_request_target_label(target: &ReviewRequestTarget) -> String {
-    match target {
-        ReviewRequestTarget::User(login) => format!("user `{login}`"),
-        ReviewRequestTarget::Bot(login) => format!("bot `{login}`"),
-        ReviewRequestTarget::Team(identifier) => format!("team `{identifier}`"),
     }
 }
