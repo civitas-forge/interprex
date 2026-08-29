@@ -1,5 +1,13 @@
 # Changelog
 
+## 4.0.1
+
+### Changed
+
+- `interprex-github` now signs GitHub App JWTs with Octocrab's AWS-LC backend,
+  removing the advised `rsa` crate from its dependency graph. Public APIs and
+  the `.interprex.toml` App credential format are unchanged.
+
 ## 4.0.0
 
 ### Breaking change
