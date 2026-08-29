@@ -141,6 +141,23 @@ async fn consumer_observes_and_requests_only_an_exact_seeded_branch_update() {
 }
 
 #[tokio::test]
+async fn fake_branch_update_rejects_an_empty_expected_head_before_lookup() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+
+    assert!(matches!(
+        provider
+            .update_change_request_branch(&repository, number, "")
+            .await,
+        Err(BranchUpdateError::Provider(ProviderError::InvalidInput {
+            provider: "fake",
+            ..
+        }))
+    ));
+}
+
+#[tokio::test]
 async fn branch_update_fixture_is_scoped_to_repository_and_change_request() {
     let provider = FakeProvider::new();
     let repository = Repository::new("civitas-forge", "sandbox").expect("repository");

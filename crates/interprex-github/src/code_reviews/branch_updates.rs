@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::{
     GithubProvider,
-    client::{authenticated_external, read_error},
+    client::{authenticated_external, is_not_found, read_error},
 };
 
 #[derive(Deserialize)]
@@ -24,7 +24,20 @@ struct GithubComparison {
     status: String,
 }
 
-fn update_requirement(rules: &[GithubBranchRule]) -> Result<BranchUpdateRequirement> {
+#[derive(Deserialize)]
+struct GithubBranchProtection {
+    required_status_checks: Option<GithubRequiredStatusChecks>,
+}
+
+#[derive(Deserialize)]
+struct GithubRequiredStatusChecks {
+    strict: bool,
+}
+
+fn update_requirement(
+    rules: &[GithubBranchRule],
+    classic_protection: Option<&GithubBranchProtection>,
+) -> Result<BranchUpdateRequirement> {
     for rule in rules
         .iter()
         .filter(|rule| rule.kind == "required_status_checks")
@@ -53,6 +66,12 @@ fn update_requirement(rules: &[GithubBranchRule]) -> Result<BranchUpdateRequirem
         if strict && !checks.is_empty() {
             return Ok(BranchUpdateRequirement::Required);
         }
+    }
+    if classic_protection
+        .and_then(|protection| protection.required_status_checks.as_ref())
+        .is_some_and(|checks| checks.strict)
+    {
+        return Ok(BranchUpdateRequirement::Required);
     }
     Ok(BranchUpdateRequirement::NotRequired)
 }
@@ -107,6 +126,27 @@ impl BranchUpdatesProvider for GithubProvider {
                     error,
                 )
             })?;
+        let classic_protection: Option<GithubBranchProtection> = match self
+            .user()?
+            .get(
+                format!("/repos/{repository}/branches/{base_branch}/protection"),
+                None::<&()>,
+            )
+            .await
+        {
+            Ok(protection) => Some(protection),
+            Err(error) if is_not_found(&error) => None,
+            Err(error) => {
+                return Err(read_error(
+                    "read classic branch protection",
+                    format!(
+                        "classic protection for {} in {repository}",
+                        pull_request.base.branch
+                    ),
+                    error,
+                ));
+            }
+        };
         let comparison: GithubComparison = self
             .user()?
             .get(
@@ -133,7 +173,7 @@ impl BranchUpdatesProvider for GithubProvider {
                 base_sha: pull_request.base.sha,
                 head_sha: pull_request.head.sha,
             },
-            requirement: update_requirement(&rules)?,
+            requirement: update_requirement(&rules, classic_protection.as_ref())?,
             freshness: freshness(&comparison.status)?,
         })
     }
@@ -170,12 +210,12 @@ impl BranchUpdatesProvider for GithubProvider {
             Ok(_) => Ok(()),
             Err(error) => {
                 let failure = authenticated_external("update change request branch", &error);
-                let current = self.github_pull_request(repository, number).await?;
-                if current.head.sha != expected_head_sha {
-                    Err(stale_head(expected_head_sha, &current.head.sha))
-                } else {
-                    Err(failure.into())
+                if let Ok(current) = self.github_pull_request(repository, number).await
+                    && current.head.sha != expected_head_sha
+                {
+                    return Err(stale_head(expected_head_sha, &current.head.sha));
                 }
+                Err(failure.into())
             }
         }
     }
@@ -192,7 +232,7 @@ mod tests {
             parameters: Some(json!({"required_status_checks": []})),
         }];
         assert!(matches!(
-            update_requirement(&rules),
+            update_requirement(&rules, None),
             Err(ProviderError::Unrepresentable { .. })
         ));
     }

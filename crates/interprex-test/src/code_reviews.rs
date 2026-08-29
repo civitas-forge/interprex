@@ -40,6 +40,13 @@ impl BranchUpdatesProvider for FakeProvider {
         number: ChangeRequestNumber,
         expected_head_sha: &str,
     ) -> std::result::Result<(), BranchUpdateError> {
+        if expected_head_sha.is_empty() {
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: "expected change-request head must not be empty".to_owned(),
+            }
+            .into());
+        }
         let mut state = self.state.write().await;
         let observation = state
             .branch_updates

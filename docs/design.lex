@@ -60,7 +60,7 @@ Design
 
     `BranchUpdatesProvider` observes whether an applicable provider rule requires the head to contain the target-branch tip and whether the observed head does contain it. The observation retains the base and head revisions used for the comparison. Requirement, freshness and mergeability remain separate: a mergeable head can be behind without an applicable rule requiring an update. The caller decides whether and when to update.
 
-    A branch update names the exact observed head. The provider refuses a stale observation instead of applying the request to a newer head. GitHub reads the active rules that apply to the target branch, compares the observed base and head commits, and uses its native branch-update operation with the expected head.
+    A branch update names the exact observed head. The provider refuses a stale observation instead of applying the request to a newer head. GitHub reads both the active rules and classic branch protection for the target branch; either mechanism can require the head to contain the target-branch tip. It compares the observed base and head commits, then uses its native branch-update operation with the expected head.
 
     `CodeReviewsProvider::checks` reads the current checks on one commit, completely paginated. A caller reads them for whichever commit it cares about, usually the change request's current head. The request sends GitHub's `filter=latest` explicitly, which scopes the answer to the current run of each check within each check suite. A rerun inside a suite replaces the run it repeated, so no superseded run is reported and a caller that wants the earlier runs cannot get them here.
 
