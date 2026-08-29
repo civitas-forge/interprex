@@ -101,7 +101,10 @@ already selected for the target branch, combines them with classic branch
 protection, and answers checks from both check runs and legacy commit statuses
 at the stated head. An application-specific requirement accepts only a check run
 from that GitHub App; when a same-name commit status also exists, both native
-mechanisms must succeed.
+mechanisms must succeed. GitHub check contexts are matched case-insensitively
+when they contain only ASCII; a non-ASCII required or reported context is
+unrepresentable because GitHub does not define the Unicode case-folding behavior
+clients must reproduce.
 
 `BranchUpdatesProvider` reports whether the observed head contains the observed
 target-branch tip. Its observation retains the exact base and head revisions

@@ -98,7 +98,12 @@ fn check_run(
     conclusion: Option<&str>,
     app_id: Option<u64>,
 ) -> serde_json::Value {
+    let suite_id = app_id.unwrap_or(1);
+    let run_id = name.bytes().fold(suite_id * 10_000 + 1, |value, byte| {
+        value.wrapping_mul(16_777_619).wrapping_add(u64::from(byte))
+    });
     serde_json::json!({
+        "id": run_id,
         "name": name,
         "head_sha": HEAD_SHA,
         "status": status,
@@ -108,8 +113,17 @@ fn check_run(
             "id": id,
             "slug": format!("app-{id}"),
             "name": format!("App {id}")
-        }))
+        })),
+        "check_suite": {"id": suite_id}
     })
+}
+
+fn check_suites(ids: &[u64], total: usize) -> String {
+    let suites = ids
+        .iter()
+        .map(|id| serde_json::json!({"id": id, "head_sha": HEAD_SHA}))
+        .collect::<Vec<_>>();
+    serde_json::json!({"total_count": total, "check_suites": suites}).to_string()
 }
 
 fn check_runs(runs: Vec<serde_json::Value>, total: usize) -> String {
@@ -722,16 +736,20 @@ async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
         },
         "required_pull_request_reviews": {"required_approving_review_count": 4}
     });
-    let runs = vec![
-        check_run("quality", "completed", Some("success"), Some(42)),
+    let app_42_runs = vec![check_run("quality", "completed", Some("success"), Some(42))];
+    let unowned_runs = vec![
         check_run("dual", "completed", Some("success"), Some(7)),
         check_run("neutral", "completed", Some("neutral"), Some(7)),
         check_run("skipped", "completed", Some("skipped"), Some(7)),
         check_run("pending", "in_progress", None, Some(7)),
         check_run("failed", "completed", Some("failure"), Some(7)),
-        check_run("app-bound", "completed", Some("success"), Some(98)),
     ];
-    let run_count = runs.len();
+    let app_98_runs = vec![check_run(
+        "app-bound",
+        "completed",
+        Some("success"),
+        Some(98),
+    )];
     let statuses = vec![
         ("legacy", "success"),
         ("dual", "failure"),
@@ -743,7 +761,10 @@ async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
         ScriptedResponse::json(branch("release/v1", BASE_SHA)),
         ScriptedResponse::json(rules.to_string()),
         ScriptedResponse::json(classic.to_string()),
-        ScriptedResponse::json(check_runs(runs, run_count)),
+        ScriptedResponse::json(check_suites(&[42, 7, 98], 3)),
+        ScriptedResponse::json(check_runs(app_42_runs, 1)),
+        ScriptedResponse::json(check_runs(unowned_runs, 5)),
+        ScriptedResponse::json(check_runs(app_98_runs, 1)),
         ScriptedResponse::json(combined_statuses(statuses, status_count)),
         ScriptedResponse::json(branch("release/v1", BASE_SHA)),
     ])
@@ -791,7 +812,7 @@ async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
     );
 
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 9);
     assert_user_request(
         &requests[0],
         "GET /repos/civitas-forge/interprex-sandbox/branches/release%2Fv1 ",
@@ -807,11 +828,23 @@ async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
     assert_user_request(
         &requests[3],
         &format!(
-            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/check-runs?per_page=100&page=1&filter=latest "
+            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/check-suites?per_page=100&page=1 "
         ),
     );
     assert_user_request(
         &requests[4],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/42/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[5],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/7/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[6],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/98/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[7],
         &format!(
             "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/status?per_page=100&page=1 "
         ),
@@ -826,7 +859,7 @@ async fn applied_branch_endpoint_is_the_authority_for_excluded_rulesets() {
         // conditions. An include-all ruleset excluded for `main` is absent.
         ScriptedResponse::json("[]"),
         no_classic_protection(),
-        ScriptedResponse::json(check_runs(Vec::new(), 0)),
+        ScriptedResponse::json(check_suites(&[], 0)),
         ScriptedResponse::json(combined_statuses(Vec::new(), 0)),
         ScriptedResponse::json(branch("main", BASE_SHA)),
     ])
@@ -851,6 +884,45 @@ async fn applied_branch_endpoint_is_the_authority_for_excluded_rulesets() {
     );
     assert!(observed.required_checks().is_empty());
     assert_eq!(requests.await.expect("captured requests").len(), 6);
+}
+
+#[tokio::test]
+async fn applied_requirements_refuse_non_scalar_classic_review_constraints() {
+    let classic = serde_json::json!({
+        "required_pull_request_reviews": {
+            "url": "https://api.github.test/repos/civitas-forge/interprex-sandbox/branches/main/protection/required_pull_request_reviews",
+            "dismiss_stale_reviews": false,
+            "require_code_owner_reviews": true,
+            "required_approving_review_count": 2,
+            "require_last_push_approval": false,
+            "dismissal_restrictions": {"users": [], "teams": [], "apps": []}
+        },
+        "required_conversation_resolution": {"enabled": false}
+    });
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        ScriptedResponse::json("[]"),
+        ScriptedResponse::json(classic.to_string()),
+    ])
+    .await;
+
+    let error = provider(uri)
+        .applied_requirements(
+            &repository(),
+            "main",
+            &CommitRange {
+                base_sha: BASE_SHA.to_owned(),
+                head_sha: HEAD_SHA.to_owned(),
+            },
+        )
+        .await
+        .expect_err("code-owner identity is not a scalar approval count");
+
+    assert!(matches!(
+        error,
+        ProviderError::Unrepresentable { fact, .. } if fact.contains("code-owner")
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
 }
 
 #[tokio::test]
@@ -886,6 +958,7 @@ async fn applied_requirements_paginate_rules_check_runs_and_statuses() {
         ),
         ScriptedResponse::json(second_rules.to_string()),
         no_classic_protection(),
+        ScriptedResponse::json(check_suites(&[1], 1)),
         ScriptedResponse::json(check_runs(first_runs, 101)),
         ScriptedResponse::json(check_runs(
             vec![check_run("last", "completed", Some("success"), None)],
@@ -914,37 +987,32 @@ async fn applied_requirements_paginate_rules_check_runs_and_statuses() {
         AppliedRequiredCheckState::Satisfied
     );
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 9);
+    assert_eq!(requests.len(), 10);
     assert!(requests[2].starts_with(
         "GET /repos/civitas-forge/interprex-sandbox/rules/branches/main?per_page=100&page=2 "
     ));
-    assert!(requests[5].contains("page=2&filter=latest"));
-    assert!(requests[7].contains("/status?per_page=100&page=2"));
+    assert!(requests[6].contains("page=2&filter=latest"));
+    assert!(requests[8].contains("/status?per_page=100&page=2"));
 }
 
 #[tokio::test]
-async fn applied_requirements_refuse_githubs_ambiguous_check_suite_limit() {
+async fn applied_requirements_paginate_every_check_suite_without_a_count_cutoff() {
+    let first_suite_ids = (1..=100).collect::<Vec<_>>();
     let mut responses = vec![
         ScriptedResponse::json(branch("main", BASE_SHA)),
         ScriptedResponse::json("[]"),
         no_classic_protection(),
+        ScriptedResponse::json(check_suites(&first_suite_ids, 101)),
+        ScriptedResponse::json(check_suites(&[101], 101)),
     ];
-    for page in 0..10 {
-        let runs = (0..100)
-            .map(|index| {
-                check_run(
-                    &format!("run-{page}-{index}"),
-                    "completed",
-                    Some("success"),
-                    None,
-                )
-            })
-            .collect::<Vec<_>>();
-        responses.push(ScriptedResponse::json(check_runs(runs, 1_000)));
+    for _ in 1..=101 {
+        responses.push(ScriptedResponse::json(check_runs(Vec::new(), 0)));
     }
+    responses.push(ScriptedResponse::json(combined_statuses(Vec::new(), 0)));
+    responses.push(ScriptedResponse::json(branch("main", BASE_SHA)));
     let (uri, requests) = scripted_responses(responses).await;
 
-    let error = provider(uri)
+    let observed = provider(uri)
         .applied_requirements(
             &repository(),
             "main",
@@ -954,16 +1022,20 @@ async fn applied_requirements_refuse_githubs_ambiguous_check_suite_limit() {
             },
         )
         .await
-        .expect_err("GitHub does not prove completeness at its suite limit");
+        .expect("all suites were enumerated");
 
-    assert!(
-        matches!(
-            &error,
-        ProviderError::Unrepresentable { fact, .. } if fact.contains("1000-suite")
+    assert!(observed.required_checks().is_empty());
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 108);
+    assert_user_request(
+        &requests[4],
+        &format!(
+            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/check-suites?per_page=100&page=2 "
         ),
-        "{error:?}"
     );
-    assert_eq!(requests.await.expect("captured requests").len(), 13);
+    assert!(requests.iter().any(|request| request.starts_with(
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/101/check-runs?per_page=100&page=1&filter=latest "
+    )));
 }
 
 #[tokio::test]
@@ -979,7 +1051,26 @@ async fn applied_requirements_never_turn_read_or_shape_errors_into_empty_policy(
         (
             vec![
                 ScriptedResponse::json(branch("main", BASE_SHA)),
-                ScriptedResponse::json(r#"[{"type":"pull_request","parameters":{}}]"#),
+                ScriptedResponse::json(
+                    serde_json::json!([{
+                        "type": "pull_request",
+                        "parameters": {
+                            "allowed_merge_methods": ["squash", "merge", "rebase"],
+                            "dismiss_stale_reviews_on_push": false,
+                            "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+                            "require_code_owner_review": false,
+                            "require_last_push_approval": false,
+                            "required_approving_review_count": 1,
+                            "required_review_thread_resolution": false,
+                            "required_reviewers": [{
+                                "file_patterns": ["src/**"],
+                                "minimum_approvals": 1,
+                                "reviewer": {"id": 9, "type": "Team"}
+                            }]
+                        }
+                    }])
+                    .to_string(),
+                ),
                 no_classic_protection(),
             ],
             "unrepresentable",
@@ -1014,16 +1105,19 @@ async fn applied_requirements_never_turn_read_or_shape_errors_into_empty_policy(
                 ScriptedResponse::json(branch("main", BASE_SHA)),
                 ScriptedResponse::json("[]"),
                 no_classic_protection(),
+                ScriptedResponse::json(check_suites(&[1], 1)),
                 ScriptedResponse::json(
                     serde_json::json!({
                         "total_count": 1,
                         "check_runs": [{
+                            "id": 11,
                             "name": "quality",
                             "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
                             "status": "queued",
                             "conclusion": null,
                             "completed_at": null,
-                            "app": null
+                            "app": null,
+                            "check_suite": {"id": 1}
                         }]
                     })
                     .to_string(),
@@ -1036,7 +1130,7 @@ async fn applied_requirements_never_turn_read_or_shape_errors_into_empty_policy(
                 ScriptedResponse::json(branch("main", BASE_SHA)),
                 ScriptedResponse::json("[]"),
                 no_classic_protection(),
-                ScriptedResponse::json(check_runs(Vec::new(), 0)),
+                ScriptedResponse::json(check_suites(&[], 0)),
                 ScriptedResponse::json(
                     serde_json::json!({
                         "sha": "cccccccccccccccccccccccccccccccccccccccc",
@@ -1097,7 +1191,7 @@ async fn applied_requirements_reject_invalid_or_changed_exact_scope() {
         ScriptedResponse::json(branch("main", BASE_SHA)),
         ScriptedResponse::json("[]"),
         no_classic_protection(),
-        ScriptedResponse::json(check_runs(Vec::new(), 0)),
+        ScriptedResponse::json(check_suites(&[], 0)),
         ScriptedResponse::json(combined_statuses(Vec::new(), 0)),
         ScriptedResponse::json(branch("main", "cccccccccccccccccccccccccccccccccccccccc")),
     ])

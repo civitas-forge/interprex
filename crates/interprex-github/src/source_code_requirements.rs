@@ -55,7 +55,30 @@ struct GithubRequiredCheck {
 
 #[derive(Deserialize)]
 struct GithubPullRequestParameters {
+    #[serde(default, rename = "allowed_merge_methods")]
+    _allowed_merge_methods: Vec<String>,
+    #[serde(default)]
+    dismiss_stale_reviews_on_push: bool,
+    #[serde(default)]
+    dismissal_restriction: Option<GithubRulesetDismissalRestriction>,
+    #[serde(default)]
+    require_code_owner_review: bool,
+    #[serde(default)]
+    require_last_push_approval: bool,
+    #[serde(default)]
     required_approving_review_count: u32,
+    #[serde(default)]
+    required_review_thread_resolution: bool,
+    #[serde(default)]
+    required_reviewers: Vec<Value>,
+    #[serde(flatten)]
+    additional: BTreeMap<String, Value>,
+}
+
+#[derive(Deserialize)]
+struct GithubRulesetDismissalRestriction {
+    #[serde(default)]
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +87,13 @@ struct GithubClassicProtection {
     required_status_checks: Option<GithubClassicStatusChecks>,
     #[serde(default)]
     required_pull_request_reviews: Option<GithubClassicReviews>,
+    #[serde(default)]
+    required_conversation_resolution: Option<GithubEnabledSetting>,
+}
+
+#[derive(Deserialize)]
+struct GithubEnabledSetting {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -82,7 +112,26 @@ struct GithubClassicCheck {
 
 #[derive(Deserialize)]
 struct GithubClassicReviews {
+    #[serde(default)]
+    dismiss_stale_reviews: bool,
+    #[serde(default)]
+    require_code_owner_reviews: bool,
+    #[serde(default)]
     required_approving_review_count: u32,
+    #[serde(default)]
+    require_last_push_approval: bool,
+    #[serde(default)]
+    dismissal_restrictions: Option<GithubClassicDismissalRestrictions>,
+}
+
+#[derive(Deserialize)]
+struct GithubClassicDismissalRestrictions {
+    #[serde(default)]
+    users: Vec<Value>,
+    #[serde(default)]
+    teams: Vec<Value>,
+    #[serde(default)]
+    apps: Vec<Value>,
 }
 
 #[derive(Deserialize)]
@@ -356,17 +405,10 @@ fn normalize_requirements(
             }
             "pull_request" => {
                 let parameters: GithubPullRequestParameters = parse_parameters(&rule)?;
+                validate_ruleset_review_constraints(&parameters)?;
                 result.approvals = result
                     .approvals
                     .max(parameters.required_approving_review_count);
-            }
-            // This rule requires named people or teams for matching paths; a
-            // scalar approval count cannot represent it without losing the
-            // reviewer and path constraints.
-            "required_reviewers" => {
-                return Err(unrepresentable(
-                    "an applied required_reviewers rule cannot be represented as an approval count",
-                ));
             }
             _ => {}
         }
@@ -378,24 +420,98 @@ fn normalize_requirements(
             let checked_contexts = checks
                 .checks
                 .iter()
-                .map(|check| check.context.to_ascii_lowercase())
-                .collect::<BTreeSet<_>>();
+                .map(|check| fold_context(&check.context))
+                .collect::<Result<BTreeSet<_>>>()?;
             for check in checks.checks {
                 insert_check(&mut result.checks, check.context, check.app_id)?;
             }
             for context in checks.contexts {
-                if !checked_contexts.contains(&context.to_ascii_lowercase()) {
+                if !checked_contexts.contains(&fold_context(&context)?) {
                     insert_check(&mut result.checks, context, None)?;
                 }
             }
         }
         if let Some(reviews) = classic.required_pull_request_reviews {
+            validate_classic_review_constraints(&reviews)?;
             result.approvals = result
                 .approvals
                 .max(reviews.required_approving_review_count);
         }
+        if classic
+            .required_conversation_resolution
+            .is_some_and(|setting| setting.enabled)
+        {
+            return Err(unrepresentable(
+                "classic protection requires review-thread resolution",
+            ));
+        }
     }
     Ok(result)
+}
+
+fn validate_ruleset_review_constraints(parameters: &GithubPullRequestParameters) -> Result<()> {
+    let active = if !parameters.required_reviewers.is_empty() {
+        Some("path-specific required reviewers")
+    } else if parameters.dismiss_stale_reviews_on_push {
+        Some("dismissal of stale reviews")
+    } else if parameters
+        .dismissal_restriction
+        .as_ref()
+        .is_some_and(|restriction| restriction.enabled)
+    {
+        Some("review-dismissal restrictions")
+    } else if parameters.require_code_owner_review {
+        Some("code-owner review")
+    } else if parameters.require_last_push_approval {
+        Some("approval by someone other than the last pusher")
+    } else if parameters.required_review_thread_resolution {
+        Some("review-thread resolution")
+    } else {
+        None
+    };
+    if let Some(constraint) = active {
+        return Err(unrepresentable(format!(
+            "an applied pull-request rule requires {constraint}, which cannot be represented as an approval count"
+        )));
+    }
+    if !parameters.additional.is_empty() {
+        return Err(unrepresentable(format!(
+            "an applied pull-request rule contains unsupported parameters: {}",
+            parameters
+                .additional
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn validate_classic_review_constraints(reviews: &GithubClassicReviews) -> Result<()> {
+    let restricted_dismissal = reviews
+        .dismissal_restrictions
+        .as_ref()
+        .is_some_and(|value| {
+            !value.users.is_empty() || !value.teams.is_empty() || !value.apps.is_empty()
+        });
+    let active = if reviews.dismiss_stale_reviews {
+        Some("dismissal of stale reviews")
+    } else if reviews.require_code_owner_reviews {
+        Some("code-owner review")
+    } else if reviews.require_last_push_approval {
+        Some("approval by someone other than the last pusher")
+    } else if restricted_dismissal {
+        Some("review-dismissal restrictions")
+    } else {
+        None
+    };
+    if let Some(constraint) = active {
+        return Err(unrepresentable(format!(
+            "classic protection requires {constraint}, which cannot be represented as an approval count"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_parameters<T: for<'de> Deserialize<'de>>(rule: &GithubAppliedRule) -> Result<T> {
@@ -420,6 +536,7 @@ fn insert_check(
             "an applied required check has an empty context",
         ));
     }
+    let folded_name = fold_context(&name)?;
     let app_id = match app_id {
         None | Some(-1) => None,
         Some(value) if value > 0 => Some(value as u64),
@@ -430,7 +547,7 @@ fn insert_check(
         }
     };
     let identity = RequiredCheckIdentity {
-        folded_name: name.to_ascii_lowercase(),
+        folded_name,
         app_id,
     };
     checks
@@ -459,30 +576,40 @@ fn answer_requirement(
     runs: &[CheckRun],
     statuses: &[GithubCommitStatus],
 ) -> Result<AppliedRequiredCheckState> {
-    let matching_runs = runs
-        .iter()
-        .filter(|run| run.name.eq_ignore_ascii_case(&identity.folded_name))
-        .filter(|run| {
-            identity.app_id.is_none_or(|required| {
+    let mut matching_runs = Vec::new();
+    for run in runs {
+        if fold_context(&run.name)? == identity.folded_name
+            && identity.app_id.is_none_or(|required| {
                 run.via_app
                     .as_ref()
                     .is_some_and(|app| app.id.as_str() == required.to_string())
             })
-        })
-        .map(check_run_state)
-        .collect::<Vec<_>>();
+        {
+            matching_runs.push(check_run_state(run));
+        }
+    }
     if identity.app_id.is_some() && matching_runs.is_empty() {
         return Ok(AppliedRequiredCheckState::Missing);
     }
-    let matching_statuses = statuses
-        .iter()
-        .filter(|status| status.context.eq_ignore_ascii_case(&identity.folded_name))
-        .map(commit_status_state)
-        .collect::<Result<Vec<_>>>()?;
+    let mut matching_statuses = Vec::new();
+    for status in statuses {
+        if fold_context(&status.context)? == identity.folded_name {
+            matching_statuses.push(commit_status_state(status)?);
+        }
+    }
 
     let mut answers = matching_runs;
     answers.extend(matching_statuses);
     Ok(combine_states(&answers))
+}
+
+fn fold_context(context: &str) -> Result<String> {
+    if !context.is_ascii() {
+        return Err(unrepresentable(format!(
+            "check context {context:?} is non-ASCII; GitHub does not define a reproducible Unicode case-folding contract"
+        )));
+    }
+    Ok(context.to_ascii_lowercase())
 }
 
 fn check_run_state(run: &CheckRun) -> AppliedRequiredCheckState {
@@ -667,6 +794,7 @@ mod tests {
                 }],
             }),
             required_pull_request_reviews: None,
+            required_conversation_resolution: None,
         };
 
         let left =
@@ -701,11 +829,24 @@ mod tests {
     }
 
     #[test]
-    fn path_specific_required_reviewers_are_not_flattened_into_an_approval_count() {
+    fn nested_path_specific_required_reviewers_are_not_flattened_into_an_approval_count() {
         let error = normalize_requirements(
             vec![GithubAppliedRule {
-                rule_type: "required_reviewers".to_owned(),
-                parameters: Some(serde_json::json!({})),
+                rule_type: "pull_request".to_owned(),
+                parameters: Some(serde_json::json!({
+                    "allowed_merge_methods": ["squash", "merge", "rebase"],
+                    "dismiss_stale_reviews_on_push": false,
+                    "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+                    "require_code_owner_review": false,
+                    "require_last_push_approval": false,
+                    "required_approving_review_count": 1,
+                    "required_review_thread_resolution": false,
+                    "required_reviewers": [{
+                        "file_patterns": ["src/**"],
+                        "minimum_approvals": 1,
+                        "reviewer": {"id": 9, "type": "Team"}
+                    }]
+                })),
             }],
             None,
         )
@@ -713,7 +854,126 @@ mod tests {
         assert!(matches!(
             error,
             ProviderError::Unrepresentable { fact, .. }
-                if fact.contains("required_reviewers")
+                if fact.contains("path-specific required reviewers")
         ));
+    }
+
+    #[test]
+    fn every_non_scalar_ruleset_review_constraint_is_rejected() {
+        for (field, value) in [
+            ("dismiss_stale_reviews_on_push", serde_json::json!(true)),
+            (
+                "dismissal_restriction",
+                serde_json::json!({"enabled": true, "allowed_actors": []}),
+            ),
+            ("require_code_owner_review", serde_json::json!(true)),
+            ("require_last_push_approval", serde_json::json!(true)),
+            ("required_review_thread_resolution", serde_json::json!(true)),
+        ] {
+            let mut parameters = serde_json::json!({
+                "allowed_merge_methods": ["squash"],
+                "dismiss_stale_reviews_on_push": false,
+                "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+                "require_code_owner_review": false,
+                "require_last_push_approval": false,
+                "required_approving_review_count": 1,
+                "required_review_thread_resolution": false,
+                "required_reviewers": []
+            });
+            parameters[field] = value;
+            let error = normalize_requirements(
+                vec![GithubAppliedRule {
+                    rule_type: "pull_request".to_owned(),
+                    parameters: Some(parameters),
+                }],
+                None,
+            )
+            .expect_err("non-scalar review policy is not an approval count");
+            assert!(
+                matches!(error, ProviderError::Unrepresentable { .. }),
+                "field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_scalar_classic_review_constraints_are_not_flattened() {
+        let error = normalize_requirements(
+            Vec::new(),
+            Some(GithubClassicProtection {
+                required_status_checks: None,
+                required_pull_request_reviews: Some(GithubClassicReviews {
+                    dismiss_stale_reviews: false,
+                    require_code_owner_reviews: true,
+                    required_approving_review_count: 2,
+                    require_last_push_approval: false,
+                    dismissal_restrictions: Some(GithubClassicDismissalRestrictions {
+                        users: Vec::new(),
+                        teams: Vec::new(),
+                        apps: Vec::new(),
+                    }),
+                }),
+                required_conversation_resolution: None,
+            }),
+        )
+        .expect_err("code-owner identity is not a scalar approval count");
+        assert!(matches!(
+            error,
+            ProviderError::Unrepresentable { fact, .. }
+                if fact.contains("code-owner")
+        ));
+    }
+
+    #[test]
+    fn context_matching_rejects_undefined_non_ascii_case_folding() {
+        let rule_error = insert_check(&mut BTreeMap::new(), "CAFÉ".to_owned(), None)
+            .expect_err("ruleset context must be reproducibly comparable");
+        assert!(matches!(
+            rule_error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("non-ASCII")
+        ));
+
+        let classic_error = normalize_requirements(
+            Vec::new(),
+            Some(GithubClassicProtection {
+                required_status_checks: Some(GithubClassicStatusChecks {
+                    strict: false,
+                    contexts: vec!["CAFÉ".to_owned()],
+                    checks: Vec::new(),
+                }),
+                required_pull_request_reviews: None,
+                required_conversation_resolution: None,
+            }),
+        )
+        .expect_err("classic aliases must be reproducibly comparable");
+        assert!(matches!(
+            classic_error,
+            ProviderError::Unrepresentable { fact, .. } if fact.contains("non-ASCII")
+        ));
+
+        let identity = RequiredCheckIdentity {
+            folded_name: "quality".to_owned(),
+            app_id: None,
+        };
+        for answer in [
+            answer_requirement(
+                &identity,
+                &[run("qualité", None, completed(CheckConclusion::Success))],
+                &[],
+            ),
+            answer_requirement(
+                &identity,
+                &[],
+                &[GithubCommitStatus {
+                    context: "qualité".to_owned(),
+                    state: "success".to_owned(),
+                }],
+            ),
+        ] {
+            assert!(matches!(
+                answer,
+                Err(ProviderError::Unrepresentable { fact, .. }) if fact.contains("non-ASCII")
+            ));
+        }
     }
 }
