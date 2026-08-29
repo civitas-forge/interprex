@@ -12,6 +12,14 @@ pub enum ModelError {
     InvalidRepository,
     #[error("number must be greater than zero")]
     InvalidNumber,
+    #[error(
+        "{field} must begin and end with an ASCII letter or digit and contain only ASCII letters, digits, '.', '_' or single '-' characters"
+    )]
+    InvalidProviderTextIdentifier { field: &'static str },
+    #[error("provider text record value must contain a positive integer 'version' field")]
+    InvalidProviderTextRecordVersion,
+    #[error("reviewer application actor must be a bot")]
+    ReviewerApplicationActorNotBot,
 }
 
 pub(crate) fn segment(
