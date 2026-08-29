@@ -30,7 +30,34 @@ macro_rules! opaque_review_id {
 
 opaque_review_id!(ReviewId, "review id", "review");
 opaque_review_id!(ReviewThreadId, "review thread id", "review thread");
-opaque_review_id!(ReviewCommentId, "review comment id", "review comment");
+
+/// Opaque provider identifier for a review comment.
+///
+/// Consumers retain this value only to address the same comment through the
+/// provider that returned it. Its representation has no provider-neutral
+/// meaning, and it supplies equality but no ordering relation. Consumers use
+/// the provider order of the containing comment collection instead.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct ReviewCommentId(String);
+
+impl ReviewCommentId {
+    pub fn new(value: impl Into<String>) -> std::result::Result<Self, crate::ModelError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(crate::ModelError::Empty {
+                field: "review comment id",
+            });
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 opaque_review_id!(ReviewRequestId, "review request id", "review request");
 opaque_review_id!(ReviewActorId, "review actor id", "review actor");
 opaque_review_id!(ReviewTeamId, "review team id", "review team");

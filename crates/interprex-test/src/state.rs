@@ -79,6 +79,8 @@ impl FakeProvider {
     ///
     /// The head it proposes is `change_request.head`, which names the
     /// repository holding that branch and so can be a fork of `repository`.
+    /// Comment collections retain their declared order; the fake neither sorts
+    /// them nor derives order from opaque comment identifiers.
     pub async fn seed_change_request(&self, repository: Repository, change_request: ChangeRequest) {
         self.state
             .write()
