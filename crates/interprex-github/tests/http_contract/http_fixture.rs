@@ -234,7 +234,19 @@ pub(super) async fn json_responses<T>(bodies: Vec<T>) -> (String, oneshot::Recei
 where
     T: Into<String> + Send + 'static,
 {
-    let bodies = bodies.into_iter().map(Into::into).collect::<Vec<String>>();
+    json_responses_with_headers(bodies.into_iter().map(|body| (body, "")).collect()).await
+}
+
+pub(super) async fn json_responses_with_headers<T>(
+    responses: Vec<(T, &'static str)>,
+) -> (String, oneshot::Receiver<Vec<String>>)
+where
+    T: Into<String> + Send + 'static,
+{
+    let responses = responses
+        .into_iter()
+        .map(|(body, headers)| (body.into(), headers))
+        .collect::<Vec<(String, &'static str)>>();
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind test server");
@@ -243,9 +255,10 @@ where
     let response_base = base_uri.clone();
     let (sender, receiver) = oneshot::channel();
     tokio::spawn(async move {
-        let mut requests = Vec::with_capacity(bodies.len());
-        for body in bodies {
+        let mut requests = Vec::with_capacity(responses.len());
+        for (body, headers) in responses {
             let body = body.replace("{base}", &response_base);
+            let headers = headers.replace("{base}", &response_base);
             let (mut stream, _) = listener.accept().await.expect("accept request");
             let mut request = Vec::new();
             let mut buffer = [0_u8; 4096];
@@ -261,7 +274,7 @@ where
             }
             requests.push(String::from_utf8(request).expect("request is UTF-8"));
             let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream

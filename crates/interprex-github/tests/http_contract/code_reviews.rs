@@ -15,8 +15,9 @@ use sha2::{Digest, Sha256};
 use tokio::time::timeout;
 
 use super::http_fixture::{
-    ScriptedResponse, app_provider, assert_user_request, json_responses, project_app_provider,
-    provider, repository, rest_filtered_pages, scripted_responses, server, status_json_responses,
+    ScriptedResponse, app_provider, assert_user_request, json_responses,
+    json_responses_with_headers, project_app_provider, provider, repository, rest_filtered_pages,
+    scripted_responses, server, status_json_responses,
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
@@ -1680,6 +1681,79 @@ async fn code_review_domain_reads_no_timeline_without_an_outstanding_request() {
     assert_user_request(
         &requests[4],
         "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100 ",
+    );
+}
+
+#[tokio::test]
+async fn change_request_comments_keep_github_order_across_rest_pages() {
+    let mut review_requests: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/review_requests_response.json"))
+            .expect("review request fixture");
+    review_requests["data"]["repository"]["pullRequest"]["reviewRequests"]["nodes"] =
+        serde_json::json!([]);
+    let comment = |id: u64, node_id: &str| {
+        serde_json::json!({
+            "id": id,
+            "node_id": node_id,
+            "user": {
+                "node_id": "U_comment_author",
+                "login": "comment-author",
+                "type": "User"
+            },
+            "body": format!("Comment {id}"),
+            "created_at": "2026-08-29T10:00:00Z",
+            "updated_at": "2026-08-29T10:00:00Z"
+        })
+    };
+    let first_page = serde_json::json!([
+        comment(20, "A_lexically_first"),
+        comment(30, "M_lexically_middle")
+    ])
+    .to_string();
+    let second_page = serde_json::json!([comment(10, "Z_lexically_last")]).to_string();
+    let (uri, requests) = json_responses_with_headers(vec![
+        (include_str!("../fixtures/pull_request.json").to_owned(), ""),
+        (
+            include_str!("../fixtures/code_review_reviews.json").to_owned(),
+            "",
+        ),
+        (
+            include_str!("../fixtures/review_threads_response.json").to_owned(),
+            "",
+        ),
+        (
+            serde_json::to_string(&review_requests).expect("review request response"),
+            "",
+        ),
+        (
+            first_page,
+            "link: <{base}/repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100&page=2>; rel=\"next\"\r\n",
+        ),
+        (second_page, ""),
+    ])
+    .await;
+
+    let change_request = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("change request");
+
+    assert_eq!(
+        change_request
+            .unanchored_comments
+            .iter()
+            .map(|comment| comment.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Z_lexically_last",
+            "A_lexically_first",
+            "M_lexically_middle"
+        ]
+    );
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(
+        &requests[5],
+        "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100&page=2 ",
     );
 }
 

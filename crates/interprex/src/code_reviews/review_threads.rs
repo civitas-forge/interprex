@@ -63,5 +63,6 @@ pub struct ReviewThread {
     pub outdated: bool,
     pub status: ReviewThreadStatus,
     pub comment: ReviewComment,
+    /// Replies in stable, total provider order from earliest to latest.
     pub replies: Vec<ReviewComment>,
 }

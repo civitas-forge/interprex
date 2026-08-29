@@ -23,6 +23,53 @@ fn requested_at(time: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     Some(time.parse().expect("request timestamp"))
 }
 
+fn unanchored_comment(id: u64, node_id: &str) -> GithubUnanchoredComment {
+    serde_json::from_value(serde_json::json!({
+        "id": id,
+        "node_id": node_id,
+        "user": {
+            "node_id": "U_comment_author",
+            "login": "comment-author",
+            "type": "User"
+        },
+        "body": format!("Comment {id}"),
+        "created_at": "2026-08-29T10:00:00Z",
+        "updated_at": "2026-08-29T10:00:00Z"
+    }))
+    .expect("unanchored comment")
+}
+
+#[test]
+fn equal_time_comments_follow_numeric_github_order_not_node_id_text() {
+    let change_request = normalize_change_request(
+        serde_json::from_str(include_str!("../../../tests/fixtures/pull_request.json"))
+            .expect("pull request fixture"),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        vec![
+            unanchored_comment(20, "A_lexically_first"),
+            unanchored_comment(30, "M_lexically_middle"),
+            unanchored_comment(10, "Z_lexically_last"),
+        ],
+    )
+    .expect("normalizes");
+
+    assert_eq!(
+        change_request
+            .unanchored_comments
+            .iter()
+            .map(|comment| comment.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Z_lexically_last",
+            "A_lexically_first",
+            "M_lexically_middle"
+        ]
+    );
+}
+
 #[test]
 fn a_head_whose_repository_github_dropped_is_absent_rather_than_guessed() {
     let mut pull_request: GithubPullRequest =
