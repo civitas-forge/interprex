@@ -6,9 +6,9 @@ use std::{
 use bytes::Bytes;
 use interprex::{
     AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
-    IssueNumber, Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
-    ReviewId, ReviewPublicationKey, ReviewRequestTarget, ReviewSubmission, ReviewTarget,
-    ReviewerApplication, Ruleset, RunId, WorkflowRun,
+    IssueNumber, Label, ProviderAppId, ProviderError, Release, Repository, RepositoryFacts,
+    RepositorySettings, ReviewActorId, ReviewId, ReviewPublicationKey, ReviewRequestTarget,
+    ReviewSubmission, ReviewTarget, ReviewerApplication, Ruleset, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -27,8 +27,7 @@ pub(crate) struct State {
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
     pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
     pub(crate) reviewer_applications: BTreeMap<(Repository, String), ReviewerApplication>,
-    pub(crate) review_publications:
-        BTreeMap<(Repository, ChangeRequestNumber, ReviewPublicationKey), FakeReviewPublication>,
+    pub(crate) review_publications: BTreeMap<FakeReviewPublicationKey, FakeReviewPublication>,
     pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
@@ -40,9 +39,16 @@ pub(crate) struct State {
     pub(crate) next_asset_id: u64,
 }
 
+pub(crate) type FakeReviewPublicationKey = (
+    Repository,
+    ChangeRequestNumber,
+    ProviderAppId,
+    ReviewActorId,
+    ReviewPublicationKey,
+);
+
 #[derive(Clone, Debug)]
 pub(crate) struct FakeReviewPublication {
-    pub(crate) reviewer: ReviewerApplication,
     pub(crate) submission: ReviewSubmission,
     pub(crate) review_id: ReviewId,
 }

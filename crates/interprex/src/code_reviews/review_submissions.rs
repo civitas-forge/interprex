@@ -5,10 +5,12 @@ use crate::ModelError;
 
 /// A caller-assigned identifier for one review publication.
 ///
-/// The key is meaningful only within the change request supplied to
+/// The key is meaningful only for one reviewer identity within the change
+/// request supplied to
 /// [`ReviewPublishingProvider::publish_review`](super::ReviewPublishingProvider::publish_review).
-/// A caller retains it across retries so a provider can find a review created
-/// by an earlier attempt.
+/// Two distinct reviewer identities can use the same key independently. A
+/// caller retains the key across retries so a provider can find a review
+/// created by an earlier attempt from that reviewer.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ReviewPublicationKey(String);
@@ -154,7 +156,7 @@ impl From<ReviewSubmissionFinding> for SerializedReviewSubmissionFinding {
     }
 }
 
-/// One complete review that a provider publishes as a reviewer application.
+/// One complete review that a provider publishes as a reviewer identity.
 ///
 /// `revision` names the exact commit reviewed. A provider must publish against
 /// that commit and must not replace it with the change request's current head.
