@@ -34,8 +34,8 @@ pub(super) struct GithubPullRequest {
     /// until that finishes. A response that carries no field at all states as
     /// little as `null` does, and reads the same way.
     mergeable: Option<bool>,
-    head: GitRef,
-    base: GitRef,
+    pub(super) head: GitRef,
+    pub(super) base: GitRef,
     user: Option<GithubUser>,
     updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -45,7 +45,7 @@ pub(super) struct GitRef {
     /// The branch name, which GitHub returns unqualified.
     #[serde(rename = "ref")]
     pub(super) branch: String,
-    sha: String,
+    pub(super) sha: String,
     /// The repository holding the branch, absent once GitHub stops
     /// identifying it, as for a change request whose fork was deleted.
     repo: Option<GithubRepositoryRef>,

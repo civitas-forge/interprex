@@ -1,9 +1,10 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead,
-    ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckRun, CheckStatus,
-    CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
+    AssetStreamError, AssetUpload, BranchFreshness, BranchUpdateError, BranchUpdateObservation,
+    BranchUpdateRequirement, BranchUpdatesProvider, ChangeRequest, ChangeRequestCommentsProvider,
+    ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckRun,
+    CheckStatus, CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
     FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
     Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord, Release,
     ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
@@ -90,6 +91,92 @@ fn review_submission(key: &str, summary: &str) -> ReviewSubmission {
         ],
     )
     .expect("submission")
+}
+
+#[tokio::test]
+async fn consumer_observes_and_requests_only_an_exact_seeded_branch_update() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    let observation = BranchUpdateObservation {
+        commit_range: CommitRange {
+            base_sha: "base-2".to_owned(),
+            head_sha: "head-3".to_owned(),
+        },
+        requirement: BranchUpdateRequirement::Required,
+        freshness: BranchFreshness::Behind,
+    };
+    provider
+        .seed_branch_update(repository.clone(), number, observation.clone())
+        .await;
+
+    assert_eq!(
+        provider
+            .branch_update(&repository, number)
+            .await
+            .expect("branch-update observation"),
+        observation
+    );
+    provider
+        .update_change_request_branch(&repository, number, "head-3")
+        .await
+        .expect("exact update request");
+    assert_eq!(
+        provider.accepted_branch_updates().await,
+        vec![(repository.clone(), number, "head-3".to_owned())]
+    );
+
+    let error = provider
+        .update_change_request_branch(&repository, number, "head-2")
+        .await
+        .expect_err("stale update request");
+    assert!(matches!(
+        error,
+        BranchUpdateError::StaleHead {
+            expected_head_sha,
+            observed_head_sha,
+        } if expected_head_sha == "head-2" && observed_head_sha == "head-3"
+    ));
+    assert_eq!(provider.accepted_branch_updates().await.len(), 1);
+}
+
+#[tokio::test]
+async fn branch_update_fixture_is_scoped_to_repository_and_change_request() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    provider
+        .seed_branch_update(
+            repository.clone(),
+            number,
+            BranchUpdateObservation {
+                commit_range: CommitRange {
+                    base_sha: "base".to_owned(),
+                    head_sha: "head".to_owned(),
+                },
+                requirement: BranchUpdateRequirement::NotRequired,
+                freshness: BranchFreshness::Current,
+            },
+        )
+        .await;
+
+    for (other_repository, other_number) in [
+        (
+            Repository::new("other", "sandbox").expect("repository"),
+            number,
+        ),
+        (
+            repository.clone(),
+            ChangeRequestNumber::new(4).expect("number"),
+        ),
+    ] {
+        assert!(matches!(
+            provider
+                .branch_update(&other_repository, other_number)
+                .await,
+            Err(ProviderError::NotFound { .. })
+        ));
+    }
 }
 
 #[tokio::test]

@@ -28,6 +28,7 @@ use serde_json::json;
 use crate::{GithubProvider, client::external};
 
 mod actors;
+mod branch_updates;
 mod change_requests;
 mod checks;
 mod finding_resolutions;

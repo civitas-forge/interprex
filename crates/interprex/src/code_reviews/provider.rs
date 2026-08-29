@@ -1,12 +1,63 @@
 use async_trait::async_trait;
 
 use super::{
-    ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
-    FindingResolution, FindingResolutionReply, ProviderTextRecord, ReviewCommentId,
-    ReviewPublicationKey, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewSubmission,
-    ReviewThreadId, ReviewerApplication,
+    BranchUpdateError, BranchUpdateObservation, ChangeRequest, ChangeRequestHead,
+    ChangeRequestNumber, CheckOutcome, CheckRun, FindingResolution, FindingResolutionReply,
+    ProviderTextRecord, ReviewCommentId, ReviewPublicationKey, ReviewRequestTarget,
+    ReviewRequestTargetInspection, ReviewSubmission, ReviewThreadId, ReviewerApplication,
 };
 use crate::{Repository, Result};
+
+/// Optional provider capability for observing and updating change-request
+/// branches.
+///
+/// A provider can implement [`CodeReviewsProvider`] without implementing this
+/// trait. Only providers with a native exact-head update operation implement
+/// both.
+#[async_trait]
+pub trait BranchUpdatesProvider: Send + Sync {
+    /// Reads the applicable update requirement and current branch freshness.
+    ///
+    /// The returned revisions are the exact endpoints used for the freshness
+    /// result. Mergeability is a separate fact. This operation does not decide
+    /// whether an update should occur.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ProviderError::NotFound`] when the change request or a
+    /// compared revision is absent, [`crate::ProviderError::Unrepresentable`]
+    /// when the provider reports a rule or comparison this interface cannot
+    /// express, and [`crate::ProviderError::External`] when the provider read
+    /// fails.
+    async fn branch_update(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+    ) -> Result<BranchUpdateObservation>;
+
+    /// Requests the provider's native branch update only if the change
+    /// request still has `expected_head_sha`.
+    ///
+    /// The provider applies its current target branch to the exact observed
+    /// head. The operation neither chooses when an update is appropriate nor
+    /// substitutes a newer head.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BranchUpdateError::StaleHead`] when the current head differs
+    /// from `expected_head_sha`,
+    /// [`crate::ProviderError::NotFound`] when the change request is absent,
+    /// [`crate::ProviderError::InvalidInput`] when `expected_head_sha` is empty,
+    /// and [`crate::ProviderError::External`] when the provider refuses or
+    /// cannot complete the update. Provider errors are retained inside
+    /// [`BranchUpdateError::Provider`].
+    async fn update_change_request_branch(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        expected_head_sha: &str,
+    ) -> std::result::Result<(), BranchUpdateError>;
+}
 
 #[async_trait]
 pub trait CodeReviewsProvider: Send + Sync {

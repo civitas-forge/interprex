@@ -5,10 +5,11 @@ use std::{
 
 use bytes::Bytes;
 use interprex::{
-    AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
-    IssueNumber, Label, ProviderAppId, ProviderError, Release, Repository, RepositoryFacts,
-    RepositorySettings, ReviewActorId, ReviewId, ReviewPublicationKey, ReviewRequestTarget,
-    ReviewSubmission, ReviewTarget, ReviewerApplication, Ruleset, RunId, WorkflowRun,
+    AssetId, BranchUpdateObservation, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun,
+    DispatchInputs, Issue, IssueNumber, Label, ProviderAppId, ProviderError, Release, Repository,
+    RepositoryFacts, RepositorySettings, ReviewActorId, ReviewId, ReviewPublicationKey,
+    ReviewRequestTarget, ReviewSubmission, ReviewTarget, ReviewerApplication, Ruleset, RunId,
+    WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -25,6 +26,8 @@ pub(crate) struct State {
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
+    pub(crate) branch_updates: BTreeMap<(Repository, ChangeRequestNumber), BranchUpdateObservation>,
+    pub(crate) accepted_branch_updates: Vec<(Repository, ChangeRequestNumber, String)>,
     pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
     pub(crate) reviewer_applications: BTreeMap<(Repository, String), ReviewerApplication>,
     pub(crate) review_publications: BTreeMap<FakeReviewPublicationKey, FakeReviewPublication>,
@@ -87,6 +90,24 @@ impl FakeProvider {
             .await
             .change_requests
             .insert((repository, change_request.number), change_request);
+    }
+
+    /// Seeds branch-update facts for one change request.
+    ///
+    /// The fake returns this observation unchanged. Accepted updates are
+    /// recorded separately; tests explicitly seed a later observation instead
+    /// of relying on the fake to invent a provider revision.
+    pub async fn seed_branch_update(
+        &self,
+        repository: Repository,
+        number: ChangeRequestNumber,
+        observation: BranchUpdateObservation,
+    ) {
+        self.state
+            .write()
+            .await
+            .branch_updates
+            .insert((repository, number), observation);
     }
 
     /// Seeds the provider observation returned for one review-request target.
@@ -165,6 +186,11 @@ impl FakeProvider {
 
     pub async fn published_checks(&self) -> Vec<(Repository, String, CheckOutcome)> {
         self.state.read().await.published_checks.clone()
+    }
+
+    /// Returns accepted exact-head branch-update requests in call order.
+    pub async fn accepted_branch_updates(&self) -> Vec<(Repository, ChangeRequestNumber, String)> {
+        self.state.read().await.accepted_branch_updates.clone()
     }
 
     pub async fn dispatches(&self) -> Vec<(Repository, String, String, DispatchInputs)> {

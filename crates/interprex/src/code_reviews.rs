@@ -1,3 +1,4 @@
+mod branch_updates;
 mod change_request_heads;
 mod change_requests;
 mod checks;
@@ -11,6 +12,9 @@ mod reviewer_applications;
 mod reviews;
 mod text_records;
 
+pub use branch_updates::{
+    BranchFreshness, BranchUpdateError, BranchUpdateObservation, BranchUpdateRequirement,
+};
 pub use change_request_heads::{ChangeRequestHead, InvalidHeadRef};
 pub use change_requests::{
     ChangeRequest, ChangeRequestNumber, ChangeRequestState, CommitRange, Mergeability,
@@ -25,8 +29,9 @@ pub use identities::{
     ReviewId, ReviewRequestId, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
 };
 pub use provider::{
-    ChangeRequestCommentsProvider, CodeReviewsProvider, ReviewPublishingProvider,
-    ReviewTargetsProvider, ReviewerApplicationsProvider, TextRecordsProvider,
+    BranchUpdatesProvider, ChangeRequestCommentsProvider, CodeReviewsProvider,
+    ReviewPublishingProvider, ReviewTargetsProvider, ReviewerApplicationsProvider,
+    TextRecordsProvider,
 };
 pub use review_requests::{
     ReviewRequest, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
