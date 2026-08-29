@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use interprex::{
+    BranchFreshness, BranchUpdateError, BranchUpdateRequirement, BranchUpdatesProvider,
     ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
     CheckConclusion, CheckStatus, CodeReviewsProvider, FindingResolution, FindingResolutionReason,
     FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp, ProviderAppId,
@@ -21,6 +22,375 @@ use super::http_fixture::{
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+
+fn strict_update_rule() -> ScriptedResponse {
+    ScriptedResponse::json(
+        serde_json::json!([{
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": true,
+                "do_not_enforce_on_create": false,
+                "required_status_checks": [{"context": "quality"}]
+            }
+        }])
+        .to_string(),
+    )
+}
+
+fn compare_status(status: &str) -> ScriptedResponse {
+    ScriptedResponse::json(serde_json::json!({"status": status}).to_string())
+}
+
+fn classic_protection(strict: bool) -> ScriptedResponse {
+    ScriptedResponse::json(
+        serde_json::json!({
+            "required_status_checks": {
+                "strict": strict,
+                "contexts": ["quality"]
+            }
+        })
+        .to_string(),
+    )
+}
+
+#[tokio::test]
+async fn branch_update_observation_reports_applicable_rule_and_current_commits() {
+    for (status, expected_freshness) in [
+        ("ahead", BranchFreshness::Current),
+        ("identical", BranchFreshness::Current),
+        ("behind", BranchFreshness::Behind),
+        ("diverged", BranchFreshness::Behind),
+    ] {
+        let (uri, requests) = scripted_responses(vec![
+            ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+            strict_update_rule(),
+            ScriptedResponse::status("404 Not Found", NOT_FOUND),
+            compare_status(status),
+        ])
+        .await;
+        let observation = provider(uri)
+            .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+            .await
+            .expect("branch-update observation");
+
+        assert_eq!(observation.requirement, BranchUpdateRequirement::Required);
+        assert_eq!(observation.freshness, expected_freshness);
+        assert_eq!(
+            observation.commit_range.head_sha,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        let requests = requests.await.expect("captured requests");
+        assert_user_request(
+            &requests[0],
+            "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
+        );
+        assert_user_request(
+            &requests[1],
+            "GET /repos/civitas-forge/interprex-sandbox/rules/branches/main ",
+        );
+        assert_user_request(
+            &requests[2],
+            "GET /repos/civitas-forge/interprex-sandbox/branches/main/protection ",
+        );
+        assert_user_request(
+            &requests[3],
+            "GET /repos/civitas-forge/interprex-sandbox/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+        );
+    }
+}
+
+#[tokio::test]
+async fn branch_update_observation_reports_when_no_applicable_rule_requires_it() {
+    let rules = serde_json::json!([
+        {"type": "pull_request", "parameters": {}},
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": [{"context": "quality"}]
+            }
+        }
+    ]);
+    let (uri, _) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json(rules.to_string()),
+        ScriptedResponse::status("404 Not Found", NOT_FOUND),
+        compare_status("behind"),
+    ])
+    .await;
+
+    let observation = provider(uri)
+        .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("branch-update observation");
+    assert_eq!(
+        observation.requirement,
+        BranchUpdateRequirement::NotRequired
+    );
+    assert_eq!(observation.freshness, BranchFreshness::Behind);
+    assert!(!observation.update_required());
+}
+
+#[tokio::test]
+async fn branch_update_observation_rejects_an_unknown_comparison() {
+    let (uri, _) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        strict_update_rule(),
+        ScriptedResponse::status("404 Not Found", NOT_FOUND),
+        compare_status("sideways"),
+    ])
+    .await;
+
+    assert!(matches!(
+        provider(uri)
+            .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+            .await,
+        Err(ProviderError::Unrepresentable {
+            provider: "github",
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn branch_update_observation_includes_classic_branch_protection() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json("[]"),
+        classic_protection(true),
+        compare_status("behind"),
+    ])
+    .await;
+
+    let observation = provider(uri)
+        .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("branch-update observation");
+
+    assert_eq!(observation.requirement, BranchUpdateRequirement::Required);
+    assert!(observation.update_required());
+    assert_user_request(
+        &requests.await.expect("captured requests")[2],
+        "GET /repos/civitas-forge/interprex-sandbox/branches/main/protection ",
+    );
+}
+
+#[tokio::test]
+async fn branch_update_observation_combines_rulesets_and_classic_protection() {
+    let (uri, _) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        strict_update_rule(),
+        classic_protection(false),
+        compare_status("behind"),
+    ])
+    .await;
+
+    let observation = provider(uri)
+        .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("branch-update observation");
+    assert_eq!(observation.requirement, BranchUpdateRequirement::Required);
+}
+
+#[tokio::test]
+async fn branch_update_observation_preserves_classic_protection_read_failures() {
+    for response in [
+        ScriptedResponse::status("403 Forbidden", r#"{"message":"Forbidden"}"#),
+        ScriptedResponse::json(r#"{"required_status_checks":{"contexts":[]}}"#),
+    ] {
+        let (uri, requests) = scripted_responses(vec![
+            ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+            ScriptedResponse::json("[]"),
+            response,
+        ])
+        .await;
+
+        assert!(matches!(
+            provider(uri)
+                .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+                .await,
+            Err(ProviderError::External {
+                provider: "github",
+                operation: "read classic branch protection",
+                ..
+            })
+        ));
+        assert_eq!(requests.await.expect("captured requests").len(), 3);
+    }
+}
+
+#[tokio::test]
+async fn native_branch_update_sends_the_exact_observed_head() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status(
+            "202 Accepted",
+            r#"{"message":"Updating pull request branch.","url":"https://api.github.test/pulls/5"}"#,
+        ),
+    ])
+    .await;
+    provider(uri)
+        .update_change_request_branch(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .await
+        .expect("native branch update");
+
+    let requests = requests.await.expect("captured requests");
+    assert_user_request(
+        &requests[1],
+        "PUT /repos/civitas-forge/interprex-sandbox/pulls/5/update-branch ",
+    );
+    let (_, body) = requests[1].split_once("\r\n\r\n").expect("request body");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(body).expect("JSON body"),
+        serde_json::json!({
+            "expected_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        })
+    );
+}
+
+#[tokio::test]
+async fn native_branch_update_rejects_a_head_changed_before_the_write() {
+    let (uri, requests) = scripted_responses(vec![ScriptedResponse::json(include_str!(
+        "../fixtures/pull_request.json"
+    ))])
+    .await;
+    let error = provider(uri)
+        .update_change_request_branch(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            "previous-head",
+        )
+        .await
+        .expect_err("changed head");
+    assert!(matches!(
+        error,
+        BranchUpdateError::StaleHead { expected_head_sha, observed_head_sha }
+            if expected_head_sha == "previous-head"
+                && observed_head_sha == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 1);
+}
+
+#[tokio::test]
+async fn native_branch_update_reports_a_racing_head_change_without_a_second_write() {
+    let mut changed =
+        serde_json::from_str::<serde_json::Value>(include_str!("../fixtures/pull_request.json"))
+            .expect("pull request fixture");
+    changed["head"]["sha"] = serde_json::json!("cccccccccccccccccccccccccccccccccccccccc");
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status("422 Unprocessable Entity", r#"{"message":"head changed"}"#),
+        ScriptedResponse::json(changed.to_string()),
+    ])
+    .await;
+    let error = provider(uri)
+        .update_change_request_branch(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .await
+        .expect_err("racing head change");
+    assert!(matches!(
+        error,
+        BranchUpdateError::StaleHead { observed_head_sha, .. }
+            if observed_head_sha == "cccccccccccccccccccccccccccccccccccccccc"
+    ));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("PUT "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn native_branch_update_preserves_a_provider_refusal() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status(
+            "422 Unprocessable Entity",
+            r#"{"message":"Branch update is not permitted"}"#,
+        ),
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+    ])
+    .await;
+    assert!(matches!(
+        provider(uri)
+            .update_change_request_branch(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await,
+        Err(BranchUpdateError::Provider(ProviderError::External {
+            provider: "github",
+            operation: "update change request branch",
+            ..
+        }))
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
+#[tokio::test]
+async fn native_branch_update_preserves_the_write_failure_when_reread_fails() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status(
+            "422 Unprocessable Entity",
+            r#"{"message":"Branch update is not permitted"}"#,
+        ),
+        ScriptedResponse::status("503 Service Unavailable", r#"{"message":"Unavailable"}"#),
+    ])
+    .await;
+
+    assert!(matches!(
+        provider(uri)
+            .update_change_request_branch(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await,
+        Err(BranchUpdateError::Provider(ProviderError::External {
+            provider: "github",
+            operation: "update change request branch",
+            ..
+        }))
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
+#[tokio::test]
+async fn native_branch_update_reports_not_found_when_the_failed_write_reread_is_absent() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status(
+            "422 Unprocessable Entity",
+            r#"{"message":"Branch update is not permitted"}"#,
+        ),
+        ScriptedResponse::status("404 Not Found", NOT_FOUND),
+    ])
+    .await;
+
+    assert!(matches!(
+        provider(uri)
+            .update_change_request_branch(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await,
+        Err(BranchUpdateError::Provider(ProviderError::NotFound { .. }))
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
 
 fn reviewer_application() -> ReviewerApplication {
     ReviewerApplication::new(

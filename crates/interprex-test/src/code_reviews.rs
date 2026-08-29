@@ -1,17 +1,76 @@
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber,
-    ChangeRequestState, CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution,
-    FindingResolutionRecord, FindingResolutionReply, ProviderError, Repository, Result,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewFinding, ReviewId, ReviewLineRange, ReviewLocation,
-    ReviewPublicationKey, ReviewPublishingProvider, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
-    ReviewTarget, ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
+    BranchUpdateError, BranchUpdateObservation, BranchUpdatesProvider, ChangeRequest,
+    ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
+    CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
+    FindingResolutionReply, ProviderError, Repository, Result, ReviewActor, ReviewActorId,
+    ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewFinding,
+    ReviewId, ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
+    ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewRequestTargetInspection,
+    ReviewState, ReviewSubmission, ReviewTarget, ReviewTargetsProvider, ReviewTeam, ReviewTeamId,
+    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewerApplication,
+    ReviewerApplicationsProvider,
 };
 
 use crate::state::{FakeProvider, FakeReviewPublication, FakeReviewPublicationKey, missing};
+
+#[async_trait]
+impl BranchUpdatesProvider for FakeProvider {
+    async fn branch_update(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+    ) -> Result<BranchUpdateObservation> {
+        self.state
+            .read()
+            .await
+            .branch_updates
+            .get(&(repository.clone(), number))
+            .cloned()
+            .ok_or_else(|| {
+                missing(format!(
+                    "branch update for change request {number:?} in {repository}"
+                ))
+            })
+    }
+
+    async fn update_change_request_branch(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        expected_head_sha: &str,
+    ) -> std::result::Result<(), BranchUpdateError> {
+        if expected_head_sha.is_empty() {
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: "expected change-request head must not be empty".to_owned(),
+            }
+            .into());
+        }
+        let mut state = self.state.write().await;
+        let observation = state
+            .branch_updates
+            .get(&(repository.clone(), number))
+            .ok_or_else(|| {
+                missing(format!(
+                    "branch update for change request {number:?} in {repository}"
+                ))
+            })
+            .map_err(BranchUpdateError::from)?;
+        if observation.commit_range.head_sha != expected_head_sha {
+            return Err(BranchUpdateError::StaleHead {
+                expected_head_sha: expected_head_sha.to_owned(),
+                observed_head_sha: observation.commit_range.head_sha.clone(),
+            });
+        }
+        state.accepted_branch_updates.push((
+            repository.clone(),
+            number,
+            expected_head_sha.to_owned(),
+        ));
+        Ok(())
+    }
+}
 
 #[async_trait]
 impl CodeReviewsProvider for FakeProvider {

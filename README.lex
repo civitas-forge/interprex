@@ -15,7 +15,7 @@ Interprex
     Tracker:
         Read issues and read or update labels.
     Code Review:
-        Read change requests by number or by the head ref they propose, together with their mergeability, reviews, findings, standalone threads, unanchored comments, outstanding review requests and checks; inspect the identity category at a review-request address, record finding resolutions and addressing severity, resolve threads, request reviewers, publish application-authored reviews, mark a change request ready and publish check results.
+        Read change requests by number or by the head ref they propose, together with their mergeability, branch-update facts, reviews, findings, standalone threads, unanchored comments, outstanding review requests and checks; update an exact observed head, inspect the identity category at a review-request address, record finding resolutions and addressing severity, resolve threads, request reviewers, publish application-authored reviews, mark a change request ready and publish check results.
     Jobs:
         Dispatch jobs, read runs and cancel runs.
     Releases:
@@ -30,6 +30,8 @@ Interprex
     `ChangeRequestHead` holds that head, reading its branch from one ref spelling, `refs/heads/<branch>`. One spelling keeps every branch addressable, and a name git would refuse to create is refused here rather than sent as a query no change request could answer.
 
     A change request also carries its mergeability: mergeable, conflicted, or unknown while the platform has not finished computing the merge. Mergeability reports that merge computation alone. Required checks, approvals and branch rules are separate facts, so a mergeable change request can still be one the platform refuses to merge.
+
+    `BranchUpdatesProvider` separately reports whether an applicable provider rule requires the head to contain the target-branch tip and whether the observed head contains it. The observation retains the exact base and head revisions used for that answer. An update applies only to that observed head; if the head changes first, the provider reports a stale observation. The application decides whether and when to request the update.
 
     Each review records its author, the provider application that produced it when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 

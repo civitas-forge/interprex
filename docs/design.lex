@@ -23,7 +23,7 @@ Design
     Tracker:
         Issues and labels.
     Code Review:
-        Change requests, their mergeability, published reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, review-request target inspection, the checks on a commit, published check results and the draft-to-ready transition.
+        Change requests, their mergeability, branch-update facts and exact-head updates, published reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, review-request target inspection, the checks on a commit, published check results and the draft-to-ready transition.
     Jobs:
         Dispatch, run observation and cancellation.
     Releases:
@@ -56,7 +56,11 @@ Design
 
     `ChangeRequest::mergeability` carries the platform's answer for the current source and target: mergeable, conflicted, or unknown. GitHub starts computing the merge when a read arrives and reports `null` until that computation finishes, so unknown is an observed platform state rather than a read that failed or a value Interprex chose in place of one.
 
-    GitHub's `mergeable_state` string is deliberately absent from the model. Its `clean`, `dirty` and `unknown` values restate mergeability, while `blocked`, `behind`, `unstable` and `draft` are the verdict of GitHub's own policy evaluation over required checks, approvals, branch currency and the draft flag. That verdict is the answer [#5] leaves to the caller, so Interprex returns the observed facts it owns instead: mergeability, checks, reviews, `base_branch` for selecting the rules that govern the target, and `draft`. It does not claim those facts reconstruct GitHub's verdict. Branch currency, for one, is a git fact that [#1] keeps outside this library, and a caller that needs it compares the commits itself.
+    GitHub's `mergeable_state` string is absent from the model because it combines mergeability, checks, approvals, branch freshness and the draft flag into one provider verdict. Interprex returns those facts separately instead of claiming they reconstruct that verdict.
+
+    `BranchUpdatesProvider` observes whether an applicable provider rule requires the head to contain the target-branch tip and whether the observed head does contain it. The observation retains the base and head revisions used for the comparison. Requirement, freshness and mergeability remain separate: a mergeable head can be behind without an applicable rule requiring an update. The caller decides whether and when to update.
+
+    A branch update names the exact observed head. The provider refuses a stale observation instead of applying the request to a newer head. GitHub reads both the active rules and classic branch protection for the target branch; either mechanism can require the head to contain the target-branch tip. It compares the observed base and head commits, then uses its native branch-update operation with the expected head.
 
     `CodeReviewsProvider::checks` reads the current checks on one commit, completely paginated. A caller reads them for whichever commit it cares about, usually the change request's current head. The request sends GitHub's `filter=latest` explicitly, which scopes the answer to the current run of each check within each check suite. A rerun inside a suite replaces the run it repeated, so no superseded run is reported and a caller that wants the earlier runs cannot get them here.
 
