@@ -5,7 +5,7 @@ use interprex::{
     CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionReply,
     FindingSeverity, Mergeability, ProviderError, Repository, ReviewActorKind, ReviewRequestTarget,
     ReviewRequestTargetInspection, ReviewTarget, ReviewTargetsProvider, ReviewTeamKind,
-    ReviewThreadId,
+    ReviewThreadId, ReviewerApplicationsProvider,
 };
 use tokio::time::timeout;
 
@@ -15,6 +15,156 @@ use super::http_fixture::{
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+
+#[tokio::test]
+async fn reviewer_application_resolution_uses_the_canonical_slug_and_requests_its_bot_once() {
+    let (uri, requests) = json_responses(vec![
+        r#"{"id":4111233,"slug":"adr-codex-review","name":"ADR Codex Review"}"#,
+        r#"{"node_id":"BOT_kgDOEZ_BKw","login":"adr-codex-review[bot]","type":"Bot"}"#,
+        include_str!("../fixtures/pull_request.json"),
+        r#"{"data":{"requestReviewsByLogin":{"pullRequest":{"id":"PR_kwDOExample"}}}}"#,
+    ])
+    .await;
+    let provider = provider(uri);
+
+    let application = provider
+        .resolve_reviewer_application(&repository(), "requested alias/app")
+        .await
+        .expect("reviewer application");
+    assert_eq!(application.app().id.as_str(), "4111233");
+    assert_eq!(application.app().slug, "adr-codex-review");
+    assert_eq!(application.app().name, "ADR Codex Review");
+    assert_eq!(application.bot().id.as_str(), "BOT_kgDOEZ_BKw");
+    assert_eq!(application.bot().login, "adr-codex-review[bot]");
+    assert_eq!(application.bot().kind, ReviewActorKind::Bot);
+
+    provider
+        .request_reviewers(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &[ReviewRequestTarget::Bot(application.bot().login.clone())],
+        )
+        .await
+        .expect("review request");
+
+    let requests = timeout(Duration::from_secs(1), requests)
+        .await
+        .expect("provider sent all requests")
+        .expect("captured requests");
+    assert_user_request(&requests[0], "GET /apps/requested%20alias%2Fapp ");
+    assert_user_request(&requests[1], "GET /users/adr%2Dcodex%2Dreview%5Bbot%5D ");
+    let (_, body) = requests[3].split_once("\r\n\r\n").expect("request body");
+    let body: serde_json::Value = serde_json::from_str(body).expect("JSON request body");
+    assert_eq!(
+        body["variables"]["botLogins"],
+        serde_json::json!(["adr-codex-review[bot]"])
+    );
+}
+
+#[tokio::test]
+async fn reviewer_application_resolution_distinguishes_missing_apps_and_bots() {
+    let (app_uri, app_requests) = status_json_responses(vec![("404 Not Found", NOT_FOUND)]).await;
+    let app_error = provider(app_uri)
+        .resolve_reviewer_application(&repository(), "missing-app")
+        .await
+        .expect_err("missing app");
+    assert!(matches!(
+        app_error,
+        ProviderError::NotFound { ref entity } if entity == "reviewer application missing-app"
+    ));
+    assert_eq!(app_requests.await.expect("captured app request").len(), 1);
+
+    let (bot_uri, bot_requests) = status_json_responses(vec![
+        (
+            "200 OK",
+            r#"{"id":4111233,"slug":"missing-bot","name":"Missing Bot"}"#,
+        ),
+        ("404 Not Found", NOT_FOUND),
+    ])
+    .await;
+    let bot_error = provider(bot_uri)
+        .resolve_reviewer_application(&repository(), "missing-bot")
+        .await
+        .expect_err("missing bot");
+    assert!(matches!(
+        bot_error,
+        ProviderError::NotFound { ref entity }
+            if entity == "reviewer application bot missing-bot[bot]"
+    ));
+    assert_eq!(bot_requests.await.expect("captured bot requests").len(), 2);
+}
+
+#[tokio::test]
+async fn reviewer_application_resolution_rejects_non_bot_and_invalid_provider_data() {
+    let (non_bot_uri, non_bot_requests) = status_json_responses(vec![
+        (
+            "200 OK",
+            r#"{"id":4111233,"slug":"review-app","name":"Review App"}"#,
+        ),
+        (
+            "200 OK",
+            r#"{"node_id":"U_reviewer","login":"review-app[bot]","type":"User"}"#,
+        ),
+    ])
+    .await;
+    let non_bot_error = provider(non_bot_uri)
+        .resolve_reviewer_application(&repository(), "review-app")
+        .await
+        .expect_err("non-bot actor");
+    assert!(matches!(
+        non_bot_error,
+        ProviderError::Unrepresentable { provider: "github", ref fact }
+            if fact.contains("must be a bot")
+    ));
+    assert_eq!(
+        non_bot_requests
+            .await
+            .expect("captured non-bot requests")
+            .len(),
+        2
+    );
+
+    let (invalid_uri, invalid_requests) =
+        status_json_responses(vec![("200 OK", r#"{"id":4111233,"slug":"review-app"}"#)]).await;
+    let invalid_error = provider(invalid_uri)
+        .resolve_reviewer_application(&repository(), "review-app")
+        .await
+        .expect_err("invalid app data");
+    assert!(matches!(
+        invalid_error,
+        ProviderError::Unrepresentable { provider: "github", ref fact }
+            if fact.contains("reviewer application review-app")
+    ));
+    assert_eq!(
+        invalid_requests
+            .await
+            .expect("captured invalid request")
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn reviewer_application_resolution_reports_transport_failures_as_external() {
+    let (uri, requests) = status_json_responses(vec![(
+        "500 Internal Server Error",
+        r#"{"message":"service unavailable","documentation_url":"https://docs.github.test"}"#,
+    )])
+    .await;
+    let error = provider(uri)
+        .resolve_reviewer_application(&repository(), "review-app")
+        .await
+        .expect_err("transport failure");
+    assert!(matches!(
+        error,
+        ProviderError::External {
+            provider: "github",
+            operation: "resolve reviewer application",
+            ..
+        }
+    ));
+    assert_eq!(requests.await.expect("captured failed request").len(), 1);
+}
 
 #[tokio::test]
 async fn review_target_inspection_finds_a_bot_after_the_user_spelling_is_missing() {

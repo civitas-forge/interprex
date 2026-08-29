@@ -7,7 +7,7 @@ use bytes::Bytes;
 use interprex::{
     AssetId, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun, DispatchInputs, Issue,
     IssueNumber, Label, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
-    ReviewRequestTarget, ReviewTarget, Ruleset, RunId, WorkflowRun,
+    ReviewRequestTarget, ReviewTarget, ReviewerApplication, Ruleset, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -25,6 +25,7 @@ pub(crate) struct State {
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
     pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
+    pub(crate) reviewer_applications: BTreeMap<(Repository, String), ReviewerApplication>,
     pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
@@ -91,6 +92,24 @@ impl FakeProvider {
         state
             .review_target_observations
             .push((repository, target, observed));
+    }
+
+    /// Maps one lookup slug to the application and bot identity returned for a
+    /// repository.
+    ///
+    /// The fake does not derive this mapping from the application's canonical
+    /// slug or from a seeded review target.
+    pub async fn seed_reviewer_application(
+        &self,
+        repository: Repository,
+        slug: String,
+        application: ReviewerApplication,
+    ) {
+        self.state
+            .write()
+            .await
+            .reviewer_applications
+            .insert((repository, slug), application);
     }
 
     /// Seeds observed checks, each on the commit it names, replacing whatever

@@ -5,12 +5,13 @@ use interprex::{
     ChangeRequestState, CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider,
     CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
     FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp,
-    ProviderAppId, Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts,
-    RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor,
-    ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding,
-    ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget,
+    ProviderAppId, ProviderError, Release, ReleaseId, ReleasesProvider, Repository,
+    RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
+    ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget,
     ReviewRequestTargetInspection, ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    ReviewThreadId, ReviewThreadStatus, ReviewedRevision, ReviewerApplication,
+    ReviewerApplicationsProvider,
 };
 
 use crate::FakeProvider;
@@ -231,6 +232,46 @@ async fn consumer_inspects_only_explicitly_seeded_review_targets() {
         ReviewRequestTargetInspection::NotResolvable,
         "the fake must not invent a bot observation from a bot request target"
     );
+}
+
+#[tokio::test]
+async fn consumer_resolves_only_explicitly_seeded_reviewer_applications() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let application = ReviewerApplication::new(
+        ProviderApp {
+            id: ProviderAppId::new("4111233").expect("app id"),
+            slug: "adr-codex-review".to_owned(),
+            name: "ADR Codex Review".to_owned(),
+        },
+        ReviewActor {
+            id: ReviewActorId::new("BOT_kgDOEZ_BKw").expect("actor id"),
+            login: "adr-codex-review[bot]".to_owned(),
+            kind: ReviewActorKind::Bot,
+        },
+    )
+    .expect("reviewer application");
+    provider
+        .seed_reviewer_application(
+            repository.clone(),
+            "configured-reviewer".to_owned(),
+            application.clone(),
+        )
+        .await;
+
+    assert_eq!(
+        provider
+            .resolve_reviewer_application(&repository, "configured-reviewer")
+            .await
+            .expect("seeded application"),
+        application
+    );
+    assert!(matches!(
+        provider
+            .resolve_reviewer_application(&repository, "adr-codex-review")
+            .await,
+        Err(ProviderError::NotFound { .. })
+    ));
 }
 
 #[tokio::test]
