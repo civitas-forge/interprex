@@ -23,7 +23,7 @@ Interprex
     Releases:
         Read and create releases, stream uploads and stream downloads.
 
-3. Code Review Data
+3. Source Configuration and Code Review Data
 
     A change request carries its current base and head commits, the branch it targets, the head it proposes and every review record returned by the provider. Branches are named rather than left to be inferred from a commit sha, because branches share tips and advance between observations. The head is absent when the provider no longer identifies the repository holding the branch, as GitHub reports once a fork is deleted. Its state is open, closed without merging, or merged with the merge time the platform recorded. Reviews remain distinct when the same actor reviews the same revision more than once.
 
@@ -32,6 +32,8 @@ Interprex
     `ChangeRequestHead` holds that head, reading its branch from one ref spelling, `refs/heads/<branch>`. One spelling keeps every branch addressable, and a name git would refuse to create is refused here rather than sent as a query no change request could answer.
 
     A change request also carries its mergeability: mergeable, conflicted, or unknown while the platform has not finished computing the merge. Mergeability reports that merge computation alone. Required checks, approvals and branch rules are separate facts, so a mergeable change request can still be one the platform refuses to merge.
+
+    `SourceCodeConfigurationProvider` reads and applies complete provider-native rulesets. The GitHub provider follows every page of repository ruleset summaries and reads each ruleset's detail before returning it. Reads preserve branch, tag, push and repository targets, inherited source identity, bypass actors, conditions, rules, parameters and unknown response fields. An omitted bypass-actor collection is an incomplete read, not an empty collection. Writes accept complete repository-owned branch, tag and push rulesets, send only GitHub's writable fields and read the accepted ruleset back before returning it. Inherited and unsupported native forms produce explicit errors rather than partial configuration.
 
     `AppliedSourceRequirementsProvider` reports whether the applied source configuration requires the head to contain the target-branch tip, the strongest required approval count, and one missing, pending, satisfied or failed answer for each native required check. Its observation names the exact repository, target branch, base commit and head commit it answers. Native check-run and commit-status matching belongs to the provider; the application decides what those answers mean for its policy.
 
@@ -66,7 +68,7 @@ Interprex
     `interprex`:
         The published crate containing provider-neutral models, errors and asynchronous domain interfaces.
     `interprex-github`:
-        The repository's GitHub provider, its credential configuration, and complete GitHub ruleset values. Ruleset transport and applied-requirement reads return an explicit unsupported error until the provider implements those capabilities.
+        The repository's GitHub provider, its credential configuration, complete GitHub ruleset reads and writes, and native ruleset values. Applied-requirement reads return an explicit unsupported error until the provider implements that capability.
     `interprex-test`:
         The repository's stateful in-memory provider for consumer tests.
     `interprex-bucket`:
