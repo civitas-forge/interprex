@@ -1,8 +1,8 @@
 use interprex::{
     FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
-    ReviewComment,
+    ProviderTextRecord, ReviewComment,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub(super) const RESOLVE_THREAD: &str = r#"
 mutation ResolveReviewThread($threadId: ID!) {
@@ -50,13 +50,14 @@ pub(super) struct AddedThreadReply {
     pub(super) id: String,
 }
 
+const FINDING_RESOLUTION_NAMESPACE: &str = "interprex";
+const FINDING_RESOLUTION_NAME: &str = "finding-resolution";
 const FINDING_RESOLUTION_META_START: &str = "<!-- interprex:finding-resolution\n";
 const FINDING_RESOLUTION_META_END: &str = "\n-->";
 const FINDING_RESOLUTION_META_VERSION: u8 = 1;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct GithubFindingResolution {
-    version: u8,
     resolution_reason: FindingResolutionReason,
     addressing_severity: FindingSeverity,
 }
@@ -86,19 +87,22 @@ pub(super) fn github_resolution_reply(resolution: FindingResolution, reply: &str
     let badge = format!(
         "![Interprex severity: {severity}](https://img.shields.io/badge/severity-{severity}-{color})"
     );
-    let metadata = GithubFindingResolution {
-        version: FINDING_RESOLUTION_META_VERSION,
-        resolution_reason: resolution.reason,
-        addressing_severity: resolution.addressing_severity,
-    };
-    let metadata = serde_json::to_string(&metadata)
-        .expect("the fixed finding-resolution metadata shape serializes");
-    let marker = format!("{FINDING_RESOLUTION_META_START}{metadata}{FINDING_RESOLUTION_META_END}");
-    [visible, badge, reply.to_owned(), marker]
+    let visible = [visible, badge, reply.to_owned()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join("\n\n");
+    let metadata = ProviderTextRecord::new(
+        FINDING_RESOLUTION_NAMESPACE,
+        FINDING_RESOLUTION_NAME,
+        serde_json::json!({
+            "version": FINDING_RESOLUTION_META_VERSION,
+            "resolution_reason": resolution.reason,
+            "addressing_severity": resolution.addressing_severity,
+        }),
+    )
+    .expect("the fixed finding-resolution record is valid");
+    super::text_records::embed_record(&visible, &metadata)
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -113,11 +117,17 @@ fn finding_resolution(body: &str) -> ParsedFindingResolution {
     let Some(marker_start) = body.rfind(FINDING_RESOLUTION_META_START) else {
         return ParsedFindingResolution::Absent;
     };
-    if !body.ends_with(FINDING_RESOLUTION_META_END) {
+    let metadata_start = marker_start + FINDING_RESOLUTION_META_START.len();
+    let Some(metadata_end) = body[metadata_start..]
+        .find(FINDING_RESOLUTION_META_END)
+        .map(|offset| metadata_start + offset)
+    else {
+        return ParsedFindingResolution::Absent;
+    };
+    let trailing = &body[metadata_end + FINDING_RESOLUTION_META_END.len()..];
+    if !super::text_records::contains_only_records(trailing) {
         return ParsedFindingResolution::Absent;
     }
-    let metadata_start = marker_start + FINDING_RESOLUTION_META_START.len();
-    let metadata_end = body.len() - FINDING_RESOLUTION_META_END.len();
     let Some(metadata) = body.get(metadata_start..metadata_end) else {
         return ParsedFindingResolution::Absent;
     };
@@ -168,6 +178,7 @@ pub(super) fn latest_finding_resolution(
 mod tests {
     use interprex::{
         FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
+        ProviderTextRecord,
     };
 
     use super::super::{
@@ -225,6 +236,21 @@ mod tests {
         assert_eq!(
             finding_resolution(&format!("{valid}\n\nordinary trailing text")),
             ParsedFindingResolution::Absent
+        );
+
+        let appended = ProviderTextRecord::new(
+            "comitia",
+            "loop-event",
+            serde_json::json!({"version": 1, "kind": "round-finished"}),
+        )
+        .expect("record");
+        let body = super::super::text_records::embed_record(&valid, &appended);
+        assert_eq!(
+            finding_resolution(&body),
+            ParsedFindingResolution::Supported(FindingResolution {
+                reason: FindingResolutionReason::Invalid,
+                addressing_severity: FindingSeverity::Nit,
+            })
         );
     }
     #[test]

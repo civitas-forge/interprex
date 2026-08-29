@@ -5,13 +5,14 @@ use interprex::{
     ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckRun, CheckStatus,
     CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
     FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
-    Mergeability, ProviderApp, ProviderAppId, ProviderError, Release, ReleaseId, ReleasesProvider,
-    Repository, RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide,
-    ReviewDisposition, ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewTarget,
-    ReviewTargetsProvider, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
-    ReviewerApplication, ReviewerApplicationsProvider,
+    Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord, Release,
+    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewRequestTargetInspection,
+    ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewThread, ReviewThreadId,
+    ReviewThreadStatus, ReviewedRevision, ReviewerApplication, ReviewerApplicationsProvider,
+    TextRecordsProvider,
 };
 
 use crate::FakeProvider;
@@ -449,9 +450,17 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         reason: FindingResolutionReason::Addressed,
         addressing_severity: FindingSeverity::Major,
     };
-    let explanation =
-        FindingResolutionReply::new("Addressed by validating the range before indexing.")
-            .expect("resolution explanation");
+    let fix_record = ProviderTextRecord::new(
+        "consumer",
+        "fix",
+        serde_json::json!({"version": 1, "commit": "abc123", "note": "dash --> safe"}),
+    )
+    .expect("fix record");
+    let explanation = FindingResolutionReply::new(provider.embed_record(
+        "Addressed by validating the range before indexing.",
+        &fix_record,
+    ))
+    .expect("resolution explanation");
     provider
         .resolve_finding(
             &repository,
@@ -477,9 +486,11 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
     let resolution_reply = finding.resolution_reply().expect("linked resolution reply");
     assert_eq!(resolution_reply.author.login, "fake-provider");
     assert!(resolution_reply.created_at > change_request.updated_at);
+    let resolution_body = &finding.replies.last().expect("resolution reply").body;
+    assert!(resolution_body.starts_with("Addressed by validating the range before indexing."));
     assert_eq!(
-        finding.replies.last().map(|comment| comment.body.as_str()),
-        Some("Addressed by validating the range before indexing.")
+        provider.extract_records(resolution_body),
+        std::slice::from_ref(&fix_record)
     );
 
     let reply_count = finding.replies.len();
@@ -587,8 +598,8 @@ async fn consumer_reads_complete_review_threads_through_the_contract() {
         Some(replacement)
     );
     assert_eq!(
-        finding.replies[finding.replies.len() - 2].body,
-        "Addressed by validating the range before indexing."
+        provider.extract_records(&finding.replies[finding.replies.len() - 2].body),
+        [fix_record]
     );
 }
 
