@@ -13,7 +13,7 @@ license = "MIT"
 readme = "README.md"
 repository = "https://github.com/civitas-forge/interprex"
 rust-version = "1.88"
-version = "3.0.0"
+version = "3.1.0"
 
 [workspace.dependencies]
 async-trait = "0.1.89"
