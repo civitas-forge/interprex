@@ -14,7 +14,15 @@ use crate::config::{GithubConfig, parse_project_config};
 pub struct GithubProvider {
     pub(crate) user: Option<Arc<Octocrab>>,
     pub(crate) streaming_user: Option<Arc<Octocrab>>,
-    pub(crate) apps: BTreeMap<String, Arc<Octocrab>>,
+    pub(crate) apps: BTreeMap<String, ConfiguredApp>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ConfiguredApp {
+    pub(crate) app_id: u64,
+    pub(crate) read: Arc<Octocrab>,
+    pub(crate) write: Arc<Octocrab>,
+    pub(crate) source: ConfigurationSource,
 }
 
 impl fmt::Debug for GithubProvider {
@@ -38,9 +46,12 @@ impl GithubProvider {
     }
 
     pub(crate) fn app(&self, name: &str) -> Result<&Octocrab> {
+        self.configured_app(name).map(|app| app.read.as_ref())
+    }
+
+    pub(crate) fn configured_app(&self, name: &str) -> Result<&ConfiguredApp> {
         self.apps
             .get(name)
-            .map(AsRef::as_ref)
             .ok_or_else(|| ProviderError::MissingCredential {
                 identity: name.to_owned(),
                 kind: "named app",
@@ -80,18 +91,36 @@ fn from_config_with_source(
 
     let mut apps = BTreeMap::new();
     for (name, credentials) in &config.apps {
-        let key = EncodingKey::from_rsa_pem(credentials.private_key.expose_secret().as_bytes())
-            .map_err(|_| ProviderError::Configuration {
-                origin: source.clone(),
-                reason: format!("invalid RSA private key for app {name}"),
-            })?;
-        let client = configured_builder(&config)?
-            .app(credentials.app_id.into(), key)
+        let key = || {
+            EncodingKey::from_rsa_pem(credentials.private_key.expose_secret().as_bytes()).map_err(
+                |_| ProviderError::Configuration {
+                    origin: source.clone(),
+                    reason: format!("invalid RSA private key for app {name}"),
+                },
+            )
+        };
+        let read = configured_builder(&config)?
+            .app(credentials.app_id.into(), key()?)
             .build()
             .map_err(|error| external("construct app client", error))?
             .installation(credentials.installation_id.into())
             .map_err(|error| external("scope app installation", error))?;
-        apps.insert(name.clone(), Arc::new(client));
+        let write = base_builder(&config)?
+            .add_retry_config(RetryConfig::None)
+            .app(credentials.app_id.into(), key()?)
+            .build()
+            .map_err(|error| external("construct app write client", error))?
+            .installation(credentials.installation_id.into())
+            .map_err(|error| external("scope app write installation", error))?;
+        apps.insert(
+            name.clone(),
+            ConfiguredApp {
+                app_id: credentials.app_id,
+                read: Arc::new(read),
+                write: Arc::new(write),
+                source: source.clone(),
+            },
+        );
     }
     Ok(GithubProvider {
         user,
@@ -167,6 +196,23 @@ pub(crate) fn external(operation: &'static str, error: impl fmt::Display) -> Pro
     }
 }
 
+pub(crate) fn authenticated_external(
+    operation: &'static str,
+    error: &octocrab::Error,
+) -> ProviderError {
+    let message = match error {
+        octocrab::Error::GitHub { source, .. } => {
+            format!("GitHub returned HTTP {}", source.status_code.as_u16())
+        }
+        _ => "request failed before a valid GitHub response".to_owned(),
+    };
+    ProviderError::External {
+        provider: "github",
+        operation,
+        message,
+    }
+}
+
 pub(crate) fn read_error(
     operation: &'static str,
     entity: impl Into<String>,
@@ -202,7 +248,7 @@ mod tests {
     use interprex::{ConfigurationSource, ProviderError};
     use secrecy::SecretString;
 
-    use super::{GithubProvider, from_config, from_project, from_project_read};
+    use super::{ConfiguredApp, GithubProvider, from_config, from_project, from_project_read};
     use crate::{AppCredentials, GithubConfig};
 
     struct TempProject(PathBuf);
@@ -335,7 +381,12 @@ mod tests {
             streaming_user: None,
             apps: BTreeMap::from([(
                 "automation".to_owned(),
-                Arc::new(octocrab::Octocrab::default()),
+                ConfiguredApp {
+                    app_id: 12,
+                    read: Arc::new(octocrab::Octocrab::default()),
+                    write: Arc::new(octocrab::Octocrab::default()),
+                    source: ConfigurationSource::Direct,
+                },
             )]),
         };
         assert_eq!(

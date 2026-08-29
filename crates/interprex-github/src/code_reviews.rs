@@ -31,6 +31,7 @@ mod actors;
 mod change_requests;
 mod checks;
 mod finding_resolutions;
+mod review_publications;
 mod review_requests;
 mod review_threads;
 mod reviewer_applications;

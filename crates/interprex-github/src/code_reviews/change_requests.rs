@@ -9,7 +9,10 @@ use interprex::{
 use octocrab::Page;
 use serde::Deserialize;
 
-use crate::{GithubProvider, client::external};
+use crate::{
+    GithubProvider,
+    client::{authenticated_external, external, is_not_found},
+};
 
 use super::actors::{GithubApp, GithubUser, ghost_actor, normalize_app, rest_actor};
 use super::finding_resolutions::latest_finding_resolution;
@@ -65,13 +68,14 @@ pub(super) struct GithubPullRequestNumber {
 
 #[derive(Deserialize, PartialEq)]
 pub(super) struct GithubReview {
-    node_id: String,
+    pub(super) id: u64,
+    pub(super) node_id: String,
     pub(super) user: Option<GithubUser>,
-    body: String,
-    state: String,
-    commit_id: String,
-    submitted_at: Option<chrono::DateTime<chrono::Utc>>,
-    performed_via_github_app: Option<GithubApp>,
+    pub(super) body: String,
+    pub(super) state: String,
+    pub(super) commit_id: String,
+    pub(super) submitted_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub(super) performed_via_github_app: Option<GithubApp>,
 }
 
 #[derive(Deserialize, PartialEq)]
@@ -436,18 +440,44 @@ impl GithubProvider {
         repository: &Repository,
         number: ChangeRequestNumber,
     ) -> Result<Vec<GithubReview>> {
-        let page: Page<GithubReview> = self
-            .user()?
+        self.github_reviews_with(self.user()?, repository, number)
+            .await
+    }
+
+    pub(super) async fn github_reviews_with(
+        &self,
+        client: &octocrab::Octocrab,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+    ) -> Result<Vec<GithubReview>> {
+        let page: Page<GithubReview> = self.read_reviews_page(client, repository, number).await?;
+        client
+            .all_pages(page)
+            .await
+            .map_err(|error| authenticated_external("read reviews", &error))
+    }
+
+    async fn read_reviews_page(
+        &self,
+        client: &octocrab::Octocrab,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+    ) -> Result<Page<GithubReview>> {
+        client
             .get(
                 format!("/repos/{repository}/pulls/{}/reviews", number.get()),
                 Some(&[("per_page", 100)]),
             )
             .await
-            .map_err(|error| external("read reviews", error))?;
-        self.user()?
-            .all_pages(page)
-            .await
-            .map_err(|error| external("read reviews", error))
+            .map_err(|error| {
+                if is_not_found(&error) {
+                    ProviderError::NotFound {
+                        entity: format!("change request {} in {repository}", number.get()),
+                    }
+                } else {
+                    authenticated_external("read reviews", &error)
+                }
+            })
     }
 
     pub(super) async fn github_unanchored_comments(
