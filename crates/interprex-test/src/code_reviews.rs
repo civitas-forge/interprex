@@ -6,7 +6,7 @@ use interprex::{
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest,
     ReviewRequestId, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
     ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
-    ReviewThreadStatus,
+    ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -307,6 +307,23 @@ impl ReviewTargetsProvider for FakeProvider {
                     ReviewRequestTargetInspection::from_observation(target, observed.clone())
                 },
             ))
+    }
+}
+
+#[async_trait]
+impl ReviewerApplicationsProvider for FakeProvider {
+    async fn resolve_reviewer_application(
+        &self,
+        repository: &Repository,
+        slug: &str,
+    ) -> Result<ReviewerApplication> {
+        self.state
+            .read()
+            .await
+            .reviewer_applications
+            .get(&(repository.clone(), slug.to_owned()))
+            .cloned()
+            .ok_or_else(|| missing(format!("reviewer application {slug} in {repository}")))
     }
 }
 
