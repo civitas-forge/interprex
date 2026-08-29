@@ -13,7 +13,7 @@ pub(super) struct GithubUser {
 
 #[derive(Deserialize, PartialEq)]
 pub(super) struct GithubApp {
-    id: u64,
+    pub(super) id: u64,
     slug: String,
     name: String,
 }

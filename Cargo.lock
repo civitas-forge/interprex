@@ -980,9 +980,12 @@ dependencies = [
  "jsonwebtoken",
  "octocrab",
  "percent-encoding",
+ "rand 0.8.7",
+ "rsa",
  "secrecy",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "toml",
 ]

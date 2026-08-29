@@ -30,9 +30,12 @@ jsonwebtoken = "10.1.0"
 object_store = { version = "0.12.4", features = ["gcp"] }
 octocrab = { version = "0.49.7", features = ["retry", "stream"] }
 percent-encoding = "2.3.2"
+rand = "0.8.5"
+rsa = "0.9.8"
 secrecy = "0.10.3"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha2 = "0.10.9"
 thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 toml = "0.9.8"

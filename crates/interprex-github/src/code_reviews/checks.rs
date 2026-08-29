@@ -186,8 +186,8 @@ mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use interprex::{
-        CheckConclusion, CheckOutcome, CheckStatus, CodeReviewsProvider, ProviderError,
-        PublishedCheckConclusion, Repository, Result,
+        CheckConclusion, CheckOutcome, CheckStatus, CodeReviewsProvider, ConfigurationSource,
+        ProviderError, PublishedCheckConclusion, Repository, Result,
     };
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -196,7 +196,7 @@ mod tests {
     };
 
     use super::{GithubCheckRun, GithubCheckRunPage, conclusion, normalize_check_run};
-    use crate::GithubProvider;
+    use crate::{GithubProvider, client::ConfiguredApp};
 
     fn check_run(status: &str, conclusion: Option<&str>) -> GithubCheckRun {
         GithubCheckRun {
@@ -410,7 +410,15 @@ mod tests {
         let provider = GithubProvider {
             user: None,
             streaming_user: None,
-            apps: BTreeMap::from([("automation".to_owned(), Arc::new(client))]),
+            apps: BTreeMap::from([(
+                "automation".to_owned(),
+                ConfiguredApp {
+                    app_id: 12,
+                    read: Arc::new(client.clone()),
+                    write: Arc::new(client),
+                    source: ConfigurationSource::Direct,
+                },
+            )]),
         };
         let repository = Repository::new("civitas-forge", "interprex-sandbox").expect("repository");
         provider

@@ -23,7 +23,7 @@ Design
     Tracker:
         Issues and labels.
     Code Review:
-        Change requests, their mergeability, reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, review-request target inspection, the checks on a commit, published check results and the draft-to-ready transition.
+        Change requests, their mergeability, published reviews and their findings, standalone threads, unanchored comments, finding resolutions, outstanding review requests, review-request target inspection, the checks on a commit, published check results and the draft-to-ready transition.
     Jobs:
         Dispatch, run observation and cancellation.
     Releases:
@@ -83,6 +83,8 @@ Design
     Interprex does not intersect check names with a ruleset's required check names, decide that a change request is ready, or answer whether the platform would accept the merge. Those are caller decisions over the returned facts.
 
     Every review record remains independent, including repeated reviews by the same actor against the same head and reviews without findings. Collection order carries no policy meaning. A draft review has `ReviewState::Draft`. A submitted review has `ReviewState::Submitted`, which contains its disposition and submission time. The review body becomes its optional summary in either state.
+
+    `ReviewPublishingProvider` publishes one complete review against the revision the caller supplies. The GitHub provider selects the named app whose configuration key matches the reviewer's app slug and refuses to write when its configured App ID differs from the resolved reviewer. It creates the summary, hidden publication record and inline findings together as a pending review, submits that review, then reads it back through the same app installation. A repeated publication key adopts the matching review or submits its pending review; a failed create response causes a read, never another create request.
 
     `ReviewAuthor` stores the author and the relationship that the provider can establish without allowing contradictory combinations:
 

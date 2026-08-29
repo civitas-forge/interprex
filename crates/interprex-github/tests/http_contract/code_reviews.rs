@@ -3,18 +3,932 @@ use std::time::Duration;
 use interprex::{
     ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
     CheckConclusion, CheckStatus, CodeReviewsProvider, FindingResolution, FindingResolutionReason,
-    FindingResolutionReply, FindingSeverity, Mergeability, ProviderError, Repository,
-    ReviewActorKind, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
-    ReviewTargetsProvider, ReviewTeamKind, ReviewThreadId, ReviewerApplicationsProvider,
+    FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp, ProviderAppId,
+    ProviderError, ProviderTextRecord, Repository, ReviewActor, ReviewActorId, ReviewActorKind,
+    ReviewAnchor, ReviewDiffSide, ReviewDisposition, ReviewLine, ReviewPublicationKey,
+    ReviewPublishingProvider, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState,
+    ReviewSubmission, ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget,
+    ReviewTargetsProvider, ReviewTeamKind, ReviewThreadId, ReviewedRevision, ReviewerApplication,
+    ReviewerApplicationsProvider, TextRecordsProvider,
 };
+use sha2::{Digest, Sha256};
 use tokio::time::timeout;
 
 use super::http_fixture::{
-    assert_user_request, json_responses, provider, repository, rest_filtered_pages, server,
-    status_json_responses,
+    ScriptedResponse, app_provider, assert_user_request, json_responses, project_app_provider,
+    provider, repository, rest_filtered_pages, scripted_responses, server, status_json_responses,
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+
+fn reviewer_application() -> ReviewerApplication {
+    ReviewerApplication::new(
+        ProviderApp {
+            id: ProviderAppId::new("4111233").expect("app id"),
+            slug: "adr-codex-review".to_owned(),
+            name: "ADR Codex Review".to_owned(),
+        },
+        ReviewActor {
+            id: ReviewActorId::new("BOT_kgDOEZ_BKw").expect("bot id"),
+            login: "adr-codex-review[bot]".to_owned(),
+            kind: ReviewActorKind::Bot,
+        },
+    )
+    .expect("reviewer application")
+}
+
+fn review_submission(disposition: ReviewSubmissionDisposition) -> ReviewSubmission {
+    ReviewSubmission::new(
+        ReviewPublicationKey::new("round-2:codex").expect("publication key"),
+        ReviewedRevision {
+            head_sha: "65ab9a843dd3a2114e3528fa6e0d7423fd32307e".to_owned(),
+        },
+        disposition,
+        "Two findings need attention.",
+        vec![
+            ReviewSubmissionFinding::new(
+                "src/lib.rs",
+                ReviewLine::new(17).expect("line"),
+                ReviewDiffSide::Right,
+                "Handle the error.",
+            )
+            .expect("right-side finding"),
+            ReviewSubmissionFinding::new(
+                "src/old.rs",
+                ReviewLine::new(4).expect("line"),
+                ReviewDiffSide::Left,
+                "Remove the stale branch.",
+            )
+            .expect("left-side finding"),
+        ],
+    )
+    .expect("review submission")
+}
+
+fn publication_body(submission: &ReviewSubmission) -> String {
+    let digest = Sha256::digest(serde_json::to_vec(submission).expect("serialize submission"));
+    publication_body_with(
+        submission.summary(),
+        submission.publication_key().as_str(),
+        &format!("sha256:{digest:x}"),
+        submission.disposition(),
+    )
+}
+
+fn publication_body_with(
+    summary: &str,
+    key: &str,
+    digest: &str,
+    disposition: ReviewSubmissionDisposition,
+) -> String {
+    let record = ProviderTextRecord::new(
+        "interprex",
+        "review-publication",
+        serde_json::json!({
+            "version": 1,
+            "key": key,
+            "digest": digest,
+            "disposition": disposition,
+        }),
+    )
+    .expect("publication record");
+    provider("http://127.0.0.1:1".to_owned()).embed_record(summary, &record)
+}
+
+fn github_review(body: &str, state: &str, submitted_at: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "id": 91,
+        "node_id": "PRR_publication",
+        "user": {
+            "node_id": "BOT_kgDOEZ_BKw",
+            "login": "adr-codex-review[bot]",
+            "type": "Bot"
+        },
+        "body": body,
+        "state": state,
+        "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+        "submitted_at": submitted_at,
+        "performed_via_github_app": {
+            "id": 4111233,
+            "slug": "adr-codex-review",
+            "name": "ADR Codex Review"
+        }
+    })
+}
+
+fn installation_token() -> ScriptedResponse {
+    ScriptedResponse::json(r#"{"token":"app-installation-token","permissions":{}}"#)
+}
+
+#[tokio::test]
+async fn app_publication_creates_one_complete_pending_review_then_submits_and_verifies_it() {
+    let submission = review_submission(ReviewSubmissionDisposition::ChangesRequested);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let submitted =
+        github_review(&body, "CHANGES_REQUESTED", Some("2026-08-29T10:00:00Z")).to_string();
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::status("200 OK", pending),
+        ScriptedResponse::status("200 OK", submitted.clone()),
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = project_app_provider(uri, 4111233)
+        .await
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("publish review");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = timeout(Duration::from_secs(2), requests)
+        .await
+        .expect("provider completed request sequence")
+        .expect("captured requests");
+    assert_eq!(requests.len(), 6);
+    assert!(requests[0].starts_with("POST /app/installations/34/access_tokens "));
+    assert!(
+        requests[1].starts_with(
+            "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 "
+        )
+    );
+    assert!(requests[2].starts_with("POST /app/installations/34/access_tokens "));
+    assert!(
+        requests[3].starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews ")
+    );
+    assert!(
+        requests[4]
+            .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews/91/events ")
+    );
+    assert!(
+        requests[5].starts_with(
+            "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 "
+        )
+    );
+    for request in [&requests[1], &requests[3], &requests[4], &requests[5]] {
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer app-installation-token"),
+            "{request}"
+        );
+    }
+
+    let (_, create_body) = requests[3].split_once("\r\n\r\n").expect("create body");
+    let create_body: serde_json::Value =
+        serde_json::from_str(create_body).expect("JSON create body");
+    assert_eq!(
+        create_body,
+        serde_json::json!({
+            "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
+            "body": body,
+            "comments": [
+                {"path": "src/lib.rs", "line": 17, "side": "RIGHT", "body": "Handle the error."},
+                {"path": "src/old.rs", "line": 4, "side": "LEFT", "body": "Remove the stale branch."}
+            ]
+        })
+    );
+    assert!(create_body.get("event").is_none());
+    let (_, submit_body) = requests[4].split_once("\r\n\r\n").expect("submit body");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(submit_body).expect("JSON submit body"),
+        serde_json::json!({"event": "REQUEST_CHANGES"})
+    );
+}
+
+#[tokio::test]
+async fn app_publication_maps_approved_and_comment_only_dispositions() {
+    for (disposition, github_state, event) in [
+        (ReviewSubmissionDisposition::Approved, "APPROVED", "APPROVE"),
+        (
+            ReviewSubmissionDisposition::Commented,
+            "COMMENTED",
+            "COMMENT",
+        ),
+    ] {
+        let submission = review_submission(disposition);
+        let body = publication_body(&submission);
+        let pending = github_review(&body, "PENDING", None).to_string();
+        let submitted =
+            github_review(&body, github_state, Some("2026-08-29T10:00:00Z")).to_string();
+        let (uri, requests) = scripted_responses(vec![
+            installation_token(),
+            ScriptedResponse::json("[]"),
+            installation_token(),
+            ScriptedResponse::json(pending),
+            ScriptedResponse::json(submitted.clone()),
+            ScriptedResponse::json(format!("[{submitted}]")),
+        ])
+        .await;
+
+        app_provider(uri, 4111233)
+            .publish_review(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                &reviewer_application(),
+                &submission,
+            )
+            .await
+            .expect("publish review");
+
+        let requests = requests.await.expect("captured requests");
+        let (_, submit_body) = requests[4].split_once("\r\n\r\n").expect("submit body");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(submit_body).expect("JSON submit body"),
+            serde_json::json!({"event": event})
+        );
+    }
+}
+
+#[tokio::test]
+async fn reviewer_app_id_mismatch_fails_before_any_network_request() {
+    let error = app_provider("http://127.0.0.1:1".to_owned(), 999)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &review_submission(ReviewSubmissionDisposition::Commented),
+        )
+        .await
+        .expect_err("mismatched configured app ID");
+
+    assert!(matches!(
+        error,
+        ProviderError::Configuration { ref reason, .. }
+            if reason.contains("APP_ID 999") && reason.contains("4111233")
+    ));
+}
+
+#[tokio::test]
+async fn submitted_recovery_reads_later_pages_and_ignores_a_foreign_reviewer() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let body = publication_body(&submission);
+    let mut foreign = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    foreign["id"] = serde_json::json!(90);
+    foreign["node_id"] = serde_json::json!("PRR_foreign");
+    foreign["user"]["node_id"] = serde_json::json!("BOT_foreign");
+    foreign["performed_via_github_app"]["id"] = serde_json::json!(9876);
+    let exact = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let reviews_path = "/repos/civitas-forge/interprex-sandbox/pulls/5/reviews";
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{foreign}]")).with_header(format!(
+            "link: <{{base}}{reviews_path}?per_page=100&page=2>; rel=\"next\""
+        )),
+        ScriptedResponse::json(format!("[{exact}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            submission.publication_key(),
+        )
+        .await
+        .expect("recover review")
+        .expect("matching review");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 3);
+    assert!(requests[2].starts_with(&format!("GET {reviews_path}?per_page=100&page=2 ")));
+}
+
+#[tokio::test]
+async fn pending_recovery_on_a_later_page_submits_the_retained_disposition() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None);
+    let submitted = github_review(&body, "APPROVED", Some("2026-08-29T10:00:00Z")).to_string();
+    let reviews_path = "/repos/civitas-forge/interprex-sandbox/pulls/5/reviews";
+    let next = format!("link: <{{base}}{reviews_path}?per_page=100&page=2>; rel=\"next\"");
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]").with_header(next.clone()),
+        ScriptedResponse::json(format!("[{pending}]")),
+        installation_token(),
+        ScriptedResponse::json(submitted.clone()),
+        ScriptedResponse::json("[]").with_header(next),
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            submission.publication_key(),
+        )
+        .await
+        .expect("resume review")
+        .expect("matching review");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    let (_, submit_body) = requests[4].split_once("\r\n\r\n").expect("submit body");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(submit_body).expect("JSON submit body"),
+        serde_json::json!({"event": "APPROVE"})
+    );
+}
+
+#[tokio::test]
+async fn same_reviewer_key_with_another_digest_is_invalid_without_a_write() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let body = publication_body_with(
+        submission.summary(),
+        submission.publication_key().as_str(),
+        &format!("sha256:{}", "0".repeat(64)),
+        submission.disposition(),
+    );
+    let existing = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{existing}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect_err("changed submission");
+
+    assert!(matches!(error, ProviderError::InvalidInput { .. }));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn exact_identity_malformed_publication_record_is_external() {
+    let body = "Summary.\n\n<!-- interprex:review-publication\nnot-json\n-->";
+    let malformed = github_review(body, "PENDING", None);
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{malformed}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &ReviewPublicationKey::new("round-2:codex").expect("key"),
+        )
+        .await
+        .expect_err("malformed exact-identity record");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn exact_identity_duplicate_publication_records_are_external() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let body = publication_body(&submission);
+    let carrier = &body[body.find("<!--").expect("publication carrier")..];
+    let duplicate_body = format!("{body}\n\n{carrier}");
+    let duplicate = github_review(&duplicate_body, "PENDING", None);
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{duplicate}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            submission.publication_key(),
+        )
+        .await
+        .expect_err("duplicate exact-identity records");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn exact_identity_record_that_contradicts_review_state_is_external() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let contradictory = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{contradictory}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            submission.publication_key(),
+        )
+        .await
+        .expect_err("contradictory review state");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn malformed_publication_record_from_another_reviewer_is_ignored() {
+    let body = "Summary.\n\n<!-- interprex:review-publication\nnot-json\n-->";
+    let mut foreign = github_review(body, "PENDING", None);
+    foreign["user"]["node_id"] = serde_json::json!("BOT_foreign");
+    foreign["performed_via_github_app"]["id"] = serde_json::json!(9876);
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{foreign}]")),
+    ])
+    .await;
+
+    let recovered = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &ReviewPublicationKey::new("round-2:codex").expect("key"),
+        )
+        .await
+        .expect("foreign record is ignored");
+
+    assert!(recovered.is_none());
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn another_key_with_the_same_digest_does_not_satisfy_recovery() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let digest = Sha256::digest(serde_json::to_vec(&submission).expect("serialize submission"));
+    let body = publication_body_with(
+        submission.summary(),
+        "another-key",
+        &format!("sha256:{digest:x}"),
+        submission.disposition(),
+    );
+    let other = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{other}]")),
+    ])
+    .await;
+
+    let recovered = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            submission.publication_key(),
+        )
+        .await
+        .expect("recovery read");
+
+    assert!(recovered.is_none());
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn ambiguous_create_connection_is_reconciled_without_another_create() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let body = publication_body(&submission);
+    let submitted = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::Close,
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("reconcile accepted create");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request
+                .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn malformed_create_response_is_reconciled_without_another_create() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let body = publication_body(&submission);
+    let submitted = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::json("{"),
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("reconcile malformed create response");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 5);
+}
+
+#[tokio::test]
+async fn create_server_error_is_not_retried_before_reconciliation() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::status("500 Internal Server Error", r#"{"message":"failed"}"#),
+        ScriptedResponse::json("[]"),
+    ])
+    .await;
+
+    let error = timeout(
+        Duration::from_secs(2),
+        app_provider(uri, 4111233).publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        ),
+    )
+    .await
+    .expect("write client did not retry the create")
+    .expect_err("unreconciled create failure");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 5);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request
+                .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn ambiguous_submit_connection_is_reconciled_without_another_submit() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let submitted = github_review(&body, "APPROVED", Some("2026-08-29T10:00:00Z"));
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::json(pending),
+        ScriptedResponse::Close,
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("reconcile accepted submit");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("/reviews/91/events "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn submit_reread_rejects_a_different_same_key_review() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let mut replacement = github_review(&body, "APPROVED", Some("2026-08-29T10:00:00Z"));
+    replacement["id"] = serde_json::json!(92);
+    replacement["node_id"] = serde_json::json!("PRR_replacement");
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::json(pending),
+        ScriptedResponse::json(replacement.to_string()),
+        ScriptedResponse::json(format!("[{replacement}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect_err("reread must retain the submitted review node ID");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("/reviews/91/events "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn submit_server_error_is_not_retried_before_reconciliation() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::json(pending.clone()),
+        ScriptedResponse::status("500 Internal Server Error", r#"{"message":"failed"}"#),
+        ScriptedResponse::json(format!("[{pending}]")),
+    ])
+    .await;
+
+    let error = timeout(
+        Duration::from_secs(2),
+        app_provider(uri, 4111233).publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        ),
+    )
+    .await
+    .expect("write client did not retry the submit")
+    .expect_err("unreconciled submit failure");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 6);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("/reviews/91/events "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn app_review_errors_do_not_repeat_credentials_or_authorization_data() {
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::status(
+            "401 Unauthorized",
+            r#"{"message":"app-installation-token Authorization: Bearer leaked-value"}"#,
+        ),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &ReviewPublicationKey::new("round-2:codex").expect("key"),
+        )
+        .await
+        .expect_err("unauthorized review read");
+
+    let diagnostic = error.to_string();
+    assert!(!diagnostic.contains("app-installation-token"));
+    assert!(!diagnostic.contains("leaked-value"));
+    assert!(!diagnostic.to_ascii_lowercase().contains("authorization:"));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn missing_change_request_is_reported_as_not_found() {
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::status("404 Not Found", NOT_FOUND),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .resume_review_publication(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &ReviewPublicationKey::new("round-2:codex").expect("key"),
+        )
+        .await
+        .expect_err("missing change request");
+
+    assert!(matches!(
+        error,
+        ProviderError::NotFound { ref entity }
+            if entity == "change request 5 in civitas-forge/interprex-sandbox"
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 2);
+}
+
+#[tokio::test]
+async fn published_review_round_trips_through_change_request_observation() {
+    let submission = review_submission(ReviewSubmissionDisposition::ChangesRequested);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let submitted =
+        github_review(&body, "CHANGES_REQUESTED", Some("2026-08-29T10:00:00Z")).to_string();
+    let threads = serde_json::json!({
+        "data": {"repository": {"pullRequest": {"reviewThreads": {
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": [
+                {
+                    "id": "PRRT_right",
+                    "isResolved": false,
+                    "isOutdated": false,
+                    "path": "src/lib.rs",
+                    "subjectType": "LINE",
+                    "diffSide": "RIGHT",
+                    "line": 17,
+                    "startLine": null,
+                    "originalLine": 17,
+                    "originalStartLine": null,
+                    "comments": {
+                        "pageInfo": {"hasNextPage": false, "endCursor": null},
+                        "nodes": [{
+                            "id": "PRRC_right",
+                            "body": "Handle the error.",
+                            "createdAt": "2026-08-29T10:00:00Z",
+                            "updatedAt": "2026-08-29T10:00:00Z",
+                            "author": {"id": "BOT_kgDOEZ_BKw", "login": "adr-codex-review[bot]", "__typename": "Bot"},
+                            "pullRequestReview": {"id": "PRR_publication"}
+                        }]
+                    }
+                },
+                {
+                    "id": "PRRT_left",
+                    "isResolved": false,
+                    "isOutdated": false,
+                    "path": "src/old.rs",
+                    "subjectType": "LINE",
+                    "diffSide": "LEFT",
+                    "line": null,
+                    "startLine": null,
+                    "originalLine": 4,
+                    "originalStartLine": null,
+                    "comments": {
+                        "pageInfo": {"hasNextPage": false, "endCursor": null},
+                        "nodes": [{
+                            "id": "PRRC_left",
+                            "body": "Remove the stale branch.",
+                            "createdAt": "2026-08-29T10:00:00Z",
+                            "updatedAt": "2026-08-29T10:00:00Z",
+                            "author": {"id": "BOT_kgDOEZ_BKw", "login": "adr-codex-review[bot]", "__typename": "Bot"},
+                            "pullRequestReview": {"id": "PRR_publication"}
+                        }]
+                    }
+                }
+            ]
+        }}}}
+    })
+    .to_string();
+    let no_requests = serde_json::json!({
+        "data": {"repository": {"pullRequest": {"reviewRequests": {
+            "pageInfo": {"hasNextPage": false, "endCursor": null},
+            "nodes": []
+        }}}}
+    })
+    .to_string();
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json("[]"),
+        installation_token(),
+        ScriptedResponse::json(pending),
+        ScriptedResponse::json(submitted.clone()),
+        ScriptedResponse::json(format!("[{submitted}]")),
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json(format!("[{submitted}]")),
+        ScriptedResponse::json(threads),
+        ScriptedResponse::json(no_requests),
+        ScriptedResponse::json("[]"),
+    ])
+    .await;
+    let provider = app_provider(uri, 4111233);
+
+    provider
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("publish review");
+    let change_request = provider
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("observe published review");
+
+    assert_eq!(change_request.reviews.len(), 1);
+    let observed = &change_request.reviews[0];
+    assert_eq!(observed.id.as_str(), "PRR_publication");
+    assert_eq!(
+        observed.via_app.as_ref().map(|app| app.id.as_str()),
+        Some("4111233")
+    );
+    assert_eq!(
+        observed.author.actor(&change_request.author).id.as_str(),
+        "BOT_kgDOEZ_BKw"
+    );
+    assert_eq!(observed.revision, submission.revision().clone());
+    assert!(matches!(
+        observed.state,
+        ReviewState::Submitted {
+            disposition: ReviewDisposition::ChangesRequested,
+            ..
+        }
+    ));
+    assert_eq!(observed.findings.len(), 2);
+    assert!(matches!(
+        observed.findings[0].thread.location.anchor,
+        ReviewAnchor::Lines {
+            side: ReviewDiffSide::Right,
+            ..
+        }
+    ));
+    assert!(matches!(
+        observed.findings[1].thread.location.anchor,
+        ReviewAnchor::Lines {
+            side: ReviewDiffSide::Left,
+            ..
+        }
+    ));
+    assert!(
+        observed
+            .summary
+            .as_deref()
+            .is_some_and(|summary| summary.starts_with(submission.summary())
+                && summary.contains("<!-- interprex:review-publication"))
+    );
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 11);
+    for request in &requests[6..] {
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer transport-test-token"),
+            "{request}"
+        );
+    }
+}
 
 #[tokio::test]
 async fn reviewer_application_resolution_uses_the_canonical_slug_and_requests_its_bot_once() {
