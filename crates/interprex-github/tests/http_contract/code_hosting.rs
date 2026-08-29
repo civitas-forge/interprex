@@ -140,12 +140,12 @@ async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
 
 #[tokio::test]
 async fn source_configuration_expands_summaries_and_preserves_complete_details() {
-    let list = serde_json::json!([summary(
-        7,
-        "branch",
-        "Repository",
-        "civitas-forge/interprex-sandbox"
-    )]);
+    let mut list_item = summary(7, "branch", "Repository", "civitas-forge/interprex-sandbox");
+    list_item
+        .as_object_mut()
+        .expect("summary object")
+        .remove("target");
+    let list = serde_json::json!([list_item]);
     let complete = detail(7, "branch", "Repository", "civitas-forge/interprex-sandbox");
     let (uri, requests) = scripted_responses(vec![
         ScriptedResponse::json(list.to_string()),
@@ -176,8 +176,8 @@ async fn source_configuration_expands_summaries_and_preserves_complete_details()
 
 #[tokio::test]
 async fn source_configuration_paginates_summaries_before_expanding_in_order() {
-    let first = summary(7, "branch", "Repository", "civitas-forge/interprex-sandbox");
-    let second = summary(8, "tag", "Repository", "civitas-forge/interprex-sandbox");
+    let first = summary(8, "tag", "Repository", "civitas-forge/interprex-sandbox");
+    let second = summary(7, "branch", "Repository", "civitas-forge/interprex-sandbox");
     let (uri, requests) = scripted_responses(vec![
         ScriptedResponse::json(serde_json::json!([first]).to_string()).with_header(
             "link: <{base}/repos/civitas-forge/interprex-sandbox/rulesets?per_page=100&includes_parents=true&page=2>; rel=\"next\"",
@@ -227,6 +227,44 @@ async fn source_configuration_paginates_summaries_before_expanding_in_order() {
     assert_user_request(
         &requests[3],
         "GET /repos/civitas-forge/interprex-sandbox/rulesets/8?includes_parents=true ",
+    );
+}
+
+#[tokio::test]
+async fn source_configuration_inventory_order_is_independent_of_response_order() {
+    let seven = summary(7, "branch", "Repository", "civitas-forge/interprex-sandbox");
+    let eight = summary(8, "tag", "Repository", "civitas-forge/interprex-sandbox");
+    let mut observations = Vec::new();
+
+    for list in [
+        serde_json::json!([eight.clone(), seven.clone()]),
+        serde_json::json!([seven.clone(), eight.clone()]),
+    ] {
+        let (uri, _) = scripted_responses(vec![
+            ScriptedResponse::json(list.to_string()),
+            ScriptedResponse::json(
+                detail(7, "branch", "Repository", "civitas-forge/interprex-sandbox").to_string(),
+            ),
+            ScriptedResponse::json(
+                detail(8, "tag", "Repository", "civitas-forge/interprex-sandbox").to_string(),
+            ),
+        ])
+        .await;
+        observations.push(
+            provider(uri)
+                .read_rulesets(&repository())
+                .await
+                .expect("ordered rulesets"),
+        );
+    }
+
+    assert_eq!(observations[0], observations[1]);
+    assert_eq!(
+        observations[0]
+            .iter()
+            .map(|ruleset| ruleset.id)
+            .collect::<Vec<_>>(),
+        [Some(7), Some(8)]
     );
 }
 

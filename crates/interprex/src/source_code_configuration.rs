@@ -282,10 +282,11 @@ pub trait SourceCodeConfigurationProvider: Send + Sync {
     /// complete writable configuration, [`crate::ProviderError::NotFound`]
     /// when its repository or existing native identity is absent,
     /// [`crate::ProviderError::MissingCredential`] when the operation lacks
-    /// credentials, [`crate::ProviderError::Unsupported`] when this provider
-    /// has no complete ruleset implementation, and
-    /// [`crate::ProviderError::External`] for provider refusal or transport
-    /// failure.
+    /// credentials, [`crate::ProviderError::Unrepresentable`] when accepted
+    /// provider data cannot be read or verified without loss,
+    /// [`crate::ProviderError::Unsupported`] when this provider has no complete
+    /// ruleset implementation, and [`crate::ProviderError::External`] for
+    /// provider refusal or transport failure.
     async fn apply_ruleset(
         &self,
         repository: &Repository,

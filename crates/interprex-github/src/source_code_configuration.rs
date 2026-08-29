@@ -54,7 +54,8 @@ const READ_ONLY_RULESET_FIELDS: &[&str] = &[
 struct GithubRulesetSummary {
     id: u64,
     name: String,
-    target: String,
+    #[serde(default)]
+    target: Option<String>,
     source_type: String,
     source: String,
     enforcement: String,
@@ -246,6 +247,9 @@ impl GithubRulesetRule {
 impl SourceCodeConfigurationProvider for GithubProvider {
     type Ruleset = GithubRuleset;
 
+    /// Returns rulesets ordered by source type, source identity, and numeric
+    /// GitHub ruleset ID. This order makes repeated inventory reads stable; it
+    /// does not describe GitHub's ruleset evaluation priority.
     async fn read_rulesets(&self, repository: &Repository) -> Result<Vec<Self::Ruleset>> {
         let page: Page<Value> = self
             .user()?
@@ -264,7 +268,7 @@ impl SourceCodeConfigurationProvider for GithubProvider {
                     error,
                 )
             })?;
-        let summaries = self
+        let mut summaries = self
             .user()?
             .all_pages(page)
             .await
@@ -278,6 +282,13 @@ impl SourceCodeConfigurationProvider for GithubProvider {
             .into_iter()
             .map(parse_summary)
             .collect::<Result<Vec<_>>>()?;
+        summaries.sort_by(|left, right| {
+            (&left.source_type, &left.source, left.id).cmp(&(
+                &right.source_type,
+                &right.source,
+                right.id,
+            ))
+        });
 
         let mut rulesets = Vec::with_capacity(summaries.len());
         for summary in summaries {
@@ -323,7 +334,7 @@ impl SourceCodeConfigurationProvider for GithubProvider {
         let summary = GithubRulesetSummary {
             id,
             name: desired.name.to_owned(),
-            target: desired.target.to_owned(),
+            target: Some(desired.target.to_owned()),
             source_type: "Repository".to_owned(),
             source: repository.to_string(),
             enforcement: desired.enforcement.to_owned(),
@@ -396,7 +407,6 @@ fn parse_summary(value: Value) -> Result<GithubRulesetSummary> {
     }
     for (value, fact) in [
         (&summary.name, "name"),
-        (&summary.target, "target"),
         (&summary.source_type, "source type"),
         (&summary.source, "source"),
         (&summary.enforcement, "enforcement"),
@@ -407,6 +417,12 @@ fn parse_summary(value: Value) -> Result<GithubRulesetSummary> {
                 summary.id
             )));
         }
+    }
+    if summary.target.as_deref() == Some("") {
+        return Err(unrepresentable(format!(
+            "source ruleset {} summary has an empty target",
+            summary.id
+        )));
     }
     Ok(summary)
 }
