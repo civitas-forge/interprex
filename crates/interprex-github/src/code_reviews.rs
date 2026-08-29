@@ -19,7 +19,7 @@ use interprex::{
     CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
     FindingResolutionReply, ProviderError, Repository, Result, ReviewCommentId,
     ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTargetsProvider, ReviewThreadId,
-    ReviewThreadStatus,
+    ReviewThreadStatus, ReviewerApplicationsProvider,
 };
 use octocrab::Page;
 use serde::Deserialize;
@@ -33,6 +33,7 @@ mod checks;
 mod finding_resolutions;
 mod review_requests;
 mod review_threads;
+mod reviewer_applications;
 mod target_inspections;
 
 use change_requests::{
@@ -384,5 +385,16 @@ impl ReviewTargetsProvider for GithubProvider {
         target: &ReviewRequestTarget,
     ) -> Result<ReviewRequestTargetInspection> {
         self.github_review_request_target(repository, target).await
+    }
+}
+
+#[async_trait]
+impl ReviewerApplicationsProvider for GithubProvider {
+    async fn resolve_reviewer_application(
+        &self,
+        repository: &Repository,
+        slug: &str,
+    ) -> Result<interprex::ReviewerApplication> {
+        self.github_reviewer_application(repository, slug).await
     }
 }
