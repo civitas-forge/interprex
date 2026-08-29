@@ -6,6 +6,7 @@ documentation = "https://docs.rs/interprex-test"
 edition.workspace = true
 keywords = ["fake", "mock", "provider", "testing"]
 license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true

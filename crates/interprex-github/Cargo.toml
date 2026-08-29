@@ -6,6 +6,7 @@ documentation = "https://docs.rs/interprex-github"
 edition.workspace = true
 keywords = ["code-review", "devops", "github", "provider", "workflow"]
 license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
