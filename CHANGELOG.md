@@ -14,6 +14,13 @@
   from `BranchUpdateObservation`. Consumers combine the applied requirement with
   code-review branch freshness when deciding whether to update.
 
+### GitHub source configuration
+
+- `interprex-github` now expands paginated repository ruleset summaries through
+  their detail reads and applies complete repository-owned branch, tag and push
+  rulesets. Inherited, incomplete and unknown writable forms return explicit
+  errors instead of becoming partial configuration.
+
 ## 4.0.1
 
 ### Changed

@@ -48,7 +48,7 @@ Releases
 
 : Read and create releases, stream uploads and stream downloads.
 
-## 3. Code Review Data
+## 3. Source Configuration and Code Review Data
 
 A change request carries its current base and head commits, the branch it
 targets, the head it proposes and every review record returned by the provider.
@@ -78,6 +78,17 @@ unknown while the platform has not finished computing the merge. Mergeability
 reports that merge computation alone. Required checks, approvals and branch
 rules are separate facts, so a mergeable change request can still be one the
 platform refuses to merge.
+
+`SourceCodeConfigurationProvider` reads and applies complete provider-native
+rulesets. The GitHub provider follows every page of repository ruleset summaries
+and reads each ruleset's detail before returning it. Reads preserve branch, tag,
+push and repository targets, inherited source identity, bypass actors,
+conditions, rules, parameters and unknown response fields. An omitted
+bypass-actor collection is an incomplete read, not an empty collection. Writes
+accept complete repository-owned branch, tag and push rulesets, send only
+GitHub's writable fields and read the accepted ruleset back before returning it.
+Inherited and unsupported native forms produce explicit errors rather than
+partial configuration.
 
 `AppliedSourceRequirementsProvider` reports whether the applied source
 configuration requires the head to contain the target-branch tip, the strongest
@@ -188,9 +199,10 @@ asynchronous domain interfaces.
 
 `interprex-github`
 
-: The repository's GitHub provider, its credential configuration, and complete
-GitHub ruleset values. Ruleset transport and applied-requirement reads return an
-explicit unsupported error until the provider implements those capabilities.
+: The repository's GitHub provider, its credential configuration, complete
+GitHub ruleset reads and writes, and native ruleset values. Applied-requirement
+reads return an explicit unsupported error until the provider implements that
+capability.
 
 `interprex-test`
 
