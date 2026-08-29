@@ -1,20 +1,20 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, BranchFreshness, BranchUpdateError, BranchUpdateObservation,
-    BranchUpdateRequirement, BranchUpdatesProvider, ChangeRequest, ChangeRequestCommentsProvider,
-    ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckRun,
-    CheckStatus, CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
-    FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
-    Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord, Release,
-    ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
+    AppliedSourceRequirementsProvider, AssetStreamError, AssetUpload, BranchFreshness,
+    BranchUpdateError, BranchUpdateObservation, BranchUpdatesProvider, ChangeRequest,
+    ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
+    CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider, CodeReviewsProvider, CommitRange,
+    FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply,
+    FindingSeverity, Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord,
+    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
     ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
     ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
     ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
     ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider,
     ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision, ReviewerApplication,
-    ReviewerApplicationsProvider, TextRecordsProvider,
+    ReviewerApplicationsProvider, SourceCodeConfigurationProvider, TextRecordsProvider,
 };
 
 use crate::FakeProvider;
@@ -103,7 +103,6 @@ async fn consumer_observes_and_requests_only_an_exact_seeded_branch_update() {
             base_sha: "base-2".to_owned(),
             head_sha: "head-3".to_owned(),
         },
-        requirement: BranchUpdateRequirement::Required,
         freshness: BranchFreshness::Behind,
     };
     provider
@@ -158,6 +157,35 @@ async fn fake_branch_update_rejects_an_empty_expected_head_before_lookup() {
 }
 
 #[tokio::test]
+async fn unimplemented_source_configuration_capabilities_fail_explicitly() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    assert!(matches!(
+        provider.read_rulesets(&repository).await,
+        Err(ProviderError::Unsupported {
+            provider: "fake",
+            operation: "read source rulesets"
+        })
+    ));
+    assert!(matches!(
+        provider
+            .applied_requirements(
+                &repository,
+                "main",
+                &CommitRange {
+                    base_sha: "base".to_owned(),
+                    head_sha: "head".to_owned(),
+                }
+            )
+            .await,
+        Err(ProviderError::Unsupported {
+            provider: "fake",
+            operation: "read applied source requirements"
+        })
+    ));
+}
+
+#[tokio::test]
 async fn branch_update_fixture_is_scoped_to_repository_and_change_request() {
     let provider = FakeProvider::new();
     let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
@@ -171,7 +199,6 @@ async fn branch_update_fixture_is_scoped_to_repository_and_change_request() {
                     base_sha: "base".to_owned(),
                     head_sha: "head".to_owned(),
                 },
-                requirement: BranchUpdateRequirement::NotRequired,
                 freshness: BranchFreshness::Current,
             },
         )

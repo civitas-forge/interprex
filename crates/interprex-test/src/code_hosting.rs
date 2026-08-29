@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use interprex::{
-    CodeHostingProvider, Repository, RepositoryFacts, RepositorySettings, Result, Ruleset,
+    AppliedSourceRequirements, AppliedSourceRequirementsProvider, CodeHostingProvider, CommitRange,
+    ProviderError, Repository, RepositoryFacts, RepositorySettings, Result,
+    SourceCodeConfigurationProvider,
 };
 use secrecy::SecretString;
 
@@ -42,30 +44,6 @@ impl CodeHostingProvider for FakeProvider {
         Ok(settings.clone())
     }
 
-    async fn rulesets(&self, repository: &Repository) -> Result<Vec<Ruleset>> {
-        Ok(self
-            .state
-            .read()
-            .await
-            .rulesets
-            .get(repository)
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    async fn upsert_ruleset(&self, repository: &Repository, ruleset: &Ruleset) -> Result<Ruleset> {
-        let mut state = self.state.write().await;
-        let rulesets = state.rulesets.entry(repository.clone()).or_default();
-        if let Some(existing) = rulesets.iter_mut().find(|existing| {
-            ruleset.id.is_some() && existing.id == ruleset.id || existing.name == ruleset.name
-        }) {
-            *existing = ruleset.clone();
-        } else {
-            rulesets.push(ruleset.clone());
-        }
-        Ok(ruleset.clone())
-    }
-
     async fn put_secret(
         &self,
         repository: &Repository,
@@ -80,5 +58,41 @@ impl CodeHostingProvider for FakeProvider {
             .or_default()
             .push(name.to_owned());
         Ok(())
+    }
+}
+
+#[async_trait]
+impl SourceCodeConfigurationProvider for FakeProvider {
+    type Ruleset = serde_json::Value;
+
+    async fn read_rulesets(&self, _repository: &Repository) -> Result<Vec<Self::Ruleset>> {
+        Err(unsupported("read source rulesets"))
+    }
+
+    async fn apply_ruleset(
+        &self,
+        _repository: &Repository,
+        _ruleset: &Self::Ruleset,
+    ) -> Result<Self::Ruleset> {
+        Err(unsupported("apply source ruleset"))
+    }
+}
+
+#[async_trait]
+impl AppliedSourceRequirementsProvider for FakeProvider {
+    async fn applied_requirements(
+        &self,
+        _repository: &Repository,
+        _target_branch: &str,
+        _commit_range: &CommitRange,
+    ) -> Result<AppliedSourceRequirements> {
+        Err(unsupported("read applied source requirements"))
+    }
+}
+
+fn unsupported(operation: &'static str) -> ProviderError {
+    ProviderError::Unsupported {
+        provider: "fake",
+        operation,
     }
 }

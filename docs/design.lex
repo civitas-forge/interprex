@@ -6,7 +6,7 @@ Design
 
 1. Shape
 
-    `interprex` defines provider-neutral values for five domains and asynchronous provider traits. It depends on no provider. `interprex-github` implements those traits with GitHub REST and GraphQL. GitHub identifiers and response types remain private to that crate. `interprex-test` implements the same traits with state held in memory so consumer rules use the public interface without a network or third-party account.
+    `interprex` defines provider-neutral values and asynchronous provider traits. It depends on no provider. `interprex-github` implements those traits with GitHub REST and GraphQL. Provider-native configuration values belong to the provider crate; transport response types remain private. `interprex-test` implements provider traits with state held in memory so consumer rules use the public interface without a network or third-party account.
 
     `interprex-bucket` is independent from the development-platform crates. It provides create-only records over an injected `ObjectStore`; its guaranteed behavior is [./contracts/records.lex].
 
@@ -14,12 +14,14 @@ Design
 
 2. Domains
 
-    The five domains can use different providers in one process. Selection of a tracker provider does not select the code-review or jobs provider.
+    Provider-selected domains can use different providers in one process. Selection of a tracker provider does not select the code-review or jobs provider.
 
     `ProviderSelections::from_lookup` reads each selection independently from `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`, `INTERPREX_CODE_REVIEWS_PROVIDER`, `INTERPREX_JOBS_PROVIDER` and `INTERPREX_RELEASES_PROVIDER`. An unset or blank selection defaults to `github`. These selections name providers; callers still construct the corresponding implementations.
 
     Code Hosting:
-        Repository facts, merge settings, rulesets and repository secrets.
+        Repository facts, merge settings and repository secrets.
+    Source Code Configuration:
+        Complete provider-native rulesets and provider-neutral requirements applied to exact source revisions.
     Tracker:
         Issues and labels.
     Code Review:
@@ -58,9 +60,9 @@ Design
 
     GitHub's `mergeable_state` string is absent from the model because it combines mergeability, checks, approvals, branch freshness and the draft flag into one provider verdict. Interprex returns those facts separately instead of claiming they reconstruct that verdict.
 
-    `BranchUpdatesProvider` observes whether an applicable provider rule requires the head to contain the target-branch tip and whether the observed head does contain it. The observation retains the base and head revisions used for the comparison. Requirement, freshness and mergeability remain separate: a mergeable head can be behind without an applicable rule requiring an update. The caller decides whether and when to update.
+    `AppliedSourceRequirementsProvider` observes the strongest required approval count, the branch-update requirement and one answer for every native required check at an exact repository, target branch, base commit and head commit. The provider matches native check runs and commit statuses to native requirements. `BranchUpdatesProvider` separately observes whether the head contains the target-branch tip and retains the base and head revisions used for the comparison. Requirement, freshness and mergeability remain separate: a mergeable head can be behind without an applicable rule requiring an update. The caller decides whether and when to update.
 
-    A branch update names the exact observed head. The provider refuses a stale observation instead of applying the request to a newer head. GitHub reads both the active rules and classic branch protection for the target branch; either mechanism can require the head to contain the target-branch tip. It compares the observed base and head commits, then uses its native branch-update operation with the expected head.
+    A branch update names the exact observed head. The provider refuses a stale observation instead of applying the request to a newer head. GitHub compares the observed base and head commits, then uses its native branch-update operation with the expected head.
 
     `CodeReviewsProvider::checks` reads the current checks on one commit, completely paginated. A caller reads them for whichever commit it cares about, usually the change request's current head. The request sends GitHub's `filter=latest` explicitly, which scopes the answer to the current run of each check within each check suite. A rerun inside a suite replaces the run it repeated, so no superseded run is reported and a caller that wants the earlier runs cannot get them here.
 
@@ -76,7 +78,7 @@ Design
 
     The observed `CheckRun` stays separate from the written `CheckOutcome`, which always carries a conclusion because Interprex publishes only finished results. Their conclusion vocabularies are separate for the same reason `ReviewRequestTarget` is narrower than `ReviewTarget`: GitHub sets `stale` on a check run itself and refuses that conclusion from a client, so `CheckOutcome` uses `PublishedCheckConclusion`, which has no such variant. A request GitHub would reject is therefore not constructible rather than checked at the boundary.
 
-    A check run also carries the application that published it, as `via_app`, and where a person can read it, as `html_url`. A required-status-check rule names the check by context and may also name the application that must publish it, as `RequiredCheck::integration_id`. Both identifiers hold the same GitHub app identifier in different types: an integer in the rule, and its decimal spelling in the opaque `ProviderApp::id`, which is opaque because other providers need not identify applications by number. A caller comparing them compares those two spellings. Interprex returns both facts and compares neither, and one provider-neutral identifier type across both domains would belong to a change that owns `RequiredCheck`.
+    A check run also carries the application that published it, as `via_app`, and where a person can read it, as `html_url`. An applied required-check answer names the provider application required by the native rule as an opaque `ProviderAppId`. The provider compares that identity with check-run publishers and commit-status creators; consumers do not parse it as a GitHub integer or repeat the native matching rules.
 
     A status GitHub adds later, a conclusion Interprex does not model, a completed check missing its conclusion or completion time, and a running check that reports either, are all returned as unrepresentable data.
 
@@ -84,7 +86,7 @@ Design
 
     GitHub's legacy commit statuses are a separate mechanism from check runs, with their own endpoint. This domain reads check runs only, so a caller that needs commit statuses cannot obtain them here.
 
-    Interprex does not intersect check names with a ruleset's required check names, decide that a change request is ready, or answer whether the platform would accept the merge. Those are caller decisions over the returned facts.
+    Interprex reports the answer to each applied native requirement but does not decide that a change request is ready or answer whether the platform would accept the merge. Those are caller decisions over the returned facts.
 
     Every review record remains independent, including repeated reviews by the same actor against the same head and reviews without findings. Collection order carries no policy meaning. A draft review has `ReviewState::Draft`. A submitted review has `ReviewState::Submitted`, which contains its disposition and submission time. The review body becomes its optional summary in either state.
 

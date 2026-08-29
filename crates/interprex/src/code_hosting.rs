@@ -68,22 +68,6 @@ pub struct RepositorySettings {
     pub delete_branch_on_merge: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RequiredCheck {
-    pub context: String,
-    pub integration_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Ruleset {
-    pub id: Option<u64>,
-    pub name: String,
-    pub active: bool,
-    pub target_branch_patterns: Vec<String>,
-    pub required_checks: Vec<RequiredCheck>,
-    pub required_approvals: u8,
-}
-
 #[async_trait]
 pub trait CodeHostingProvider: Send + Sync {
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts>;
@@ -93,8 +77,6 @@ pub trait CodeHostingProvider: Send + Sync {
         repository: &Repository,
         settings: &RepositorySettings,
     ) -> Result<RepositorySettings>;
-    async fn rulesets(&self, repository: &Repository) -> Result<Vec<Ruleset>>;
-    async fn upsert_ruleset(&self, repository: &Repository, ruleset: &Ruleset) -> Result<Ruleset>;
     async fn put_secret(
         &self,
         repository: &Repository,

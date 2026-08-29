@@ -16,19 +16,18 @@ use crate::{Repository, Result};
 /// both.
 #[async_trait]
 pub trait BranchUpdatesProvider: Send + Sync {
-    /// Reads the applicable update requirement and current branch freshness.
+    /// Reads current branch freshness for the change request's exact revisions.
     ///
     /// The returned revisions are the exact endpoints used for the freshness
-    /// result. Mergeability is a separate fact. This operation does not decide
-    /// whether an update should occur.
+    /// result. The applied source configuration and mergeability are separate
+    /// facts. This operation does not decide whether an update should occur.
     ///
     /// # Errors
     ///
     /// Returns [`crate::ProviderError::NotFound`] when the change request or a
     /// compared revision is absent, [`crate::ProviderError::Unrepresentable`]
-    /// when the provider reports a rule or comparison this interface cannot
-    /// express, and [`crate::ProviderError::External`] when the provider read
-    /// fails.
+    /// when the provider reports a comparison this interface cannot express,
+    /// and [`crate::ProviderError::External`] when the provider read fails.
     async fn branch_update(
         &self,
         repository: &Repository,
