@@ -36,13 +36,27 @@ pub(super) fn embed_record(text: &str, record: &ProviderTextRecord) -> String {
 
 pub(super) fn extract_records(text: &str) -> Vec<ProviderTextRecord> {
     text.match_indices(CARRIER_START)
-        .filter_map(|(offset, _)| parse_carrier(&text[offset..]))
+        .filter_map(|(offset, _)| parse_carrier(&text[offset..]).map(|(record, _)| record))
         .collect()
 }
 
-fn parse_carrier(candidate: &str) -> Option<ProviderTextRecord> {
-    let candidate = candidate.strip_prefix(CARRIER_START)?;
-    let (identifier, body) = candidate.split_once('\n')?;
+pub(super) fn contains_only_records(text: &str) -> bool {
+    let mut remaining = text;
+    loop {
+        remaining = remaining.trim_start();
+        if remaining.is_empty() {
+            return true;
+        }
+        let Some((_, consumed)) = parse_carrier(remaining) else {
+            return false;
+        };
+        remaining = &remaining[consumed..];
+    }
+}
+
+fn parse_carrier(candidate: &str) -> Option<(ProviderTextRecord, usize)> {
+    let body = candidate.strip_prefix(CARRIER_START)?;
+    let (identifier, body) = body.split_once('\n')?;
     let (namespace, name) = identifier.split_once(':')?;
     let payload_end = body.find(CARRIER_END)?;
     let payload = &body[..payload_end];
@@ -50,7 +64,9 @@ fn parse_carrier(candidate: &str) -> Option<ProviderTextRecord> {
         return None;
     }
     let value = serde_json::from_str(payload).ok()?;
-    ProviderTextRecord::new(namespace, name, value).ok()
+    let record = ProviderTextRecord::new(namespace, name, value).ok()?;
+    let consumed = candidate.len() - body.len() + payload_end + CARRIER_END.len();
+    Some((record, consumed))
 }
 
 #[cfg(test)]

@@ -117,11 +117,17 @@ fn finding_resolution(body: &str) -> ParsedFindingResolution {
     let Some(marker_start) = body.rfind(FINDING_RESOLUTION_META_START) else {
         return ParsedFindingResolution::Absent;
     };
-    if !body.ends_with(FINDING_RESOLUTION_META_END) {
+    let metadata_start = marker_start + FINDING_RESOLUTION_META_START.len();
+    let Some(metadata_end) = body[metadata_start..]
+        .find(FINDING_RESOLUTION_META_END)
+        .map(|offset| metadata_start + offset)
+    else {
+        return ParsedFindingResolution::Absent;
+    };
+    let trailing = &body[metadata_end + FINDING_RESOLUTION_META_END.len()..];
+    if !super::text_records::contains_only_records(trailing) {
         return ParsedFindingResolution::Absent;
     }
-    let metadata_start = marker_start + FINDING_RESOLUTION_META_START.len();
-    let metadata_end = body.len() - FINDING_RESOLUTION_META_END.len();
     let Some(metadata) = body.get(metadata_start..metadata_end) else {
         return ParsedFindingResolution::Absent;
     };
@@ -172,6 +178,7 @@ pub(super) fn latest_finding_resolution(
 mod tests {
     use interprex::{
         FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
+        ProviderTextRecord,
     };
 
     use super::super::{
@@ -229,6 +236,21 @@ mod tests {
         assert_eq!(
             finding_resolution(&format!("{valid}\n\nordinary trailing text")),
             ParsedFindingResolution::Absent
+        );
+
+        let appended = ProviderTextRecord::new(
+            "comitia",
+            "loop-event",
+            serde_json::json!({"version": 1, "kind": "round-finished"}),
+        )
+        .expect("record");
+        let body = super::super::text_records::embed_record(&valid, &appended);
+        assert_eq!(
+            finding_resolution(&body),
+            ParsedFindingResolution::Supported(FindingResolution {
+                reason: FindingResolutionReason::Invalid,
+                addressing_severity: FindingSeverity::Nit,
+            })
         );
     }
     #[test]
