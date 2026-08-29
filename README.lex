@@ -41,6 +41,8 @@ Interprex
 
     A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location.
 
+    Comment collections retain a stable, total order supplied by the provider. `ReviewCommentId` values support equality but no ordering relation because their representation has no provider-neutral ordering meaning. Consumers preserve collection order instead of sorting comment IDs.
+
     An outstanding review request records the actor or team asked to review, the address that can ask that target again, and when the platform recorded the request. A caller enforcing a review timeout reads that time from one observation instead of keeping its own record of when it asked. The time is absent when the provider cannot match the request to a request event, either because the platform no longer names the target or because the event has left the retained history, and no provider fills it with a nearby time.
 
     `ReviewTargetsProvider` is an optional capability separate from `CodeReviewsProvider`. Its singular inspection reports whether one configured address resolves to the requested user, bot or team category, resolves to an identity of another category, or cannot be resolved with the current credentials. An unresolved address may be absent or merely invisible to those credentials. A matching inspection does not promise that the identity can be assigned to the repository or that a later review request will be delivered.

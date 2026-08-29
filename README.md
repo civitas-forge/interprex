@@ -103,6 +103,11 @@ A thread attached to a review is one of that review's findings, including a
 self-review finding from the change author. A thread with no originating review
 is a standalone thread. An unanchored comment has no source location.
 
+Comment collections retain a stable, total order supplied by the provider.
+`ReviewCommentId` values support equality but no ordering relation because their
+representation has no provider-neutral ordering meaning. Consumers preserve
+collection order instead of sorting comment IDs.
+
 An outstanding review request records the actor or team asked to review, the
 address that can ask that target again, and when the platform recorded the
 request. A caller enforcing a review timeout reads that time from one

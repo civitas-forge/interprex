@@ -1,6 +1,15 @@
 # Changelog
 
-## 3.2.0
+## 4.0.0
+
+### Breaking change
+
+- `ReviewCommentId` no longer implements `Ord` or `PartialOrd` because provider
+  identifiers carry no provider-neutral ordering meaning. Consumers must retain
+  the stable provider order of comment collections instead of sorting or
+  comparing comment IDs.
+
+### Added
 
 - Added `ReviewPublishingProvider`, complete review-submission models, and a
   stateful fake implementation for consumer tests.
