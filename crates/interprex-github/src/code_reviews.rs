@@ -30,7 +30,7 @@ use crate::{GithubProvider, client::external};
 mod actors;
 mod branch_updates;
 mod change_requests;
-mod checks;
+pub(crate) mod checks;
 mod finding_resolutions;
 mod review_publications;
 mod review_requests;

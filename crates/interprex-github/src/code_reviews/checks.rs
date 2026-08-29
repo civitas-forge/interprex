@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use interprex::{
     CheckConclusion, CheckRun, CheckStatus, ProviderError, PublishedCheckConclusion, Repository,
     Result,
@@ -25,7 +27,26 @@ struct GithubCheckRunPage {
 }
 
 #[derive(Deserialize)]
-pub(super) struct GithubCheckRun {
+struct GithubCheckSuitePage {
+    total_count: u64,
+    check_suites: Vec<GithubCheckSuite>,
+}
+
+#[derive(Deserialize)]
+struct GithubCheckSuite {
+    id: u64,
+    head_sha: String,
+}
+
+#[derive(Deserialize)]
+struct GithubCheckSuiteReference {
+    id: u64,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct GithubCheckRun {
+    #[serde(default)]
+    id: Option<u64>,
     name: String,
     head_sha: String,
     status: String,
@@ -34,6 +55,8 @@ pub(super) struct GithubCheckRun {
     /// The app that published the run. It carries the same identifier a
     /// ruleset reports as `integration_id`.
     app: Option<GithubApp>,
+    #[serde(default)]
+    check_suite: Option<GithubCheckSuiteReference>,
     html_url: Option<String>,
     output: Option<GithubCheckRunOutput>,
 }
@@ -60,7 +83,7 @@ fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
     }
 }
 
-pub(super) fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
+pub(crate) fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
     let unfinished = match value.status.as_str() {
         "requested" => Some(CheckStatus::Requested),
         "queued" => Some(CheckStatus::Queued),
@@ -139,7 +162,7 @@ pub(super) fn conclusion(value: &PublishedCheckConclusion) -> &'static str {
 }
 
 impl GithubProvider {
-    pub(super) async fn github_check_runs(
+    pub(crate) async fn github_check_runs(
         &self,
         repository: &Repository,
         head_sha: &str,
@@ -170,14 +193,197 @@ impl GithubProvider {
                 })?;
             let received = response.check_runs.len();
             collected.extend(response.check_runs);
-            // A short page ends the collection. The envelope's complete count
-            // ends it too, so a response that ignored `page` cannot repeat the
-            // first page forever.
             if received < CHECK_RUNS_PER_PAGE || collected.len() as u64 >= response.total_count {
                 return Ok(collected);
             }
             page += 1;
         }
+    }
+
+    pub(crate) async fn complete_github_check_runs(
+        &self,
+        repository: &Repository,
+        head_sha: &str,
+    ) -> Result<Vec<GithubCheckRun>> {
+        let suites = self.github_check_suites(repository, head_sha).await?;
+        validate_check_suites(&suites, head_sha)?;
+        let mut runs = Vec::new();
+        let mut run_ids = BTreeSet::new();
+        for suite in suites {
+            for run in self
+                .github_check_runs_for_suite(repository, suite.id)
+                .await?
+            {
+                let run_id = run.id.ok_or_else(|| {
+                    unrepresentable(format!("check run in suite {} has no id", suite.id))
+                })?;
+                if run_id == 0 || !run_ids.insert(run_id) {
+                    return Err(unrepresentable(format!(
+                        "check run id {run_id} is zero or repeated"
+                    )));
+                }
+                let observed_suite = run.check_suite.as_ref().ok_or_else(|| {
+                    unrepresentable(format!("check run {run_id} has no check-suite identity"))
+                })?;
+                if observed_suite.id != suite.id {
+                    return Err(unrepresentable(format!(
+                        "check run {run_id} names suite {} instead of {}",
+                        observed_suite.id, suite.id
+                    )));
+                }
+                if run.head_sha != head_sha {
+                    return Err(unrepresentable(format!(
+                        "check run {run_id} names revision {} instead of {head_sha}",
+                        run.head_sha
+                    )));
+                }
+                runs.push(run);
+            }
+        }
+        Ok(runs)
+    }
+
+    async fn github_check_suites(
+        &self,
+        repository: &Repository,
+        head_sha: &str,
+    ) -> Result<Vec<GithubCheckSuite>> {
+        let mut collected = Vec::new();
+        let mut page = 1_u32;
+        let mut expected_total = None;
+        loop {
+            let response: GithubCheckSuitePage = self
+                .user()?
+                .get(
+                    format!("/repos/{repository}/commits/{head_sha}/check-suites"),
+                    Some(&[
+                        ("per_page", CHECK_RUNS_PER_PAGE.to_string()),
+                        ("page", page.to_string()),
+                    ]),
+                )
+                .await
+                .map_err(|error| {
+                    crate::client::read_error(
+                        "read check suites",
+                        format!("commit {head_sha} in {repository}"),
+                        error,
+                    )
+                })?;
+            match expected_total {
+                Some(total) if total != response.total_count => {
+                    return Err(unrepresentable(format!(
+                        "check-suite total changed from {total} to {} while paging",
+                        response.total_count
+                    )));
+                }
+                None => expected_total = Some(response.total_count),
+                Some(_) => {}
+            }
+            let received = response.check_suites.len();
+            collected.extend(response.check_suites);
+            let expected_total = expected_total.unwrap_or(response.total_count);
+            if collected.len() as u64 > expected_total {
+                return Err(unrepresentable(format!(
+                    "check suites reported {expected_total} records but returned at least {}",
+                    collected.len()
+                )));
+            }
+            if collected.len() as u64 >= expected_total {
+                return Ok(collected);
+            }
+            if received < CHECK_RUNS_PER_PAGE {
+                return Err(unrepresentable(format!(
+                    "check suites reported {expected_total} records but returned only {}",
+                    collected.len()
+                )));
+            }
+            page += 1;
+        }
+    }
+
+    async fn github_check_runs_for_suite(
+        &self,
+        repository: &Repository,
+        suite_id: u64,
+    ) -> Result<Vec<GithubCheckRun>> {
+        let mut collected = Vec::new();
+        let mut page = 1_u32;
+        let mut expected_total = None;
+        loop {
+            let response: GithubCheckRunPage = self
+                .user()?
+                .get(
+                    format!("/repos/{repository}/check-suites/{suite_id}/check-runs"),
+                    Some(&[
+                        ("per_page", CHECK_RUNS_PER_PAGE.to_string()),
+                        ("page", page.to_string()),
+                        ("filter", "latest".to_owned()),
+                    ]),
+                )
+                .await
+                .map_err(|error| {
+                    crate::client::read_error(
+                        "read check runs in suite",
+                        format!("check suite {suite_id} in {repository}"),
+                        error,
+                    )
+                })?;
+            match expected_total {
+                Some(total) if total != response.total_count => {
+                    return Err(unrepresentable(format!(
+                        "check-run total for suite {suite_id} changed from {total} to {} while paging",
+                        response.total_count
+                    )));
+                }
+                None => expected_total = Some(response.total_count),
+                Some(_) => {}
+            }
+            let received = response.check_runs.len();
+            collected.extend(response.check_runs);
+            let expected_total = expected_total.unwrap_or(response.total_count);
+            if collected.len() as u64 > expected_total {
+                return Err(unrepresentable(format!(
+                    "check suite {suite_id} reported {expected_total} runs but returned at least {}",
+                    collected.len()
+                )));
+            }
+            if collected.len() as u64 >= expected_total {
+                return Ok(collected);
+            }
+            if received < CHECK_RUNS_PER_PAGE {
+                return Err(unrepresentable(format!(
+                    "check suite {suite_id} reported {expected_total} runs but returned only {}",
+                    collected.len()
+                )));
+            }
+            page += 1;
+        }
+    }
+}
+
+fn validate_check_suites(suites: &[GithubCheckSuite], expected_head: &str) -> Result<()> {
+    let mut ids = BTreeSet::new();
+    for suite in suites {
+        if suite.id == 0 || !ids.insert(suite.id) {
+            return Err(unrepresentable(format!(
+                "check suite id {} is zero or repeated",
+                suite.id
+            )));
+        }
+        if suite.head_sha != expected_head {
+            return Err(unrepresentable(format!(
+                "check suite {} names revision {} instead of {expected_head}",
+                suite.id, suite.head_sha
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn unrepresentable(fact: impl Into<String>) -> ProviderError {
+    ProviderError::Unrepresentable {
+        provider: "github",
+        fact: fact.into(),
     }
 }
 
@@ -195,11 +401,15 @@ mod tests {
         sync::oneshot,
     };
 
-    use super::{GithubCheckRun, GithubCheckRunPage, conclusion, normalize_check_run};
+    use super::{
+        GithubCheckRun, GithubCheckRunPage, GithubCheckSuite, conclusion, normalize_check_run,
+        validate_check_suites,
+    };
     use crate::{GithubProvider, client::ConfiguredApp};
 
     fn check_run(status: &str, conclusion: Option<&str>) -> GithubCheckRun {
         GithubCheckRun {
+            id: None,
             name: "quality".to_owned(),
             head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
             status: status.to_owned(),
@@ -208,8 +418,48 @@ mod tests {
                 .is_some()
                 .then(|| "2026-08-24T10:04:00Z".parse().expect("completion time")),
             app: None,
+            check_suite: None,
             html_url: None,
             output: None,
+        }
+    }
+
+    #[test]
+    fn check_suite_validation_has_no_false_one_thousand_suite_limit() {
+        for count in [1_000_u64, 1_001] {
+            let suites = (1..=count)
+                .map(|id| GithubCheckSuite {
+                    id,
+                    head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                })
+                .collect::<Vec<_>>();
+            validate_check_suites(&suites, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .expect("every suite is accounted for independently of count");
+        }
+    }
+
+    #[test]
+    fn check_suite_validation_rejects_wrong_revisions_and_repeated_ids() {
+        for suites in [
+            vec![
+                GithubCheckSuite {
+                    id: 7,
+                    head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                },
+                GithubCheckSuite {
+                    id: 7,
+                    head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+                },
+            ],
+            vec![GithubCheckSuite {
+                id: 7,
+                head_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned(),
+            }],
+        ] {
+            assert!(matches!(
+                validate_check_suites(&suites, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                Err(ProviderError::Unrepresentable { .. })
+            ));
         }
     }
     #[test]

@@ -5,10 +5,11 @@ use std::{
 
 use bytes::Bytes;
 use interprex::{
-    AssetId, BranchUpdateObservation, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun,
-    DispatchInputs, Issue, IssueNumber, Label, ProviderAppId, ProviderError, Release, Repository,
-    RepositoryFacts, RepositorySettings, ReviewActorId, ReviewId, ReviewPublicationKey,
-    ReviewRequestTarget, ReviewSubmission, ReviewTarget, ReviewerApplication, RunId, WorkflowRun,
+    AppliedSourceRequirements, AssetId, BranchUpdateObservation, ChangeRequest,
+    ChangeRequestNumber, CheckOutcome, CheckRun, CommitRange, DispatchInputs, Issue, IssueNumber,
+    Label, ProviderAppId, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
+    ReviewActorId, ReviewId, ReviewPublicationKey, ReviewRequestTarget, ReviewSubmission,
+    ReviewTarget, ReviewerApplication, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -26,6 +27,9 @@ pub(crate) struct State {
     pub(crate) change_requests: BTreeMap<(Repository, ChangeRequestNumber), ChangeRequest>,
     pub(crate) branch_updates: BTreeMap<(Repository, ChangeRequestNumber), BranchUpdateObservation>,
     pub(crate) accepted_branch_updates: Vec<(Repository, ChangeRequestNumber, String)>,
+    pub(crate) applied_requirements:
+        BTreeMap<FakeAppliedRequirementsKey, AppliedSourceRequirements>,
+    pub(crate) applied_requirement_errors: BTreeMap<FakeAppliedRequirementsKey, ProviderError>,
     pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
     pub(crate) reviewer_applications: BTreeMap<(Repository, String), ReviewerApplication>,
     pub(crate) review_publications: BTreeMap<FakeReviewPublicationKey, FakeReviewPublication>,
@@ -47,6 +51,8 @@ pub(crate) type FakeReviewPublicationKey = (
     ReviewActorId,
     ReviewPublicationKey,
 );
+
+pub(crate) type FakeAppliedRequirementsKey = (Repository, String, String, String);
 
 #[derive(Clone, Debug)]
 pub(crate) struct FakeReviewPublication {
@@ -106,6 +112,44 @@ impl FakeProvider {
             .await
             .branch_updates
             .insert((repository, number), observation);
+    }
+
+    /// Seeds one exact applied-requirements observation.
+    ///
+    /// Repository, target branch, base revision, and head revision are all
+    /// part of the lookup key. A test must seed every snapshot it expects the
+    /// fake to answer; the fake never substitutes a neighboring revision.
+    pub async fn seed_applied_requirements(&self, observation: AppliedSourceRequirements) {
+        let range = observation.commit_range();
+        let key = (
+            observation.repository().clone(),
+            observation.target_branch().to_owned(),
+            range.base_sha.clone(),
+            range.head_sha.clone(),
+        );
+        let mut state = self.state.write().await;
+        state.applied_requirement_errors.remove(&key);
+        state.applied_requirements.insert(key, observation);
+    }
+
+    /// Seeds the provider error returned for one exact applied-requirements
+    /// request, replacing an observation for the same snapshot.
+    pub async fn seed_applied_requirements_error(
+        &self,
+        repository: Repository,
+        target_branch: impl Into<String>,
+        commit_range: CommitRange,
+        error: ProviderError,
+    ) {
+        let key = (
+            repository,
+            target_branch.into(),
+            commit_range.base_sha,
+            commit_range.head_sha,
+        );
+        let mut state = self.state.write().await;
+        state.applied_requirements.remove(&key);
+        state.applied_requirement_errors.insert(key, error);
     }
 
     /// Seeds the provider observation returned for one review-request target.

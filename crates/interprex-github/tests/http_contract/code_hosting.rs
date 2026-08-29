@@ -1,6 +1,7 @@
 use interprex::{
-    AppliedSourceRequirementsProvider, CodeHostingProvider, CommitRange, ProviderError,
-    RepositorySettings, SourceCodeConfigurationProvider,
+    AppliedRequiredCheckState, AppliedSourceRequirementsProvider, BranchUpdateRequirement,
+    CodeHostingProvider, CommitRange, ProviderError, RepositorySettings,
+    SourceCodeConfigurationProvider,
 };
 use interprex_github::GithubRuleset;
 
@@ -82,6 +83,76 @@ fn desired_ruleset(id: Option<u64>) -> GithubRuleset {
         object.remove("current_user_can_bypass");
     }
     serde_json::from_value(value).expect("desired ruleset")
+}
+
+const BASE_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const HEAD_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+fn branch(name: &str, sha: &str) -> String {
+    serde_json::json!({"name": name, "commit": {"sha": sha}}).to_string()
+}
+
+fn pull_request_parameters(approvals: u32) -> serde_json::Value {
+    serde_json::json!({
+        "allowed_merge_methods": ["merge", "squash", "rebase"],
+        "dismiss_stale_reviews_on_push": false,
+        "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": approvals,
+        "required_review_thread_resolution": false,
+        "required_reviewers": []
+    })
+}
+
+fn check_run(
+    name: &str,
+    status: &str,
+    conclusion: Option<&str>,
+    app_id: Option<u64>,
+) -> serde_json::Value {
+    let suite_id = app_id.unwrap_or(1);
+    let run_id = name.bytes().fold(suite_id * 10_000 + 1, |value, byte| {
+        value.wrapping_mul(16_777_619).wrapping_add(u64::from(byte))
+    });
+    serde_json::json!({
+        "id": run_id,
+        "name": name,
+        "head_sha": HEAD_SHA,
+        "status": status,
+        "conclusion": conclusion,
+        "completed_at": conclusion.map(|_| "2026-08-29T12:00:00Z"),
+        "app": app_id.map(|id| serde_json::json!({
+            "id": id,
+            "slug": format!("app-{id}"),
+            "name": format!("App {id}")
+        })),
+        "check_suite": {"id": suite_id}
+    })
+}
+
+fn check_suites(ids: &[u64], total: usize) -> String {
+    let suites = ids
+        .iter()
+        .map(|id| serde_json::json!({"id": id, "head_sha": HEAD_SHA}))
+        .collect::<Vec<_>>();
+    serde_json::json!({"total_count": total, "check_suites": suites}).to_string()
+}
+
+fn check_runs(runs: Vec<serde_json::Value>, total: usize) -> String {
+    serde_json::json!({"total_count": total, "check_runs": runs}).to_string()
+}
+
+fn combined_statuses(statuses: Vec<(&str, &str)>, total: usize) -> String {
+    let statuses = statuses
+        .into_iter()
+        .map(|(context, state)| serde_json::json!({"context": context, "state": state}))
+        .collect::<Vec<_>>();
+    serde_json::json!({"sha": HEAD_SHA, "total_count": total, "statuses": statuses}).to_string()
+}
+
+fn no_classic_protection() -> ScriptedResponse {
+    ScriptedResponse::status("404 Not Found", r#"{"message":"Branch not protected"}"#)
 }
 
 #[tokio::test]
@@ -640,22 +711,524 @@ async fn source_configuration_refuses_inherited_and_nonwritable_targets_before_t
 }
 
 #[tokio::test]
-async fn applied_requirements_remain_explicitly_unimplemented() {
-    let provider = provider("http://127.0.0.1:1".to_owned());
+async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
+    let rules = serde_json::json!([{
+        "type": "pull_request",
+        "parameters": pull_request_parameters(2),
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "civitas-forge/interprex-sandbox"
+    }, {
+        "type": "pull_request",
+        "parameters": pull_request_parameters(3),
+        "ruleset_source_type": "Organization",
+        "ruleset_source": "civitas-forge"
+    }, {
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": true,
+            "required_status_checks": [
+                {"context": "Quality", "integration_id": 42},
+                {"context": "legacy", "integration_id": null},
+                {"context": "dual", "integration_id": null},
+                {"context": "neutral", "integration_id": null},
+                {"context": "skipped", "integration_id": null},
+                {"context": "pending", "integration_id": null},
+                {"context": "failed", "integration_id": null},
+                {"context": "missing", "integration_id": null},
+                {"context": "app-bound", "integration_id": 99}
+            ]
+        },
+        "ruleset_source_type": "Organization",
+        "ruleset_source": "civitas-forge"
+    }]);
+    let classic = serde_json::json!({
+        "required_status_checks": {
+            "strict": false,
+            "contexts": ["classic", "quality"],
+            "checks": [{"context": "Quality", "app_id": 42}]
+        },
+        "required_pull_request_reviews": {"required_approving_review_count": 4}
+    });
+    let app_42_runs = vec![check_run("quality", "completed", Some("success"), Some(42))];
+    let unowned_runs = vec![
+        check_run("dual", "completed", Some("success"), Some(7)),
+        check_run("neutral", "completed", Some("neutral"), Some(7)),
+        check_run("skipped", "completed", Some("skipped"), Some(7)),
+        check_run("pending", "in_progress", None, Some(7)),
+        check_run("failed", "completed", Some("failure"), Some(7)),
+    ];
+    let app_98_runs = vec![check_run(
+        "app-bound",
+        "completed",
+        Some("success"),
+        Some(98),
+    )];
+    let statuses = vec![
+        ("legacy", "success"),
+        ("dual", "failure"),
+        ("classic", "success"),
+        ("app-bound", "success"),
+    ];
+    let status_count = statuses.len();
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("release/v1", BASE_SHA)),
+        ScriptedResponse::json(rules.to_string()),
+        ScriptedResponse::json(classic.to_string()),
+        ScriptedResponse::json(check_suites(&[42, 7, 98], 3)),
+        ScriptedResponse::json(check_runs(app_42_runs, 1)),
+        ScriptedResponse::json(check_runs(unowned_runs, 5)),
+        ScriptedResponse::json(check_runs(app_98_runs, 1)),
+        ScriptedResponse::json(combined_statuses(statuses, status_count)),
+        ScriptedResponse::json(branch("release/v1", BASE_SHA)),
+    ])
+    .await;
+    let range = CommitRange {
+        base_sha: BASE_SHA.to_owned(),
+        head_sha: HEAD_SHA.to_owned(),
+    };
+
+    let observed = provider(uri)
+        .applied_requirements(&repository(), "release/v1", &range)
+        .await
+        .expect("applied requirements");
+
+    assert_eq!(observed.repository(), &repository());
+    assert_eq!(observed.target_branch(), "release/v1");
+    assert_eq!(observed.commit_range(), &range);
+    assert_eq!(observed.required_approvals(), 4);
+    assert_eq!(observed.branch_update(), BranchUpdateRequirement::Required);
+    let answers = observed
+        .required_checks()
+        .iter()
+        .map(|check| {
+            (
+                check.name(),
+                check.provider_application().map(|app| app.as_str()),
+                check.state(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        answers,
+        vec![
+            ("app-bound", Some("99"), AppliedRequiredCheckState::Missing),
+            ("classic", None, AppliedRequiredCheckState::Satisfied),
+            ("dual", None, AppliedRequiredCheckState::Failed),
+            ("failed", None, AppliedRequiredCheckState::Failed),
+            ("legacy", None, AppliedRequiredCheckState::Satisfied),
+            ("missing", None, AppliedRequiredCheckState::Missing),
+            ("neutral", None, AppliedRequiredCheckState::Satisfied),
+            ("pending", None, AppliedRequiredCheckState::Pending),
+            ("Quality", Some("42"), AppliedRequiredCheckState::Satisfied),
+            ("skipped", None, AppliedRequiredCheckState::Satisfied),
+        ]
+    );
+
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 9);
+    assert_user_request(
+        &requests[0],
+        "GET /repos/civitas-forge/interprex-sandbox/branches/release%2Fv1 ",
+    );
+    assert_user_request(
+        &requests[1],
+        "GET /repos/civitas-forge/interprex-sandbox/rules/branches/release%2Fv1?per_page=100 ",
+    );
+    assert_user_request(
+        &requests[2],
+        "GET /repos/civitas-forge/interprex-sandbox/branches/release%2Fv1/protection ",
+    );
+    assert_user_request(
+        &requests[3],
+        &format!(
+            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/check-suites?per_page=100&page=1 "
+        ),
+    );
+    assert_user_request(
+        &requests[4],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/42/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[5],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/7/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[6],
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/98/check-runs?per_page=100&page=1&filter=latest ",
+    );
+    assert_user_request(
+        &requests[7],
+        &format!(
+            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/status?per_page=100&page=1 "
+        ),
+    );
+}
+
+#[tokio::test]
+async fn applied_branch_endpoint_is_the_authority_for_excluded_rulesets() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        // GitHub has already evaluated repository and inherited ruleset
+        // conditions. An include-all ruleset excluded for `main` is absent.
+        ScriptedResponse::json("[]"),
+        no_classic_protection(),
+        ScriptedResponse::json(check_suites(&[], 0)),
+        ScriptedResponse::json(combined_statuses(Vec::new(), 0)),
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+    ])
+    .await;
+
+    let observed = provider(uri)
+        .applied_requirements(
+            &repository(),
+            "main",
+            &CommitRange {
+                base_sha: BASE_SHA.to_owned(),
+                head_sha: HEAD_SHA.to_owned(),
+            },
+        )
+        .await
+        .expect("empty applied policy");
+
+    assert_eq!(observed.required_approvals(), 0);
+    assert_eq!(
+        observed.branch_update(),
+        BranchUpdateRequirement::NotRequired
+    );
+    assert!(observed.required_checks().is_empty());
+    assert_eq!(requests.await.expect("captured requests").len(), 6);
+}
+
+#[tokio::test]
+async fn applied_requirements_refuse_non_scalar_classic_review_constraints() {
+    let classic = serde_json::json!({
+        "required_pull_request_reviews": {
+            "url": "https://api.github.test/repos/civitas-forge/interprex-sandbox/branches/main/protection/required_pull_request_reviews",
+            "dismiss_stale_reviews": false,
+            "require_code_owner_reviews": true,
+            "required_approving_review_count": 2,
+            "require_last_push_approval": false,
+            "dismissal_restrictions": {"users": [], "teams": [], "apps": []}
+        },
+        "required_conversation_resolution": {"enabled": false}
+    });
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        ScriptedResponse::json("[]"),
+        ScriptedResponse::json(classic.to_string()),
+    ])
+    .await;
+
+    let error = provider(uri)
+        .applied_requirements(
+            &repository(),
+            "main",
+            &CommitRange {
+                base_sha: BASE_SHA.to_owned(),
+                head_sha: HEAD_SHA.to_owned(),
+            },
+        )
+        .await
+        .expect_err("code-owner identity is not a scalar approval count");
+
     assert!(matches!(
-        provider
+        error,
+        ProviderError::Unrepresentable { fact, .. } if fact.contains("code-owner")
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
+#[tokio::test]
+async fn applied_requirements_paginate_rules_check_runs_and_statuses() {
+    let first_rules = (0..100)
+        .map(|_| serde_json::json!({"type": "creation"}))
+        .collect::<Vec<_>>();
+    let second_rules = serde_json::json!([{
+        "type": "required_status_checks",
+        "parameters": {
+            "strict_required_status_checks_policy": false,
+            "required_status_checks": [{"context": "last", "integration_id": null}]
+        }
+    }]);
+    let first_runs = (0..100)
+        .map(|index| check_run(&format!("run-{index}"), "completed", Some("success"), None))
+        .collect::<Vec<_>>();
+    let first_statuses = (0..100)
+        .map(|index| (format!("status-{index}"), "success".to_owned()))
+        .collect::<Vec<_>>();
+    let first_statuses_json = serde_json::json!({
+        "sha": HEAD_SHA,
+        "total_count": 101,
+        "statuses": first_statuses
+            .iter()
+            .map(|(context, state)| serde_json::json!({"context": context, "state": state}))
+            .collect::<Vec<_>>()
+    });
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        ScriptedResponse::json(serde_json::to_string(&first_rules).expect("rules")).with_header(
+            "link: <{base}/repos/civitas-forge/interprex-sandbox/rules/branches/main?per_page=100&page=2>; rel=\"next\"",
+        ),
+        ScriptedResponse::json(second_rules.to_string()),
+        no_classic_protection(),
+        ScriptedResponse::json(check_suites(&[1], 1)),
+        ScriptedResponse::json(check_runs(first_runs, 101)),
+        ScriptedResponse::json(check_runs(
+            vec![check_run("last", "completed", Some("success"), None)],
+            101,
+        )),
+        ScriptedResponse::json(first_statuses_json.to_string()),
+        ScriptedResponse::json(combined_statuses(vec![("last", "success")], 101)),
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+    ])
+    .await;
+
+    let observed = provider(uri)
+        .applied_requirements(
+            &repository(),
+            "main",
+            &CommitRange {
+                base_sha: BASE_SHA.to_owned(),
+                head_sha: HEAD_SHA.to_owned(),
+            },
+        )
+        .await
+        .expect("paginated applied requirements");
+    assert_eq!(observed.required_checks().len(), 1);
+    assert_eq!(
+        observed.required_checks()[0].state(),
+        AppliedRequiredCheckState::Satisfied
+    );
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 10);
+    assert!(requests[2].starts_with(
+        "GET /repos/civitas-forge/interprex-sandbox/rules/branches/main?per_page=100&page=2 "
+    ));
+    assert!(requests[6].contains("page=2&filter=latest"));
+    assert!(requests[8].contains("/status?per_page=100&page=2"));
+}
+
+#[tokio::test]
+async fn applied_requirements_paginate_every_check_suite_without_a_count_cutoff() {
+    let first_suite_ids = (1..=100).collect::<Vec<_>>();
+    let mut responses = vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        ScriptedResponse::json("[]"),
+        no_classic_protection(),
+        ScriptedResponse::json(check_suites(&first_suite_ids, 101)),
+        ScriptedResponse::json(check_suites(&[101], 101)),
+    ];
+    for _ in 1..=101 {
+        responses.push(ScriptedResponse::json(check_runs(Vec::new(), 0)));
+    }
+    responses.push(ScriptedResponse::json(combined_statuses(Vec::new(), 0)));
+    responses.push(ScriptedResponse::json(branch("main", BASE_SHA)));
+    let (uri, requests) = scripted_responses(responses).await;
+
+    let observed = provider(uri)
+        .applied_requirements(
+            &repository(),
+            "main",
+            &CommitRange {
+                base_sha: BASE_SHA.to_owned(),
+                head_sha: HEAD_SHA.to_owned(),
+            },
+        )
+        .await
+        .expect("all suites were enumerated");
+
+    assert!(observed.required_checks().is_empty());
+    let requests = requests.await.expect("captured requests");
+    assert_eq!(requests.len(), 108);
+    assert_user_request(
+        &requests[4],
+        &format!(
+            "GET /repos/civitas-forge/interprex-sandbox/commits/{HEAD_SHA}/check-suites?per_page=100&page=2 "
+        ),
+    );
+    assert!(requests.iter().any(|request| request.starts_with(
+        "GET /repos/civitas-forge/interprex-sandbox/check-suites/101/check-runs?per_page=100&page=1&filter=latest "
+    )));
+}
+
+#[tokio::test]
+async fn applied_requirements_never_turn_read_or_shape_errors_into_empty_policy() {
+    let cases = vec![
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::status("403 Forbidden", r#"{"message":"forbidden"}"#),
+            ],
+            "external",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json(r#"[{"type":"pull_request","parameters":{}}]"#),
+                no_classic_protection(),
+            ],
+            "unrepresentable",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json(
+                    serde_json::json!([{
+                        "type": "pull_request",
+                        "parameters": {
+                            "allowed_merge_methods": ["squash", "merge", "rebase"],
+                            "dismiss_stale_reviews_on_push": false,
+                            "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+                            "require_code_owner_review": false,
+                            "require_last_push_approval": false,
+                            "required_approving_review_count": 1,
+                            "required_review_thread_resolution": false,
+                            "required_reviewers": [{
+                                "file_patterns": ["src/**"],
+                                "minimum_approvals": 1,
+                                "reviewer": {"id": 9, "type": "Team"}
+                            }]
+                        }
+                    }])
+                    .to_string(),
+                ),
+                no_classic_protection(),
+            ],
+            "unrepresentable",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json("[]"),
+                ScriptedResponse::status("403 Forbidden", r#"{"message":"forbidden"}"#),
+            ],
+            "external",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json("[]"),
+                ScriptedResponse::status("404 Not Found", r#"{"message":"Not Found"}"#),
+            ],
+            "external",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json("[]"),
+                no_classic_protection(),
+                ScriptedResponse::status("404 Not Found", r#"{"message":"missing"}"#),
+            ],
+            "not_found",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json("[]"),
+                no_classic_protection(),
+                ScriptedResponse::json(check_suites(&[1], 1)),
+                ScriptedResponse::json(
+                    serde_json::json!({
+                        "total_count": 1,
+                        "check_runs": [{
+                            "id": 11,
+                            "name": "quality",
+                            "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+                            "status": "queued",
+                            "conclusion": null,
+                            "completed_at": null,
+                            "app": null,
+                            "check_suite": {"id": 1}
+                        }]
+                    })
+                    .to_string(),
+                ),
+            ],
+            "unrepresentable",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json("[]"),
+                no_classic_protection(),
+                ScriptedResponse::json(check_suites(&[], 0)),
+                ScriptedResponse::json(
+                    serde_json::json!({
+                        "sha": "cccccccccccccccccccccccccccccccccccccccc",
+                        "total_count": 0,
+                        "statuses": []
+                    })
+                    .to_string(),
+                ),
+            ],
+            "unrepresentable",
+        ),
+    ];
+    for (responses, expected) in cases {
+        let (uri, requests) = scripted_responses(responses).await;
+        let error = provider(uri)
             .applied_requirements(
                 &repository(),
                 "main",
                 &CommitRange {
-                    base_sha: "base".to_owned(),
-                    head_sha: "head".to_owned(),
+                    base_sha: BASE_SHA.to_owned(),
+                    head_sha: HEAD_SHA.to_owned(),
+                },
+            )
+            .await
+            .expect_err("provider error");
+        assert!(match expected {
+            "external" => matches!(error, ProviderError::External { .. }),
+            "unrepresentable" => matches!(error, ProviderError::Unrepresentable { .. }),
+            "not_found" => matches!(error, ProviderError::NotFound { .. }),
+            _ => false,
+        });
+        assert!(!requests.await.expect("captured requests").is_empty());
+    }
+}
+
+#[tokio::test]
+async fn applied_requirements_reject_invalid_or_changed_exact_scope() {
+    let offline = provider("http://127.0.0.1:1".to_owned());
+    for range in [
+        CommitRange {
+            base_sha: "short".to_owned(),
+            head_sha: HEAD_SHA.to_owned(),
+        },
+        CommitRange {
+            base_sha: BASE_SHA.to_owned(),
+            head_sha: String::new(),
+        },
+    ] {
+        assert!(matches!(
+            offline
+                .applied_requirements(&repository(), "main", &range)
+                .await,
+            Err(ProviderError::InvalidInput { .. })
+        ));
+    }
+
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(branch("main", BASE_SHA)),
+        ScriptedResponse::json("[]"),
+        no_classic_protection(),
+        ScriptedResponse::json(check_suites(&[], 0)),
+        ScriptedResponse::json(combined_statuses(Vec::new(), 0)),
+        ScriptedResponse::json(branch("main", "cccccccccccccccccccccccccccccccccccccccc")),
+    ])
+    .await;
+    assert!(matches!(
+        provider(uri)
+            .applied_requirements(
+                &repository(),
+                "main",
+                &CommitRange {
+                    base_sha: BASE_SHA.to_owned(),
+                    head_sha: HEAD_SHA.to_owned(),
                 },
             )
             .await,
-        Err(ProviderError::Unsupported {
-            provider: "github",
-            operation: "read applied source requirements"
-        })
+        Err(ProviderError::NotFound { .. })
     ));
+    assert_eq!(requests.await.expect("captured requests").len(), 6);
 }

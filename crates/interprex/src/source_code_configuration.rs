@@ -127,7 +127,7 @@ struct AppliedSourceRequirementsWire {
 /// and head revisions. A provider must not substitute a newer branch tip or
 /// head revision. `required_approvals` is the strongest applicable minimum;
 /// `required_checks` contains exactly one answer for every applicable native
-/// check requirement, in stable provider requirement order. No two entries
+/// check requirement, in stable provider-defined order. No two entries
 /// have the same name and provider-application identity.
 ///
 /// A later read may return a different subject or different answers. This
@@ -308,8 +308,8 @@ pub trait AppliedSourceRequirementsProvider: Send + Sync {
     /// The returned value repeats `repository`, `target_branch`, and
     /// `commit_range`. The provider must return those exact values or an error;
     /// it must not answer for a newer branch tip or head. Required checks are
-    /// completely matched against native records and retain stable native
-    /// requirement order.
+    /// completely matched against native records and retain stable
+    /// provider-defined requirement order.
     ///
     /// # Errors
     ///

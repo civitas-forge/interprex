@@ -20,6 +20,16 @@
   their detail reads and applies complete repository-owned branch, tag and push
   rulesets. Inherited, incomplete and unknown writable forms return explicit
   errors instead of becoming partial configuration.
+- `interprex-github` now reads branch-applicable rules and classic protection,
+  then matches their required checks against check runs and legacy commit
+  statuses at an exact head revision. Application-bound requirements retain
+  their GitHub App identity; incomplete and unreadable provider answers return
+  explicit errors.
+
+### Test provider
+
+- `interprex-test` can seed an applied-requirements observation or provider
+  error for an exact repository, target branch, base revision and head revision.
 
 ## 4.0.1
 

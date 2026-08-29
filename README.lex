@@ -35,7 +35,7 @@ Interprex
 
     `SourceCodeConfigurationProvider` reads and applies complete provider-native rulesets. The GitHub provider follows every page of repository ruleset summaries and reads each ruleset's detail before returning it. Reads preserve branch, tag, push and repository targets, inherited source identity, bypass actors, conditions, rules, parameters and unknown response fields. An omitted bypass-actor collection is an incomplete read, not an empty collection. Writes accept complete repository-owned branch, tag and push rulesets, send only GitHub's writable fields and read the accepted ruleset back before returning it. Inherited and unsupported native forms produce explicit errors rather than partial configuration.
 
-    `AppliedSourceRequirementsProvider` reports whether the applied source configuration requires the head to contain the target-branch tip, the strongest required approval count, and one missing, pending, satisfied or failed answer for each native required check. Its observation names the exact repository, target branch, base commit and head commit it answers. Native check-run and commit-status matching belongs to the provider; the application decides what those answers mean for its policy.
+    `AppliedSourceRequirementsProvider` reports whether the applied source configuration requires the head to contain the target-branch tip, the strongest required approval count, and one missing, pending, satisfied or failed answer for each native required check. Its observation names the exact repository, target branch, base commit and head commit it answers. Native check-run and commit-status matching belongs to the provider; the application decides what those answers mean for its policy. The GitHub provider reads rules GitHub has already selected for the target branch, combines them with classic branch protection, and answers checks from both check runs and legacy commit statuses at the stated head. An application-specific requirement accepts only a check run from that GitHub App; when a same-name commit status also exists, both native mechanisms must succeed. GitHub check contexts are matched case-insensitively when they contain only ASCII; a non-ASCII required or reported context is unrepresentable because GitHub does not define the Unicode case-folding behavior clients must reproduce.
 
     `BranchUpdatesProvider` reports whether the observed head contains the observed target-branch tip. Its observation retains the exact base and head revisions used for that answer. An update applies only to that observed head; if the head changes first, the provider reports a stale observation. The application combines requirement and freshness and decides whether and when to request the update.
 
@@ -68,7 +68,7 @@ Interprex
     `interprex`:
         The published crate containing provider-neutral models, errors and asynchronous domain interfaces.
     `interprex-github`:
-        The repository's GitHub provider, its credential configuration, complete GitHub ruleset reads and writes, and native ruleset values. Applied-requirement reads return an explicit unsupported error until the provider implements that capability.
+        The repository's GitHub provider, its credential configuration, complete GitHub ruleset reads and writes, native ruleset values and exact-revision applied requirements.
     `interprex-test`:
         The repository's stateful in-memory provider for consumer tests.
     `interprex-bucket`:
