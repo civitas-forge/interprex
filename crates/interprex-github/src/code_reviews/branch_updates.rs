@@ -210,12 +210,13 @@ impl BranchUpdatesProvider for GithubProvider {
             Ok(_) => Ok(()),
             Err(error) => {
                 let failure = authenticated_external("update change request branch", &error);
-                if let Ok(current) = self.github_pull_request(repository, number).await
-                    && current.head.sha != expected_head_sha
-                {
-                    return Err(stale_head(expected_head_sha, &current.head.sha));
+                match self.github_pull_request(repository, number).await {
+                    Ok(current) if current.head.sha != expected_head_sha => {
+                        Err(stale_head(expected_head_sha, &current.head.sha))
+                    }
+                    Err(error @ ProviderError::NotFound { .. }) => Err(error.into()),
+                    Ok(_) | Err(_) => Err(failure.into()),
                 }
-                Err(failure.into())
             }
         }
     }

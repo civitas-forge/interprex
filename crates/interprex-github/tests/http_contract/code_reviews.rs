@@ -367,6 +367,31 @@ async fn native_branch_update_preserves_the_write_failure_when_reread_fails() {
     assert_eq!(requests.await.expect("captured requests").len(), 3);
 }
 
+#[tokio::test]
+async fn native_branch_update_reports_not_found_when_the_failed_write_reread_is_absent() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::status(
+            "422 Unprocessable Entity",
+            r#"{"message":"Branch update is not permitted"}"#,
+        ),
+        ScriptedResponse::status("404 Not Found", NOT_FOUND),
+    ])
+    .await;
+
+    assert!(matches!(
+        provider(uri)
+            .update_change_request_branch(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .await,
+        Err(BranchUpdateError::Provider(ProviderError::NotFound { .. }))
+    ));
+    assert_eq!(requests.await.expect("captured requests").len(), 3);
+}
+
 fn reviewer_application() -> ReviewerApplication {
     ReviewerApplication::new(
         ProviderApp {
