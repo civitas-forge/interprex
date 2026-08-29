@@ -15,9 +15,7 @@ Interprex
     Tracker:
         Read issues and read or update labels.
     Code Review:
-        Read change requests by number or by the head ref they propose, together with their reviews, findings, standalone threads, unanchored comments and outstanding review requests; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
-        Read change requests, their mergeability, reviews, findings, standalone threads, unanchored comments, outstanding review requests and the checks recorded on a commit; record finding resolutions and addressing severity, resolve threads, request reviewers, mark a change request ready and
-        publish check results.
+        Read change requests by number or by the head ref they propose, together with their mergeability, reviews, findings, standalone threads, unanchored comments, outstanding review requests and checks; inspect the identity category at a review-request address, record finding resolutions and addressing severity, resolve threads, request reviewers, publish application-authored reviews, mark a change request ready and publish check results.
     Jobs:
         Dispatch jobs, read runs and cancel runs.
     Releases:
@@ -35,11 +33,19 @@ Interprex
 
     Each review records its author, the provider application that produced it when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 
+    `ReviewPublishingProvider` publishes one complete review against the revision the caller supplies. A submission carries a caller-assigned publication key, summary, final disposition and inline findings in caller order. The key identifies one publication within one repository, change request and reviewer identity. That identity is the provider application ID and bot actor ID, so renamed applications and bot logins still identify the same reviewer while a different reviewer may reuse the same key.
+
+    The GitHub provider authenticates with the named App entry whose configuration key matches the reviewer's application slug. It creates the complete pending review in one request, then submits it with the requested disposition. A retry with the same key adopts the submitted review or completes its pending review. `resume_review_publication` can do the same after the caller loses its submission, using the hidden record written with the pending review.
+
     The review author is one of change author, another known actor or an actor whose relationship is unknown. The change-author variant refers to the change request's author instead of storing a second, independently writable copy. Unknown means the provider did not return enough identity information to compare the actors; it does not mean other. Interprex returns this fact and leaves decisions about independent review evidence to the caller.
 
     A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location.
 
+    Comment collections retain a stable, total order supplied by the provider. `ReviewCommentId` values support equality but no ordering relation because their representation has no provider-neutral ordering meaning. Consumers preserve collection order instead of sorting comment IDs.
+
     An outstanding review request records the actor or team asked to review, the address that can ask that target again, and when the platform recorded the request. A caller enforcing a review timeout reads that time from one observation instead of keeping its own record of when it asked. The time is absent when the provider cannot match the request to a request event, either because the platform no longer names the target or because the event has left the retained history, and no provider fills it with a nearby time.
+
+    `ReviewTargetsProvider` is an optional capability separate from `CodeReviewsProvider`. Its singular inspection reports whether one configured address resolves to the requested user, bot or team category, resolves to an identity of another category, or cannot be resolved with the current credentials. An unresolved address may be absent or merely invisible to those credentials. A matching inspection does not promise that the identity can be assigned to the repository or that a later review request will be delivered.
 
     Checks are read by commit rather than by change request. Each check carries its name, that commit, its status, the application that published it, its published summary and where a person can read it. A check that has not finished carries the platform's own unfinished status, one of requested, queued, pending, waiting or in progress, and no conclusion; a completed check carries its conclusion and the time it finished. Publishing a check uses a narrower conclusion vocabulary than reading one, because a platform can report conclusions it refuses to accept from a client, such as GitHub's `stale`.
 
@@ -75,6 +81,8 @@ Interprex
         model.
     Records [https://github.com/civitas-forge/interprex/blob/main/docs/contracts/records.lex]:
         The behavior guaranteed by the create-only record client.
+    Changelog [https://github.com/civitas-forge/interprex/blob/main/CHANGELOG.md]:
+        User-visible changes in each published version.
 
 7. Development
 
