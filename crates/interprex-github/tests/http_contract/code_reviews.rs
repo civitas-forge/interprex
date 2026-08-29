@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use interprex::{
-    ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckStatus,
-    CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionReply,
-    FindingSeverity, Mergeability, ProviderError, Repository, ReviewActorKind, ReviewRequestTarget,
-    ReviewRequestTargetInspection, ReviewTarget, ReviewTargetsProvider, ReviewTeamKind,
-    ReviewThreadId, ReviewerApplicationsProvider,
+    ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
+    CheckConclusion, CheckStatus, CodeReviewsProvider, FindingResolution, FindingResolutionReason,
+    FindingResolutionReply, FindingSeverity, Mergeability, ProviderError, Repository,
+    ReviewActorKind, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
+    ReviewTargetsProvider, ReviewTeamKind, ReviewThreadId, ReviewerApplicationsProvider,
 };
 use tokio::time::timeout;
 
@@ -164,6 +164,37 @@ async fn reviewer_application_resolution_reports_transport_failures_as_external(
         }
     ));
     assert_eq!(requests.await.expect("captured failed request").len(), 1);
+}
+
+#[tokio::test]
+async fn change_request_comment_creation_posts_the_exact_body_and_returns_its_node_id() {
+    let (uri, request) = server(
+        "201 Created",
+        "application/json",
+        r#"{"node_id":"IC_created-comment"}"#,
+    )
+    .await;
+    let body = "Comitia planned round 3.\n\n<!-- comitia:loop-event\n{\"version\":1}\n-->";
+
+    let id = provider(uri)
+        .create_unanchored_comment(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            body,
+        )
+        .await
+        .expect("create comment");
+
+    assert_eq!(id.as_str(), "IC_created-comment");
+    let request = request.await.expect("captured request");
+    assert_user_request(
+        &request,
+        "POST /repos/civitas-forge/interprex-sandbox/issues/5/comments ",
+    );
+    let (_, request_body) = request.split_once("\r\n\r\n").expect("request body");
+    let request_body: serde_json::Value =
+        serde_json::from_str(request_body).expect("JSON request body");
+    assert_eq!(request_body, serde_json::json!({ "body": body }));
 }
 
 #[tokio::test]

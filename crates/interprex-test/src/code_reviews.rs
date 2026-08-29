@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState, CheckOutcome,
-    CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
-    FindingResolutionReply, ProviderError, Repository, Result, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest, ReviewRequestId,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget, ReviewTargetsProvider,
-    ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId, ReviewThreadStatus,
-    ReviewerApplication, ReviewerApplicationsProvider,
+    ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber,
+    ChangeRequestState, CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution,
+    FindingResolutionRecord, FindingResolutionReply, ProviderError, Repository, Result,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest,
+    ReviewRequestId, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
+    ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
+    ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
 };
 
 use crate::state::{FakeProvider, missing};
@@ -235,6 +235,53 @@ impl CodeReviewsProvider for FakeProvider {
             outcome.clone(),
         ));
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ChangeRequestCommentsProvider for FakeProvider {
+    async fn create_unanchored_comment(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        body: &str,
+    ) -> Result<ReviewCommentId> {
+        let mut state = self.state.write().await;
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let comment_number = change_request.unanchored_comments.len() + 1;
+        let id = ReviewCommentId::new(format!(
+            "fake-comment:{}:{}:{}:{}:{}:{comment_number}",
+            repository.owner().len(),
+            repository.owner(),
+            repository.name().len(),
+            repository.name(),
+            number.get(),
+        ))
+        .expect("fake comment identity is nonempty");
+        let created_at = change_request
+            .unanchored_comments
+            .iter()
+            .map(|comment| comment.updated_at.unwrap_or(comment.created_at))
+            .chain([change_request.updated_at])
+            .max()
+            .expect("the observed change supplies one timestamp")
+            + std::time::Duration::from_micros(1);
+        change_request.unanchored_comments.push(ReviewComment {
+            id: id.clone(),
+            author: ReviewActor {
+                id: ReviewActorId::new("fake-provider:authenticated-actor")
+                    .expect("fake actor identity is nonempty"),
+                login: "fake-provider".to_owned(),
+                kind: ReviewActorKind::User,
+            },
+            body: body.to_owned(),
+            created_at,
+            updated_at: None,
+        });
+        Ok(id)
     }
 }
 

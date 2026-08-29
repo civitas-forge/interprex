@@ -15,10 +15,11 @@
 
 use async_trait::async_trait;
 use interprex::{
-    ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
-    CodeReviewsProvider, FindingResolution, FindingResolutionRecord, FindingResolutionReply,
-    ProviderError, Repository, Result, ReviewRequestTarget, ReviewRequestTargetInspection,
-    ReviewTargetsProvider, ReviewThreadId, ReviewThreadStatus, ReviewerApplicationsProvider,
+    ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber,
+    CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
+    FindingResolutionReply, ProviderError, Repository, Result, ReviewCommentId,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTargetsProvider, ReviewThreadId,
+    ReviewThreadStatus, ReviewerApplicationsProvider,
 };
 use octocrab::Page;
 use serde::Deserialize;
@@ -45,6 +46,11 @@ use finding_resolutions::{
     github_resolution_reply,
 };
 use review_requests::REQUEST_REVIEWS_BY_LOGIN;
+
+#[derive(Deserialize)]
+struct CreatedUnanchoredComment {
+    node_id: String,
+}
 
 const MARK_READY: &str = r#"
 mutation MarkReady($pullRequestId: ID!) {
@@ -345,6 +351,29 @@ impl CodeReviewsProvider for GithubProvider {
             .await
             .map_err(|error| external("publish change request check", error))?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ChangeRequestCommentsProvider for GithubProvider {
+    async fn create_unanchored_comment(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        body: &str,
+    ) -> Result<ReviewCommentId> {
+        let response: CreatedUnanchoredComment = self
+            .user()?
+            .post(
+                format!("/repos/{repository}/issues/{}/comments", number.get()),
+                Some(&json!({ "body": body })),
+            )
+            .await
+            .map_err(|error| external("create unanchored comment", error))?;
+        ReviewCommentId::new(response.node_id).map_err(|error| ProviderError::Unrepresentable {
+            provider: "github",
+            fact: error.to_string(),
+        })
     }
 }
 
