@@ -15,29 +15,29 @@ implementation for each domain and passes it to the code that uses that domain.
 
 ## 2. Domains
 
-code hosting
+Code Hosting
 
 : Read repository facts and merge settings, apply settings, read and update
 rulesets, and write encrypted repository secrets.
 
-tracker
+Tracker
 
 : Read issues and read or update labels.
 
-code review
+Code Review
 
 : Read change requests by number or by the head ref they propose, together with
-their reviews, findings, standalone threads, unanchored comments, outstanding
-review requests and checks; inspect the actual identity category at a
-review-request address when the provider supports that capability; record
-finding resolutions and addressing severity, resolve threads, request reviewers,
-mark a change request ready and publish check results.
+their mergeability, reviews, findings, standalone threads, unanchored comments,
+outstanding review requests and checks; inspect the identity category at a
+review-request address, record finding resolutions and addressing severity,
+resolve threads, request reviewers, publish application-authored reviews, mark a
+change request ready and publish check results.
 
-jobs
+Jobs
 
 : Dispatch jobs, read runs and cancel runs.
 
-releases
+Releases
 
 : Read and create releases, stream uploads and stream downloads.
 
@@ -76,6 +76,21 @@ Each review records its author, the provider application that produced it when
 known, the reviewed head commit, its summary and its inline findings. Its state
 distinguishes a draft from a submitted review; a submitted review also carries
 its disposition and submission time.
+
+`ReviewPublishingProvider` publishes one complete review against the revision
+the caller supplies. A submission carries a caller-assigned publication key,
+summary, final disposition and inline findings in caller order. The key
+identifies one publication within one repository, change request and reviewer
+identity. That identity is the provider application ID and bot actor ID, so
+renamed applications and bot logins still identify the same reviewer while a
+different reviewer may reuse the same key.
+
+The GitHub provider authenticates with the named App entry whose configuration
+key matches the reviewer's application slug. It creates the complete pending
+review in one request, then submits it with the requested disposition. A retry
+with the same key adopts the submitted review or completes its pending review.
+`resume_review_publication` can do the same after the caller loses its
+submission, using the hidden record written with the pending review.
 
 The review author is one of change author, another known actor or an actor whose
 relationship is unknown. The change-author variant refers to the change
@@ -183,6 +198,10 @@ in debug output or errors.
 [Records](https://github.com/civitas-forge/interprex/blob/main/docs/contracts/records.lex)
 
 : The behavior guaranteed by the create-only record client.
+
+[Changelog](https://github.com/civitas-forge/interprex/blob/main/CHANGELOG.md)
+
+: User-visible changes in each published version.
 
 ## 7. Development
 
