@@ -9,6 +9,11 @@ mod config;
 mod issues;
 mod jobs;
 mod releases;
+mod source_code_configuration;
 
 pub use client::{GithubProvider, from_config, from_project};
 pub use config::{AppCredentials, GithubConfig};
+pub use source_code_configuration::{
+    GithubRefNameCondition, GithubRuleset, GithubRulesetBypassActor, GithubRulesetConditions,
+    GithubRulesetRule,
+};

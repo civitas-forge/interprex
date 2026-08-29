@@ -4,18 +4,6 @@ use thiserror::Error;
 use super::CommitRange;
 use crate::ProviderError;
 
-/// Whether an applicable provider rule requires a change request's head to
-/// contain the current target-branch tip.
-///
-/// This fact is independent of merge conflicts. A provider can require an
-/// update for a change request that it otherwise reports as mergeable.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BranchUpdateRequirement {
-    Required,
-    NotRequired,
-}
-
 /// Whether the observed head contains the observed target-branch tip.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,7 +23,6 @@ pub enum BranchFreshness {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BranchUpdateObservation {
     pub commit_range: CommitRange,
-    pub requirement: BranchUpdateRequirement,
     pub freshness: BranchFreshness,
 }
 
@@ -53,16 +40,4 @@ pub enum BranchUpdateError {
     /// A provider credential, lookup, validation, transport or refusal error.
     #[error(transparent)]
     Provider(#[from] ProviderError),
-}
-
-impl BranchUpdateObservation {
-    /// Whether the applicable rule requires the observed head to be updated.
-    ///
-    /// This combines provider facts only. The caller still decides whether
-    /// and when to request an update.
-    #[must_use]
-    pub fn update_required(&self) -> bool {
-        self.requirement == BranchUpdateRequirement::Required
-            && self.freshness == BranchFreshness::Behind
-    }
 }

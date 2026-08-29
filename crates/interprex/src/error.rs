@@ -20,6 +20,8 @@ pub enum ModelError {
     InvalidProviderTextRecordVersion,
     #[error("reviewer application actor must be a bot")]
     ReviewerApplicationActorNotBot,
+    #[error("required check {name} appears more than once")]
+    DuplicateRequiredCheck { name: String },
 }
 
 pub(crate) fn segment(
@@ -38,6 +40,11 @@ pub(crate) fn segment(
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ProviderError {
+    #[error("{provider} does not support {operation}")]
+    Unsupported {
+        provider: &'static str,
+        operation: &'static str,
+    },
     #[error("unrepresentable {provider} data: {fact}")]
     Unrepresentable {
         provider: &'static str,

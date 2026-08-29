@@ -11,7 +11,9 @@ Interprex
 2. Domains
 
     Code Hosting:
-        Read repository facts and merge settings, apply settings, read and update rulesets, and write encrypted repository secrets.
+        Read repository facts and merge settings, apply settings, and write encrypted repository secrets.
+    Source Code Configuration:
+        Read and apply complete provider-specific rulesets, or read provider-neutral requirements applied to an exact repository, target branch, base commit and head commit.
     Tracker:
         Read issues and read or update labels.
     Code Review:
@@ -31,7 +33,9 @@ Interprex
 
     A change request also carries its mergeability: mergeable, conflicted, or unknown while the platform has not finished computing the merge. Mergeability reports that merge computation alone. Required checks, approvals and branch rules are separate facts, so a mergeable change request can still be one the platform refuses to merge.
 
-    `BranchUpdatesProvider` separately reports whether an applicable provider rule requires the head to contain the target-branch tip and whether the observed head contains it. The observation retains the exact base and head revisions used for that answer. An update applies only to that observed head; if the head changes first, the provider reports a stale observation. The application decides whether and when to request the update.
+    `AppliedSourceRequirementsProvider` reports whether the applied source configuration requires the head to contain the target-branch tip, the strongest required approval count, and one missing, pending, satisfied or failed answer for each native required check. Its observation names the exact repository, target branch, base commit and head commit it answers. Native check-run and commit-status matching belongs to the provider; the application decides what those answers mean for its policy.
+
+    `BranchUpdatesProvider` reports whether the observed head contains the observed target-branch tip. Its observation retains the exact base and head revisions used for that answer. An update applies only to that observed head; if the head changes first, the provider reports a stale observation. The application combines requirement and freshness and decides whether and when to request the update.
 
     Each review records its author, the provider application that produced it when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 
@@ -53,7 +57,7 @@ Interprex
 
     A name identifies at most one run within one run of checks that the platform grouped together, which GitHub calls a check suite, and a commit carries as many of those groups as were triggered on it. Several runs on one commit can therefore share a name, and the read returns every one of them rather than choosing which answers for that name. Within one group a rerun does replace the run it repeated, so no superseded run is returned. GitHub answers from at most its 1,000 most recent check suites on a commit without signalling that it stopped there, so a commit past that limit is reported short.
 
-    Interprex neither decides which checks a merge requires nor what a failing one means: the required check names come from the repository's rulesets, as does the application a rule requires, and the decision belongs to the caller. On GitHub this reads check runs; GitHub's legacy commit statuses are a separate mechanism and are not reported.
+    `CodeReviewsProvider::checks` reports native check runs without interpreting source policy. `AppliedSourceRequirementsProvider` separately matches the provider's required checks against both of its native mechanisms. A caller can therefore inspect check runs or consume the already-matched policy answers without reproducing provider rules.
 
     A finding resolution uses GitHub's three resolution reasons: `ADDRESSED` when the review comment was addressed, `INVALID` when the review comment is invalid and `WONT_FIX` when it will not be addressed. It also records the addressing user's severity assessment. This conclusion is separate from the platform thread's open or resolved status: manual and legacy resolutions may have no Interprex conclusion, while a partially completed write may leave a conclusion on a platform thread that is still open. Interprex does not infer rounds, stale reviewers, severity or next actions from unstructured review prose.
 
@@ -62,7 +66,7 @@ Interprex
     `interprex`:
         The published crate containing provider-neutral models, errors and asynchronous domain interfaces.
     `interprex-github`:
-        The repository's GitHub provider and its typed configuration.
+        The repository's GitHub provider, its credential configuration, and complete GitHub ruleset values. Ruleset transport and applied-requirement reads return an explicit unsupported error until the provider implements those capabilities.
     `interprex-test`:
         The repository's stateful in-memory provider for consumer tests.
     `interprex-bucket`:

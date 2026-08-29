@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+- Replaced the lossy provider-neutral `Ruleset` and `RequiredCheck` values and
+  the `CodeHostingProvider::rulesets` and `upsert_ruleset` methods with
+  `SourceCodeConfigurationProvider` and `AppliedSourceRequirementsProvider`.
+  Provider implementations remove the deleted methods, implement the complete
+  provider-specific configuration type, and expose exact-revision policy facts
+  through the object-safe applied-requirements capability.
+- Moved `BranchUpdateRequirement` into source-code configuration and removed it
+  from `BranchUpdateObservation`. Consumers combine the applied requirement with
+  code-review branch freshness when deciding whether to update.
+
 ## 4.0.1
 
 ### Changed

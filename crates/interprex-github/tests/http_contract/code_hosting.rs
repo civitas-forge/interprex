@@ -1,6 +1,10 @@
-use interprex::{CodeHostingProvider, RepositorySettings};
+use interprex::{
+    AppliedSourceRequirementsProvider, CodeHostingProvider, CommitRange, ProviderError,
+    RepositorySettings, SourceCodeConfigurationProvider,
+};
+use interprex_github::GithubRuleset;
 
-use super::http_fixture::{assert_user_request, provider, repository, rest_pages, server};
+use super::http_fixture::{assert_user_request, provider, repository, server};
 
 #[tokio::test]
 async fn code_hosting_domain_sends_the_canonical_repository_address() {
@@ -57,30 +61,45 @@ async fn code_hosting_domain_maps_settings_into_the_github_request_body() {
 }
 
 #[tokio::test]
-async fn code_hosting_domain_returns_rulesets_from_every_rest_page() {
-    let route = "/repos/civitas-forge/interprex-sandbox/rulesets";
-    let (uri, requests) = rest_pages(
-        route,
-        vec![
-            r#"[{"id":1,"name":"first","enforcement":"active","conditions":{},"rules":[]}]"#,
-            r#"[{"id":2,"name":"second","enforcement":"disabled","conditions":{},"rules":[]}]"#,
-        ],
-    )
-    .await;
-    let rulesets = provider(uri)
-        .rulesets(&repository())
-        .await
-        .expect("rulesets");
-    assert_eq!(
-        rulesets
-            .iter()
-            .map(|ruleset| ruleset.name.as_str())
-            .collect::<Vec<_>>(),
-        ["first", "second"]
-    );
-    assert!(
-        requests.await.expect("captured requests")[1].starts_with(
-            "GET /repos/civitas-forge/interprex-sandbox/rulesets?per_page=100&page=2 "
-        )
-    );
+async fn source_configuration_capabilities_fail_explicitly_until_implemented() {
+    let provider = provider("http://127.0.0.1:1".to_owned());
+    assert!(matches!(
+        provider.read_rulesets(&repository()).await,
+        Err(ProviderError::Unsupported {
+            provider: "github",
+            operation: "read source rulesets"
+        })
+    ));
+    let ruleset: GithubRuleset = serde_json::from_value(serde_json::json!({
+        "name": "main",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+        "rules": [],
+        "bypass_actors": []
+    }))
+    .expect("ruleset");
+    assert!(matches!(
+        provider.apply_ruleset(&repository(), &ruleset).await,
+        Err(ProviderError::Unsupported {
+            provider: "github",
+            operation: "apply source ruleset"
+        })
+    ));
+    assert!(matches!(
+        provider
+            .applied_requirements(
+                &repository(),
+                "main",
+                &CommitRange {
+                    base_sha: "base".to_owned(),
+                    head_sha: "head".to_owned(),
+                },
+            )
+            .await,
+        Err(ProviderError::Unsupported {
+            provider: "github",
+            operation: "read applied source requirements"
+        })
+    ));
 }

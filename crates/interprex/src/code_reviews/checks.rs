@@ -90,16 +90,11 @@ impl CheckStatus {
 
 /// One check the platform recorded against a commit.
 ///
-/// A required-check rule names the check it requires by `name`, which is
-/// `RequiredCheck::context` on the code-hosting side, and may also name the
-/// application that must publish it, which is `RequiredCheck::integration_id`.
-/// `via_app` carries that application as the platform reported it. The two
-/// identifiers hold the same GitHub app identifier in different types: an
-/// integer in the rule, and its decimal spelling in `ProviderAppId`, which is
-/// opaque because other providers need not use integers. A caller comparing
-/// them today compares `via_app.id.as_str()` against
-/// `integration_id.to_string()`. Interprex performs no part of that
-/// comparison.
+/// `via_app` carries the application that published this check. Source-code
+/// policy consumers do not match this collection against native rulesets;
+/// [`crate::AppliedSourceRequirementsProvider`] performs provider-specific
+/// check-run and commit-status matching and returns one
+/// [`crate::AppliedRequiredCheck`] per native requirement.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CheckRun {
     pub name: String,

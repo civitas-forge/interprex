@@ -55,6 +55,7 @@ pub mod issues;
 pub mod jobs;
 pub mod provider;
 pub mod releases;
+pub mod source_code_configuration;
 
 pub use code_hosting::*;
 pub use code_reviews::*;
@@ -63,6 +64,7 @@ pub use issues::*;
 pub use jobs::*;
 pub use provider::*;
 pub use releases::*;
+pub use source_code_configuration::*;
 
 pub use CodeHostingProvider as CodeHostingDomain;
 pub use CodeReviewsProvider as CodeReviewsDomain;

@@ -8,8 +8,7 @@ use interprex::{
     AssetId, BranchUpdateObservation, ChangeRequest, ChangeRequestNumber, CheckOutcome, CheckRun,
     DispatchInputs, Issue, IssueNumber, Label, ProviderAppId, ProviderError, Release, Repository,
     RepositoryFacts, RepositorySettings, ReviewActorId, ReviewId, ReviewPublicationKey,
-    ReviewRequestTarget, ReviewSubmission, ReviewTarget, ReviewerApplication, Ruleset, RunId,
-    WorkflowRun,
+    ReviewRequestTarget, ReviewSubmission, ReviewTarget, ReviewerApplication, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -21,7 +20,6 @@ pub struct FakeProvider {
 #[derive(Debug, Default)]
 pub(crate) struct State {
     pub(crate) repositories: BTreeMap<Repository, (RepositoryFacts, RepositorySettings)>,
-    pub(crate) rulesets: BTreeMap<Repository, Vec<Ruleset>>,
     pub(crate) secret_names: BTreeMap<Repository, Vec<String>>,
     pub(crate) issues: BTreeMap<(Repository, IssueNumber), Issue>,
     pub(crate) labels: BTreeMap<Repository, Vec<Label>>,

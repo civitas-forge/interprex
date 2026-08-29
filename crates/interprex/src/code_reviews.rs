@@ -12,9 +12,7 @@ mod reviewer_applications;
 mod reviews;
 mod text_records;
 
-pub use branch_updates::{
-    BranchFreshness, BranchUpdateError, BranchUpdateObservation, BranchUpdateRequirement,
-};
+pub use branch_updates::{BranchFreshness, BranchUpdateError, BranchUpdateObservation};
 pub use change_request_heads::{ChangeRequestHead, InvalidHeadRef};
 pub use change_requests::{
     ChangeRequest, ChangeRequestNumber, ChangeRequestState, CommitRange, Mergeability,

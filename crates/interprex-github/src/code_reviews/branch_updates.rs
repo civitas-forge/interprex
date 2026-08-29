@@ -1,79 +1,19 @@
 use async_trait::async_trait;
 use interprex::{
-    BranchFreshness, BranchUpdateError, BranchUpdateObservation, BranchUpdateRequirement,
-    BranchUpdatesProvider, ChangeRequestNumber, CommitRange, ProviderError, Repository, Result,
+    BranchFreshness, BranchUpdateError, BranchUpdateObservation, BranchUpdatesProvider,
+    ChangeRequestNumber, CommitRange, ProviderError, Repository, Result,
 };
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
     GithubProvider,
-    client::{authenticated_external, is_not_found, read_error},
+    client::{authenticated_external, read_error},
 };
-
-#[derive(Deserialize)]
-struct GithubBranchRule {
-    #[serde(rename = "type")]
-    kind: String,
-    parameters: Option<Value>,
-}
 
 #[derive(Deserialize)]
 struct GithubComparison {
     status: String,
-}
-
-#[derive(Deserialize)]
-struct GithubBranchProtection {
-    required_status_checks: Option<GithubRequiredStatusChecks>,
-}
-
-#[derive(Deserialize)]
-struct GithubRequiredStatusChecks {
-    strict: bool,
-}
-
-fn update_requirement(
-    rules: &[GithubBranchRule],
-    classic_protection: Option<&GithubBranchProtection>,
-) -> Result<BranchUpdateRequirement> {
-    for rule in rules
-        .iter()
-        .filter(|rule| rule.kind == "required_status_checks")
-    {
-        let parameters = rule
-            .parameters
-            .as_ref()
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                unrepresentable("an applicable required-checks rule has no parameters")
-            })?;
-        let strict = parameters
-            .get("strict_required_status_checks_policy")
-            .and_then(Value::as_bool)
-            .ok_or_else(|| {
-                unrepresentable(
-                    "an applicable required-checks rule has no branch-freshness requirement",
-                )
-            })?;
-        let checks = parameters
-            .get("required_status_checks")
-            .and_then(Value::as_array)
-            .ok_or_else(|| {
-                unrepresentable("an applicable required-checks rule has no required-check list")
-            })?;
-        if strict && !checks.is_empty() {
-            return Ok(BranchUpdateRequirement::Required);
-        }
-    }
-    if classic_protection
-        .and_then(|protection| protection.required_status_checks.as_ref())
-        .is_some_and(|checks| checks.strict)
-    {
-        return Ok(BranchUpdateRequirement::Required);
-    }
-    Ok(BranchUpdateRequirement::NotRequired)
 }
 
 fn freshness(status: &str) -> Result<BranchFreshness> {
@@ -108,45 +48,6 @@ impl BranchUpdatesProvider for GithubProvider {
         number: ChangeRequestNumber,
     ) -> Result<BranchUpdateObservation> {
         let pull_request = self.github_pull_request(repository, number).await?;
-        let base_branch = utf8_percent_encode(&pull_request.base.branch, NON_ALPHANUMERIC);
-        let rules: Vec<GithubBranchRule> = self
-            .user()?
-            .get(
-                format!("/repos/{repository}/rules/branches/{base_branch}"),
-                None::<&()>,
-            )
-            .await
-            .map_err(|error| {
-                read_error(
-                    "read applicable branch rules",
-                    format!(
-                        "applicable rules for {} in {repository}",
-                        pull_request.base.branch
-                    ),
-                    error,
-                )
-            })?;
-        let classic_protection: Option<GithubBranchProtection> = match self
-            .user()?
-            .get(
-                format!("/repos/{repository}/branches/{base_branch}/protection"),
-                None::<&()>,
-            )
-            .await
-        {
-            Ok(protection) => Some(protection),
-            Err(error) if is_not_found(&error) => None,
-            Err(error) => {
-                return Err(read_error(
-                    "read classic branch protection",
-                    format!(
-                        "classic protection for {} in {repository}",
-                        pull_request.base.branch
-                    ),
-                    error,
-                ));
-            }
-        };
         let comparison: GithubComparison = self
             .user()?
             .get(
@@ -173,7 +74,6 @@ impl BranchUpdatesProvider for GithubProvider {
                 base_sha: pull_request.base.sha,
                 head_sha: pull_request.head.sha,
             },
-            requirement: update_requirement(&rules, classic_protection.as_ref())?,
             freshness: freshness(&comparison.status)?,
         })
     }
@@ -219,22 +119,5 @@ impl BranchUpdatesProvider for GithubProvider {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn malformed_required_check_rules_are_not_guessed() {
-        let rules = [GithubBranchRule {
-            kind: "required_status_checks".to_owned(),
-            parameters: Some(json!({"required_status_checks": []})),
-        }];
-        assert!(matches!(
-            update_requirement(&rules, None),
-            Err(ProviderError::Unrepresentable { .. })
-        ));
     }
 }
