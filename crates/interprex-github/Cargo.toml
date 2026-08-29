@@ -33,9 +33,8 @@ tokio.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+aws-lc-rs.workspace = true
 fs2.workspace = true
-rand.workspace = true
-rsa.workspace = true
 
 [lib]
 path = "src/lib.rs"

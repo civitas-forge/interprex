@@ -6,11 +6,11 @@ use std::{
     },
 };
 
-use rand::rngs::OsRng;
-use rsa::{
-    RsaPrivateKey,
-    pkcs8::{EncodePrivateKey, LineEnding},
+use aws_lc_rs::{
+    encoding::AsDer,
+    rsa::{KeyPair, KeySize},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -25,11 +25,16 @@ fn test_app_private_key() -> SecretString {
     static PRIVATE_KEY: OnceLock<String> = OnceLock::new();
     PRIVATE_KEY
         .get_or_init(|| {
-            RsaPrivateKey::new(&mut OsRng, 2048)
-                .expect("generate test RSA key")
-                .to_pkcs8_pem(LineEnding::LF)
-                .expect("encode test RSA key")
-                .to_string()
+            let key = KeyPair::generate(KeySize::Rsa2048).expect("generate test RSA key");
+            let der = key.as_der().expect("encode test RSA key");
+            let encoded = STANDARD.encode(der.as_ref());
+            let body = encoded
+                .as_bytes()
+                .chunks(64)
+                .map(|line| std::str::from_utf8(line).expect("base64 is UTF-8"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n")
         })
         .clone()
         .into()
