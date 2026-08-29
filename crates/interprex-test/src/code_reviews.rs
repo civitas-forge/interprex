@@ -3,13 +3,15 @@ use interprex::{
     ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber,
     ChangeRequestState, CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution,
     FindingResolutionRecord, FindingResolutionReply, ProviderError, Repository, Result,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewComment, ReviewCommentId, ReviewRequest,
-    ReviewRequestId, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
-    ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
-    ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
+    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
+    ReviewCommentId, ReviewFinding, ReviewId, ReviewLineRange, ReviewLocation,
+    ReviewPublishingProvider, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
+    ReviewRequestTargetInspection, ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewTeam,
+    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
+    ReviewerApplication, ReviewerApplicationsProvider,
 };
 
-use crate::state::{FakeProvider, missing};
+use crate::state::{FakeProvider, FakeReviewPublication, missing};
 
 #[async_trait]
 impl CodeReviewsProvider for FakeProvider {
@@ -324,6 +326,123 @@ impl ReviewerApplicationsProvider for FakeProvider {
             .get(&(repository.clone(), slug.to_owned()))
             .cloned()
             .ok_or_else(|| missing(format!("reviewer application {slug} in {repository}")))
+    }
+}
+
+#[async_trait]
+impl ReviewPublishingProvider for FakeProvider {
+    async fn publish_review(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        submission: &interprex::ReviewSubmission,
+    ) -> Result<ReviewId> {
+        let publication_key = (
+            repository.clone(),
+            number,
+            submission.publication_key().clone(),
+        );
+        let mut state = self.state.write().await;
+        if let Some(existing) = state.review_publications.get(&publication_key) {
+            if existing.reviewer == *reviewer && existing.submission == *submission {
+                return Ok(existing.review_id.clone());
+            }
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: format!(
+                    "review publication key {:?} already names a different review",
+                    submission.publication_key().as_str()
+                ),
+            });
+        }
+
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let submitted_at = change_request
+            .reviews
+            .iter()
+            .filter_map(|review| match review.state {
+                ReviewState::Draft => None,
+                ReviewState::Submitted { submitted_at, .. } => Some(submitted_at),
+            })
+            .chain([change_request.updated_at])
+            .max()
+            .expect("the observed change supplies one timestamp")
+            + std::time::Duration::from_micros(1);
+        let review_id = ReviewId::new(format!(
+            "fake-review:{}:{}:{}:{}:{}:{}:{}",
+            repository.owner().len(),
+            repository.owner(),
+            repository.name().len(),
+            repository.name(),
+            number.get(),
+            submission.publication_key().as_str().len(),
+            submission.publication_key().as_str(),
+        ))
+        .expect("fake review identity is nonempty");
+        let findings = submission
+            .findings()
+            .iter()
+            .enumerate()
+            .map(|(index, finding)| {
+                let line_range = ReviewLineRange {
+                    start: None,
+                    end: finding.line(),
+                };
+                let identity = format!("{}:{}", review_id.as_str(), index + 1);
+                ReviewFinding {
+                    thread: ReviewThread {
+                        id: ReviewThreadId::new(format!("fake-thread:{identity}"))
+                            .expect("fake thread identity is nonempty"),
+                        location: ReviewLocation {
+                            path: finding.path().to_owned(),
+                            anchor: ReviewAnchor::Lines {
+                                side: finding.side().clone(),
+                                original: line_range.clone(),
+                                current: Some(line_range),
+                            },
+                        },
+                        outdated: false,
+                        status: ReviewThreadStatus::Open,
+                        comment: interprex::ReviewComment {
+                            id: ReviewCommentId::new(format!("fake-comment:{identity}"))
+                                .expect("fake comment identity is nonempty"),
+                            author: reviewer.bot().clone(),
+                            body: finding.body().to_owned(),
+                            created_at: submitted_at,
+                            updated_at: None,
+                        },
+                        replies: Vec::new(),
+                    },
+                    resolution: None,
+                }
+            })
+            .collect();
+        change_request.reviews.push(interprex::Review {
+            id: review_id.clone(),
+            author: ReviewAuthor::Other(reviewer.bot().clone()),
+            via_app: Some(reviewer.app().clone()),
+            revision: submission.revision().clone(),
+            state: ReviewState::Submitted {
+                disposition: submission.disposition().into(),
+                submitted_at,
+            },
+            summary: Some(submission.summary().to_owned()),
+            findings,
+        });
+        change_request.updated_at = submitted_at;
+        state.review_publications.insert(
+            publication_key,
+            FakeReviewPublication {
+                reviewer: reviewer.clone(),
+                submission: submission.clone(),
+                review_id: review_id.clone(),
+            },
+        );
+        Ok(review_id)
     }
 }
 

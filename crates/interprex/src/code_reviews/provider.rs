@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use super::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
     FindingResolution, FindingResolutionReply, ProviderTextRecord, ReviewCommentId,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewThreadId, ReviewerApplication,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewSubmission, ReviewThreadId,
+    ReviewerApplication,
 };
 use crate::{Repository, Result};
 
@@ -213,4 +214,39 @@ pub trait ReviewerApplicationsProvider: Send + Sync {
         repository: &Repository,
         slug: &str,
     ) -> Result<ReviewerApplication>;
+}
+
+/// Optional provider capability for publishing complete application-authored
+/// reviews.
+///
+/// This trait is separate from [`CodeReviewsProvider`] so a provider can
+/// observe reviews without supporting their creation.
+#[async_trait]
+pub trait ReviewPublishingProvider: Send + Sync {
+    /// Publishes `submission` as `reviewer` and returns the provider's review
+    /// identifier.
+    ///
+    /// The publication key is scoped to `repository` and `number`. Repeating a
+    /// key with the same reviewer and submission returns the original
+    /// [`ReviewId`](super::ReviewId) without creating another review. Reusing a
+    /// key with a different reviewer or submission returns
+    /// [`crate::ProviderError::InvalidInput`].
+    ///
+    /// The provider publishes against the supplied revision exactly. It does
+    /// not replace that commit with the change request's current head. An
+    /// adapter may create a provider-specific draft while recovering from
+    /// retries. Such a draft contains the complete summary and findings from
+    /// one provider request before the adapter submits it; the caller neither
+    /// creates an empty draft nor adds individual findings to one.
+    ///
+    /// Two concurrent calls using a previously unseen key need not collapse
+    /// into one review. A caller that can publish the same planned review from
+    /// several tasks serializes those calls.
+    async fn publish_review(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        submission: &ReviewSubmission,
+    ) -> Result<super::ReviewId>;
 }

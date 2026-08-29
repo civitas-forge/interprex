@@ -9,10 +9,11 @@ use interprex::{
     ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
     ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewRequestTarget, ReviewRequestTargetInspection,
-    ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewThread, ReviewThreadId,
-    ReviewThreadStatus, ReviewedRevision, ReviewerApplication, ReviewerApplicationsProvider,
-    TextRecordsProvider,
+    ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
+    ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision, ReviewerApplication,
+    ReviewerApplicationsProvider, TextRecordsProvider,
 };
 
 use crate::FakeProvider;
@@ -322,6 +323,142 @@ async fn consumer_resolves_only_explicitly_seeded_reviewer_applications() {
             .await,
         Err(ProviderError::NotFound { .. })
     ));
+}
+
+#[tokio::test]
+async fn consumer_publishes_then_observes_a_complete_review() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    provider
+        .seed_change_request(
+            repository.clone(),
+            change_request(
+                number,
+                "Publish review",
+                head(&repository, "refs/heads/publish-review"),
+            ),
+        )
+        .await;
+    let application = ReviewerApplication::new(
+        ProviderApp {
+            id: ProviderAppId::new("4111233").expect("app id"),
+            slug: "adr-codex-review".to_owned(),
+            name: "ADR Codex Review".to_owned(),
+        },
+        ReviewActor {
+            id: ReviewActorId::new("BOT_kgDOEZ_BKw").expect("actor id"),
+            login: "adr-codex-review[bot]".to_owned(),
+            kind: ReviewActorKind::Bot,
+        },
+    )
+    .expect("reviewer application");
+    provider
+        .seed_reviewer_application(
+            repository.clone(),
+            "configured-reviewer".to_owned(),
+            application,
+        )
+        .await;
+    let reviewer = provider
+        .resolve_reviewer_application(&repository, "configured-reviewer")
+        .await
+        .expect("resolved application");
+    let submission = ReviewSubmission::new(
+        ReviewPublicationKey::new("round-2:codex").expect("publication key"),
+        ReviewedRevision {
+            head_sha: "head-2".to_owned(),
+        },
+        ReviewSubmissionDisposition::ChangesRequested,
+        "One finding.",
+        vec![
+            ReviewSubmissionFinding::new(
+                "src/lib.rs",
+                ReviewLine::new(17).expect("line"),
+                ReviewDiffSide::Right,
+                "Handle the error before continuing.",
+            )
+            .expect("finding"),
+        ],
+    )
+    .expect("submission");
+
+    let review_id = provider
+        .publish_review(&repository, number, &reviewer, &submission)
+        .await
+        .expect("publish review");
+    let repeated_id = provider
+        .publish_review(&repository, number, &reviewer, &submission)
+        .await
+        .expect("repeat identical publication");
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("observe review");
+    let review = observed.reviews.last().expect("published review");
+
+    assert_eq!(repeated_id, review_id);
+    assert_eq!(observed.reviews.len(), 1);
+    assert_eq!(review.id, review_id);
+    assert_eq!(review.author, ReviewAuthor::Other(reviewer.bot().clone()));
+    assert_eq!(review.via_app.as_ref(), Some(reviewer.app()));
+    assert_eq!(review.revision, submission.revision().clone());
+    assert!(matches!(
+        review.state,
+        ReviewState::Submitted {
+            disposition: ReviewDisposition::ChangesRequested,
+            ..
+        }
+    ));
+    assert_eq!(review.summary.as_deref(), Some("One finding."));
+    assert_eq!(review.findings.len(), 1);
+    assert_eq!(review.findings[0].location.path, "src/lib.rs");
+    assert_eq!(review.findings[0].comment.author, reviewer.bot().clone());
+    assert_eq!(
+        review.findings[0].comment.body,
+        "Handle the error before continuing."
+    );
+    assert_eq!(
+        review.findings[0].location.anchor,
+        ReviewAnchor::Lines {
+            side: ReviewDiffSide::Right,
+            original: ReviewLineRange {
+                start: None,
+                end: ReviewLine::new(17).expect("line"),
+            },
+            current: Some(ReviewLineRange {
+                start: None,
+                end: ReviewLine::new(17).expect("line"),
+            }),
+        }
+    );
+
+    let changed = ReviewSubmission::new(
+        submission.publication_key().clone(),
+        submission.revision().clone(),
+        submission.disposition(),
+        "A changed summary.",
+        submission.findings().to_vec(),
+    )
+    .expect("changed submission");
+    assert!(matches!(
+        provider
+            .publish_review(&repository, number, &reviewer, &changed)
+            .await,
+        Err(ProviderError::InvalidInput {
+            provider: "fake",
+            ..
+        })
+    ));
+    assert_eq!(
+        provider
+            .change_request(&repository, number)
+            .await
+            .expect("review after rejected reuse")
+            .reviews
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
