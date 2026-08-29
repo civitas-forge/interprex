@@ -6,13 +6,14 @@ use interprex::{
     ReviewId, ReviewPublicationKey, ReviewPublishingProvider, ReviewSubmission,
     ReviewSubmissionDisposition, ReviewerApplication,
 };
+use octocrab::Page;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::{
     GithubProvider,
-    client::{ConfiguredApp, authenticated_external},
+    client::{ConfiguredApp, authenticated_external, is_not_found},
 };
 
 use super::change_requests::GithubReview;
@@ -20,7 +21,9 @@ use super::change_requests::GithubReview;
 const PUBLICATION_NAMESPACE: &str = "interprex";
 const PUBLICATION_NAME: &str = "review-publication";
 const PUBLICATION_VERSION: u64 = 1;
+const PUBLICATION_IDENTIFIER: &str = "interprex:review-publication";
 const PUBLICATION_CARRIER: &str = "<!-- interprex:review-publication";
+const MAX_OBSERVED_PULL_REQUEST_COMMITS: usize = 250;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -30,6 +33,11 @@ struct PublicationRecord {
     key: String,
     digest: String,
     disposition: ReviewSubmissionDisposition,
+}
+
+#[derive(Deserialize)]
+struct PullRequestCommit {
+    sha: String,
 }
 
 struct Publication<'a> {
@@ -161,6 +169,50 @@ impl GithubProvider {
         .map(|publication| publication.map(OwnedPublication::from))
     }
 
+    async fn require_review_revision(
+        &self,
+        app: &ConfiguredApp,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        revision: &str,
+    ) -> Result<()> {
+        let page: Page<PullRequestCommit> = app
+            .read
+            .get(
+                format!("/repos/{repository}/pulls/{}/commits", number.get()),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(|error| {
+                if is_not_found(&error) {
+                    ProviderError::NotFound {
+                        entity: format!("change request {} in {repository}", number.get()),
+                    }
+                } else {
+                    authenticated_external("read change request revisions", &error)
+                }
+            })?;
+        let commits = app
+            .read
+            .all_pages(page)
+            .await
+            .map_err(|error| authenticated_external("read change request revisions", &error))?;
+        if commits.iter().any(|commit| commit.sha == revision) {
+            return Ok(());
+        }
+        if commits.len() >= MAX_OBSERVED_PULL_REQUEST_COMMITS {
+            return Err(reconciliation_error(
+                "GitHub capped the change request revision observation before the requested revision was found",
+            ));
+        }
+        Err(ProviderError::NotFound {
+            entity: format!(
+                "revision {revision} on change request {} in {repository}",
+                number.get()
+            ),
+        })
+    }
+
     async fn submit_publication(
         &self,
         scope: PublicationScope<'_>,
@@ -234,6 +286,7 @@ impl ReviewPublishingProvider for GithubProvider {
         submission: &ReviewSubmission,
     ) -> Result<ReviewId> {
         let app = self.reviewer_app(reviewer)?;
+        validate_submission_summary(submission.summary())?;
         let digest = submission_digest(submission)?;
         let scope = PublicationScope {
             app,
@@ -245,8 +298,16 @@ impl ReviewPublishingProvider for GithubProvider {
             submission: Some(submission),
         };
         if let Some(publication) = self.read_matching_publication(scope).await? {
+            if publication.is_submitted() {
+                return Ok(publication.review_id);
+            }
+            self.require_review_revision(app, repository, number, &submission.revision().head_sha)
+                .await?;
             return self.finish_publication(scope, publication).await;
         }
+
+        self.require_review_revision(app, repository, number, &submission.revision().head_sha)
+            .await?;
 
         let record = PublicationRecord {
             version: PUBLICATION_VERSION,
@@ -298,7 +359,7 @@ impl ReviewPublishingProvider for GithubProvider {
                 }
             },
             Ok(Err(error)) => {
-                let create_error = authenticated_external("create review", &error);
+                let create_error = create_review_error(&error);
                 return self.reconcile_create(scope, create_error).await;
             }
             Err(_) => {
@@ -337,6 +398,17 @@ impl ReviewPublishingProvider for GithubProvider {
         };
         self.finish_publication(scope, publication).await.map(Some)
     }
+}
+
+fn validate_submission_summary(summary: &str) -> Result<()> {
+    if summary.contains(PUBLICATION_IDENTIFIER) {
+        return Err(ProviderError::InvalidInput {
+            provider: "github",
+            fact: "review summary contains the reserved interprex:review-publication identifier"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -499,6 +571,52 @@ fn submission_digest(submission: &ReviewSubmission) -> Result<String> {
     let bytes = serde_json::to_vec(submission)
         .map_err(|error| reconciliation_error(format!("serialize review submission: {error}")))?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+fn create_review_error(error: &octocrab::Error) -> ProviderError {
+    if let octocrab::Error::GitHub { source, .. } = error
+        && source.status_code.as_u16() == 422
+        && let Some(errors) = source.errors.as_deref()
+        && !errors.is_empty()
+        && let Some(mut fields) = errors
+            .iter()
+            .map(review_validation_field)
+            .collect::<Option<Vec<_>>>()
+    {
+        fields.sort_unstable();
+        fields.dedup();
+        return ProviderError::InvalidInput {
+            provider: "github",
+            fact: format!("GitHub rejected these review fields: {}", fields.join(", ")),
+        };
+    }
+    authenticated_external("create review", error)
+}
+
+fn review_validation_field(error: &serde_json::Value) -> Option<&'static str> {
+    let resource = error.get("resource")?.as_str()?;
+    let field = error.get("field")?.as_str()?;
+    let code = error.get("code")?.as_str()?;
+    if !matches!(
+        code,
+        "custom" | "invalid" | "missing" | "missing_field" | "unprocessable"
+    ) {
+        return None;
+    }
+    match (resource, field) {
+        ("PullRequestReview", "body") => Some("body"),
+        ("PullRequestReview", "comments") => Some("comments"),
+        ("PullRequestReview", "commit_id") => Some("commit_id"),
+        ("PullRequestReview", "event") => Some("event"),
+        ("PullRequestReviewComment", "body") => Some("comments.body"),
+        ("PullRequestReviewComment", "line") => Some("comments.line"),
+        ("PullRequestReviewComment", "path") => Some("comments.path"),
+        ("PullRequestReviewComment", "position") => Some("comments.position"),
+        ("PullRequestReviewComment", "side") => Some("comments.side"),
+        ("PullRequestReviewComment", "start_line") => Some("comments.start_line"),
+        ("PullRequestReviewComment", "start_side") => Some("comments.start_side"),
+        _ => None,
+    }
 }
 
 fn github_event(disposition: ReviewSubmissionDisposition) -> &'static str {

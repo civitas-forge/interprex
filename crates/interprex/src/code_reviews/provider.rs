@@ -263,7 +263,9 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// application ID. Returns [`crate::ProviderError::NotFound`] when the
     /// change request or exact revision does not exist,
     /// [`crate::ProviderError::InvalidInput`] when the publication key already
-    /// identifies a different submission for the same reviewer, and
+    /// identifies a different submission for the same reviewer, when the
+    /// summary uses metadata reserved by the adapter, or when the provider
+    /// rejects a supplied review field as invalid, and
     /// [`crate::ProviderError::External`] when transport or provider behavior
     /// prevents publication or leaves a result the adapter cannot reconcile.
     async fn publish_review(
