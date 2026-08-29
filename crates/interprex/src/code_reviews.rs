@@ -5,6 +5,7 @@ mod findings;
 mod identities;
 mod provider;
 mod review_requests;
+mod review_submissions;
 mod review_threads;
 mod reviewer_applications;
 mod reviews;
@@ -24,11 +25,14 @@ pub use identities::{
     ReviewId, ReviewRequestId, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThreadId,
 };
 pub use provider::{
-    ChangeRequestCommentsProvider, CodeReviewsProvider, ReviewTargetsProvider,
-    ReviewerApplicationsProvider, TextRecordsProvider,
+    ChangeRequestCommentsProvider, CodeReviewsProvider, ReviewPublishingProvider,
+    ReviewTargetsProvider, ReviewerApplicationsProvider, TextRecordsProvider,
 };
 pub use review_requests::{
     ReviewRequest, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
+};
+pub use review_submissions::{
+    ReviewPublicationKey, ReviewSubmission, ReviewSubmissionDisposition, ReviewSubmissionFinding,
 };
 pub use review_threads::{
     ReviewAnchor, ReviewComment, ReviewDiffSide, ReviewLine, ReviewLineRange, ReviewLocation,

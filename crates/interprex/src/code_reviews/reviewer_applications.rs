@@ -50,6 +50,16 @@ impl ReviewerApplication {
     pub const fn bot(&self) -> &ReviewActor {
         &self.bot
     }
+
+    /// Whether two observations identify the same application and bot actor.
+    ///
+    /// Provider application names and slugs and bot logins can change. Their
+    /// provider-assigned IDs define identity and remain the only fields this
+    /// comparison reads.
+    #[must_use]
+    pub fn same_identity_as(&self, other: &Self) -> bool {
+        self.app.id == other.app.id && self.bot.id == other.bot.id
+    }
 }
 
 impl TryFrom<SerializedReviewerApplication> for ReviewerApplication {
@@ -124,5 +134,35 @@ mod tests {
             }
         });
         assert!(serde_json::from_value::<ReviewerApplication>(encoded).is_err());
+    }
+
+    #[test]
+    fn reviewer_application_identity_uses_only_provider_assigned_ids() {
+        let original =
+            ReviewerApplication::new(app(), actor(ReviewActorKind::Bot)).expect("application");
+        let renamed = ReviewerApplication::new(
+            ProviderApp {
+                id: original.app().id.clone(),
+                slug: "renamed-reviewer".to_owned(),
+                name: "Renamed Reviewer".to_owned(),
+            },
+            ReviewActor {
+                id: original.bot().id.clone(),
+                login: "renamed-reviewer[bot]".to_owned(),
+                kind: ReviewActorKind::Bot,
+            },
+        )
+        .expect("renamed application");
+        assert!(original.same_identity_as(&renamed));
+
+        let different_app = ReviewerApplication::new(
+            ProviderApp {
+                id: ProviderAppId::new("other-app").expect("app id"),
+                ..app()
+            },
+            actor(ReviewActorKind::Bot),
+        )
+        .expect("different application");
+        assert!(!original.same_identity_as(&different_app));
     }
 }
