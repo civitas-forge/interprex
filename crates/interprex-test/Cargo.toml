@@ -6,6 +6,7 @@ documentation = "https://docs.rs/interprex-test"
 edition.workspace = true
 keywords = ["fake", "mock", "provider", "testing"]
 license.workspace = true
+license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
@@ -16,7 +17,7 @@ async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
-interprex = { path = "../interprex", version = "=4.0.1" }
+interprex = { path = "../interprex", version = "=5.0.0" }
 secrecy.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

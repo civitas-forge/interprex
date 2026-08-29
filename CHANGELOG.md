@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.0.0
 
 ### Breaking changes
 
@@ -26,10 +26,19 @@
   their GitHub App identity; incomplete and unreadable provider answers return
   explicit errors.
 
+### Branch updates
+
+- Added `BranchUpdatesProvider` for observing whether an exact change-request
+  head contains the target-branch tip and for requesting an update only while
+  that observed head remains current. The GitHub provider distinguishes a stale
+  head from provider lookup, credential and refusal errors.
+
 ### Test provider
 
 - `interprex-test` can seed an applied-requirements observation or provider
   error for an exact repository, target branch, base revision and head revision.
+- `interprex-test` can seed and exercise exact change-request branch-update
+  observations and operations.
 
 ## 4.0.1
 

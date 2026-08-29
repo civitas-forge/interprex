@@ -10,10 +10,11 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 license = "MIT"
+license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/civitas-forge/interprex"
 rust-version = "1.88"
-version = "4.0.1"
+version = "5.0.0"
 
 [workspace.dependencies]
 async-trait = "0.1.89"
