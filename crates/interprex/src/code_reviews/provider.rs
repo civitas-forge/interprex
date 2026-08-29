@@ -2,8 +2,8 @@ use async_trait::async_trait;
 
 use super::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
-    FindingResolution, FindingResolutionReply, ReviewRequestTarget, ReviewRequestTargetInspection,
-    ReviewThreadId,
+    FindingResolution, FindingResolutionReply, ProviderTextRecord, ReviewCommentId,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewThreadId, ReviewerApplication,
 };
 use crate::{Repository, Result};
 
@@ -140,4 +140,77 @@ pub trait ReviewTargetsProvider: Send + Sync {
         repository: &Repository,
         target: &ReviewRequestTarget,
     ) -> Result<ReviewRequestTargetInspection>;
+}
+
+/// Optional provider capability for embedding structured records in provider
+/// text and reading them back.
+///
+/// This trait owns only the text carrier. [`ProviderTextRecord::value`] has no
+/// provider-defined meaning, and callers decide which namespaces, record names
+/// and protocol versions they understand.
+pub trait TextRecordsProvider: Send + Sync {
+    /// Returns `text` with one hidden carrier containing `record`.
+    ///
+    /// The supplied text remains visible without alteration when the provider
+    /// renders the returned value. The carrier itself may be visible through a
+    /// raw-text interface. A valid [`ProviderTextRecord`] is always encodable.
+    fn embed_record(&self, text: &str, record: &ProviderTextRecord) -> String;
+
+    /// Extracts valid records from `text` in source order.
+    ///
+    /// Malformed carriers are ordinary text and are omitted. Records with a
+    /// namespace, name or positive protocol version unknown to the caller are
+    /// returned unchanged.
+    fn extract_records(&self, text: &str) -> Vec<ProviderTextRecord>;
+}
+
+/// Optional provider capability for creating unanchored change-request
+/// comments.
+///
+/// This trait is separate from [`CodeReviewsProvider`] so an implementation
+/// can support code-review observation without supporting comment creation.
+#[async_trait]
+pub trait ChangeRequestCommentsProvider: Send + Sync {
+    /// Creates exactly one unanchored comment with `body` and returns the
+    /// provider identifier assigned to that comment.
+    ///
+    /// The provider receives the body exactly as supplied. A provider that
+    /// rejects the body returns [`crate::ProviderError::InvalidInput`]; a
+    /// transport or platform failure returns
+    /// [`crate::ProviderError::External`].
+    async fn create_unanchored_comment(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        body: &str,
+    ) -> Result<ReviewCommentId>;
+}
+
+/// Optional provider capability for resolving reviewer applications.
+///
+/// This trait is separate from [`CodeReviewsProvider`] because a provider can
+/// observe and request reviewers without supporting application lookup.
+#[async_trait]
+pub trait ReviewerApplicationsProvider: Send + Sync {
+    /// Resolves `slug`, using the credentials selected for `repository`, to
+    /// the application and bot actor the provider observes.
+    ///
+    /// The result contains the provider application's identifier, slug and
+    /// name beside the bot's identifier, login and actor kind. It does not say
+    /// that the application is installed for `repository`, that the bot can
+    /// appear in the platform's outstanding reviewer set, that a review will
+    /// arrive, or that a delivered review will attribute the application
+    /// separately from its bot author.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ProviderError::NotFound`] when either identity cannot
+    /// be observed, [`crate::ProviderError::Unrepresentable`] when observed
+    /// provider data cannot construct a [`ReviewerApplication`], and
+    /// [`crate::ProviderError::External`] when the provider operation fails.
+    async fn resolve_reviewer_application(
+        &self,
+        repository: &Repository,
+        slug: &str,
+    ) -> Result<ReviewerApplication>;
 }
