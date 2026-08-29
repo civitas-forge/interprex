@@ -10,6 +10,7 @@ mod issues;
 mod jobs;
 mod releases;
 mod source_code_configuration;
+mod source_code_requirements;
 
 pub use client::{GithubProvider, from_config, from_project};
 pub use config::{AppCredentials, GithubConfig};

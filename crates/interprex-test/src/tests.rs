@@ -1,20 +1,22 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
+    AppliedRequiredCheck, AppliedRequiredCheckState, AppliedSourceRequirements,
     AppliedSourceRequirementsProvider, AssetStreamError, AssetUpload, BranchFreshness,
-    BranchUpdateError, BranchUpdateObservation, BranchUpdatesProvider, ChangeRequest,
-    ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
-    CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider, CodeReviewsProvider, CommitRange,
-    FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply,
-    FindingSeverity, Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord,
-    Release, ReleaseId, ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review,
-    ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
-    ReviewCommentId, ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
-    ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
-    ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider,
-    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision, ReviewerApplication,
-    ReviewerApplicationsProvider, SourceCodeConfigurationProvider, TextRecordsProvider,
+    BranchUpdateError, BranchUpdateObservation, BranchUpdateRequirement, BranchUpdatesProvider,
+    ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber,
+    ChangeRequestState, CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider,
+    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
+    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp,
+    ProviderAppId, ProviderError, ProviderTextRecord, Release, ReleaseId, ReleasesProvider,
+    Repository, RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId,
+    ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide,
+    ReviewDisposition, ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation,
+    ReviewPublicationKey, ReviewPublishingProvider, ReviewRequestTarget,
+    ReviewRequestTargetInspection, ReviewState, ReviewSubmission, ReviewSubmissionDisposition,
+    ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider, ReviewThread, ReviewThreadId,
+    ReviewThreadStatus, ReviewedRevision, ReviewerApplication, ReviewerApplicationsProvider,
+    SourceCodeConfigurationProvider, TextRecordsProvider,
 };
 
 use crate::FakeProvider;
@@ -167,22 +169,92 @@ async fn unimplemented_source_configuration_capabilities_fail_explicitly() {
             operation: "read source rulesets"
         })
     ));
+}
+
+#[tokio::test]
+async fn applied_requirements_fixture_is_deterministic_for_one_exact_scope() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let range = CommitRange {
+        base_sha: "base-1".to_owned(),
+        head_sha: "head-1".to_owned(),
+    };
+    let observation = AppliedSourceRequirements::new(
+        repository.clone(),
+        "main",
+        range.clone(),
+        2,
+        BranchUpdateRequirement::Required,
+        vec![
+            AppliedRequiredCheck::new(
+                "quality",
+                Some(ProviderAppId::new("42").expect("app id")),
+                AppliedRequiredCheckState::Satisfied,
+            )
+            .expect("check"),
+        ],
+    )
+    .expect("requirements");
+    provider
+        .seed_applied_requirements(observation.clone())
+        .await;
+
+    assert_eq!(
+        provider
+            .applied_requirements(&repository, "main", &range)
+            .await
+            .expect("exact observation"),
+        observation
+    );
+    for (branch, other_range) in [
+        ("release", range.clone()),
+        (
+            "main",
+            CommitRange {
+                base_sha: "base-2".to_owned(),
+                ..range.clone()
+            },
+        ),
+        (
+            "main",
+            CommitRange {
+                head_sha: "head-2".to_owned(),
+                ..range.clone()
+            },
+        ),
+    ] {
+        assert!(matches!(
+            provider
+                .applied_requirements(&repository, branch, &other_range)
+                .await,
+            Err(ProviderError::NotFound { .. })
+        ));
+    }
     assert!(matches!(
         provider
             .applied_requirements(
-                &repository,
+                &Repository::new("other", "sandbox").expect("repository"),
                 "main",
-                &CommitRange {
-                    base_sha: "base".to_owned(),
-                    head_sha: "head".to_owned(),
-                }
+                &range,
             )
             .await,
-        Err(ProviderError::Unsupported {
-            provider: "fake",
-            operation: "read applied source requirements"
-        })
+        Err(ProviderError::NotFound { .. })
     ));
+
+    let denied = ProviderError::External {
+        provider: "github",
+        operation: "read applied branch rules",
+        message: "forbidden".to_owned(),
+    };
+    provider
+        .seed_applied_requirements_error(repository.clone(), "main", range.clone(), denied.clone())
+        .await;
+    assert_eq!(
+        provider
+            .applied_requirements(&repository, "main", &range)
+            .await,
+        Err(denied)
+    );
 }
 
 #[tokio::test]

@@ -11,6 +11,7 @@ use super::actors::{GithubApp, normalize_app};
 /// The page size every check-runs request asks for, and the size a short page
 /// is measured against.
 const CHECK_RUNS_PER_PAGE: usize = 100;
+const GITHUB_CHECK_SUITE_LIMIT: usize = 1_000;
 
 /// One page of GitHub's check-runs envelope.
 ///
@@ -25,7 +26,7 @@ struct GithubCheckRunPage {
 }
 
 #[derive(Deserialize)]
-pub(super) struct GithubCheckRun {
+pub(crate) struct GithubCheckRun {
     name: String,
     head_sha: String,
     status: String,
@@ -60,7 +61,7 @@ fn normalize_check_conclusion(value: &str) -> Result<CheckConclusion> {
     }
 }
 
-pub(super) fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
+pub(crate) fn normalize_check_run(value: GithubCheckRun) -> Result<CheckRun> {
     let unfinished = match value.status.as_str() {
         "requested" => Some(CheckStatus::Requested),
         "queued" => Some(CheckStatus::Queued),
@@ -139,13 +140,33 @@ pub(super) fn conclusion(value: &PublishedCheckConclusion) -> &'static str {
 }
 
 impl GithubProvider {
-    pub(super) async fn github_check_runs(
+    pub(crate) async fn github_check_runs(
         &self,
         repository: &Repository,
         head_sha: &str,
     ) -> Result<Vec<GithubCheckRun>> {
+        self.github_check_runs_with_completeness(repository, head_sha, false)
+            .await
+    }
+
+    pub(crate) async fn complete_github_check_runs(
+        &self,
+        repository: &Repository,
+        head_sha: &str,
+    ) -> Result<Vec<GithubCheckRun>> {
+        self.github_check_runs_with_completeness(repository, head_sha, true)
+            .await
+    }
+
+    async fn github_check_runs_with_completeness(
+        &self,
+        repository: &Repository,
+        head_sha: &str,
+        require_complete: bool,
+    ) -> Result<Vec<GithubCheckRun>> {
         let mut collected: Vec<GithubCheckRun> = Vec::new();
         let mut page = 1_u32;
+        let mut expected_total = None;
         loop {
             let response: GithubCheckRunPage = self
                 .user()?
@@ -168,12 +189,59 @@ impl GithubProvider {
                         error,
                     )
                 })?;
+            if require_complete {
+                match expected_total {
+                    Some(total) if total != response.total_count => {
+                        return Err(ProviderError::Unrepresentable {
+                            provider: "github",
+                            fact: format!(
+                                "check-run total changed from {total} to {} while paging",
+                                response.total_count
+                            ),
+                        });
+                    }
+                    None => expected_total = Some(response.total_count),
+                    Some(_) => {}
+                }
+            }
             let received = response.check_runs.len();
             collected.extend(response.check_runs);
+            if require_complete && collected.len() >= GITHUB_CHECK_SUITE_LIMIT {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!(
+                        "check-run results reached GitHub's {}-suite observation limit",
+                        GITHUB_CHECK_SUITE_LIMIT
+                    ),
+                });
+            }
             // A short page ends the collection. The envelope's complete count
             // ends it too, so a response that ignored `page` cannot repeat the
             // first page forever.
-            if received < CHECK_RUNS_PER_PAGE || collected.len() as u64 >= response.total_count {
+            let expected_total = expected_total.unwrap_or(response.total_count);
+            if require_complete && collected.len() as u64 > expected_total {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!(
+                        "check runs reported {expected_total} records but returned at least {}",
+                        collected.len()
+                    ),
+                });
+            }
+            if collected.len() as u64 >= expected_total {
+                return Ok(collected);
+            }
+            if received < CHECK_RUNS_PER_PAGE && require_complete {
+                return Err(ProviderError::Unrepresentable {
+                    provider: "github",
+                    fact: format!(
+                        "check runs reported {} records but returned only {}",
+                        expected_total,
+                        collected.len()
+                    ),
+                });
+            }
+            if received < CHECK_RUNS_PER_PAGE {
                 return Ok(collected);
             }
             page += 1;

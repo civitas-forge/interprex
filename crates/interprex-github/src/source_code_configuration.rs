@@ -3,10 +3,7 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use interprex::{
-    AppliedSourceRequirements, AppliedSourceRequirementsProvider, CommitRange, ModelError,
-    ProviderError, Repository, Result, SourceCodeConfigurationProvider,
-};
+use interprex::{ModelError, ProviderError, Repository, Result, SourceCodeConfigurationProvider};
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -350,18 +347,6 @@ impl SourceCodeConfigurationProvider for GithubProvider {
             )));
         }
         Ok(observed)
-    }
-}
-
-#[async_trait]
-impl AppliedSourceRequirementsProvider for GithubProvider {
-    async fn applied_requirements(
-        &self,
-        _repository: &Repository,
-        _target_branch: &str,
-        _commit_range: &CommitRange,
-    ) -> Result<AppliedSourceRequirements> {
-        Err(unsupported("read applied source requirements"))
     }
 }
 

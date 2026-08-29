@@ -82,11 +82,42 @@ impl SourceCodeConfigurationProvider for FakeProvider {
 impl AppliedSourceRequirementsProvider for FakeProvider {
     async fn applied_requirements(
         &self,
-        _repository: &Repository,
-        _target_branch: &str,
-        _commit_range: &CommitRange,
+        repository: &Repository,
+        target_branch: &str,
+        commit_range: &CommitRange,
     ) -> Result<AppliedSourceRequirements> {
-        Err(unsupported("read applied source requirements"))
+        for (value, field) in [
+            (target_branch, "target branch"),
+            (&commit_range.base_sha, "base sha"),
+            (&commit_range.head_sha, "head sha"),
+        ] {
+            if value.is_empty() {
+                return Err(ProviderError::InvalidInput {
+                    provider: "fake",
+                    fact: format!("{field} must not be empty"),
+                });
+            }
+        }
+        let key = (
+            repository.clone(),
+            target_branch.to_owned(),
+            commit_range.base_sha.clone(),
+            commit_range.head_sha.clone(),
+        );
+        let state = self.state.read().await;
+        if let Some(error) = state.applied_requirement_errors.get(&key) {
+            return Err(error.clone());
+        }
+        state
+            .applied_requirements
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| ProviderError::NotFound {
+                entity: format!(
+                    "applied requirements for {repository}:{target_branch} at {}..{}",
+                    commit_range.base_sha, commit_range.head_sha
+                ),
+            })
     }
 }
 
