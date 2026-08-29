@@ -336,6 +336,16 @@ mod tests {
             .is_err()
         );
         assert!(
+            serde_json::from_value::<ReviewSubmissionFinding>(serde_json::json!({
+                "path": "src/lib.rs",
+                "line": 0,
+                "side": "right",
+                "body": "finding"
+            }))
+            .is_err()
+        );
+        assert!(serde_json::from_value::<ReviewLine>(serde_json::json!(0)).is_err());
+        assert!(
             serde_json::from_value::<ReviewSubmission>(serde_json::json!({
                 "publication_key": "round-2:codex",
                 "revision": {"head_sha": " "},

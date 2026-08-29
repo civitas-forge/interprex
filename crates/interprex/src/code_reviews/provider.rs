@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use super::{
     ChangeRequest, ChangeRequestHead, ChangeRequestNumber, CheckOutcome, CheckRun,
     FindingResolution, FindingResolutionReply, ProviderTextRecord, ReviewCommentId,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewSubmission, ReviewThreadId,
-    ReviewerApplication,
+    ReviewPublicationKey, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewSubmission,
+    ReviewThreadId, ReviewerApplication,
 };
 use crate::{Repository, Result};
 
@@ -228,20 +228,37 @@ pub trait ReviewPublishingProvider: Send + Sync {
     ///
     /// The publication key is scoped to `repository` and `number`. Repeating a
     /// key with the same reviewer and submission returns the original
-    /// [`ReviewId`](super::ReviewId) without creating another review. Reusing a
-    /// key with a different reviewer or submission returns
+    /// [`ReviewId`](super::ReviewId) without creating another review. Reviewer
+    /// identity is the pair of provider application ID and bot actor ID;
+    /// application names and slugs and bot logins do not affect identity.
+    /// Reusing a key with a different reviewer identity or submission returns
     /// [`crate::ProviderError::InvalidInput`].
     ///
     /// The provider publishes against the supplied revision exactly. It does
     /// not replace that commit with the change request's current head. An
     /// adapter may create a provider-specific draft while recovering from
-    /// retries. Such a draft contains the complete summary and findings from
-    /// one provider request before the adapter submits it; the caller neither
-    /// creates an empty draft nor adds individual findings to one.
+    /// retries. It creates that draft with the complete summary and findings
+    /// in one provider request. A hidden record written with the draft retains
+    /// the publication key, a digest of the complete submission, and the
+    /// intended final disposition; the provider preserves that record when it
+    /// submits the review. The caller neither creates an empty draft nor adds
+    /// individual findings to one.
     ///
     /// Two concurrent calls using a previously unseen key need not collapse
     /// into one review. A caller that can publish the same planned review from
     /// several tasks serializes those calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ProviderError::MissingCredential`] when no credential
+    /// is available for `reviewer`, and [`crate::ProviderError::Configuration`]
+    /// when the selected credential belongs to a different provider
+    /// application ID. Returns [`crate::ProviderError::NotFound`] when the
+    /// change request or exact revision does not exist,
+    /// [`crate::ProviderError::InvalidInput`] when the publication key already
+    /// identifies a different reviewer or submission, and
+    /// [`crate::ProviderError::External`] when transport or provider behavior
+    /// prevents publication or leaves a result the adapter cannot reconcile.
     async fn publish_review(
         &self,
         repository: &Repository,
@@ -249,4 +266,36 @@ pub trait ReviewPublishingProvider: Send + Sync {
         reviewer: &ReviewerApplication,
         submission: &ReviewSubmission,
     ) -> Result<super::ReviewId>;
+
+    /// Recovers a complete review publication using only its retained key.
+    ///
+    /// When the matching provider review is pending, the adapter verifies its
+    /// hidden key and submission digest, reads the intended disposition from
+    /// that record, and submits it. When it is already submitted, the adapter
+    /// adopts it and returns its identifier. When no provider record carries
+    /// `key` for this change request, the method returns `None`. A record under
+    /// another reviewer identity is conflicting input, not an absent record.
+    /// The method never recreates a lost [`ReviewSubmission`].
+    ///
+    /// Reviewer identity is the provider application ID and bot actor ID pair,
+    /// independent of mutable application names, slugs, and bot logins.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ProviderError::MissingCredential`] when no credential
+    /// is available for `reviewer`, and [`crate::ProviderError::Configuration`]
+    /// when the selected credential belongs to a different provider
+    /// application ID. Returns [`crate::ProviderError::NotFound`] when the
+    /// change request does not exist, [`crate::ProviderError::InvalidInput`]
+    /// when `key` belongs to another reviewer identity, and
+    /// [`crate::ProviderError::External`] when transport fails or when missing,
+    /// duplicate, incomplete, or contradictory provider data prevents the
+    /// adapter from reconciling a recorded publication.
+    async fn resume_review_publication(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        key: &ReviewPublicationKey,
+    ) -> Result<Option<super::ReviewId>>;
 }

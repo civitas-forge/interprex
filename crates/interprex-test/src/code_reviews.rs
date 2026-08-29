@@ -5,10 +5,10 @@ use interprex::{
     FindingResolutionRecord, FindingResolutionReply, ProviderError, Repository, Result,
     ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment,
     ReviewCommentId, ReviewFinding, ReviewId, ReviewLineRange, ReviewLocation,
-    ReviewPublishingProvider, ReviewRequest, ReviewRequestId, ReviewRequestTarget,
-    ReviewRequestTargetInspection, ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewTeam,
-    ReviewTeamId, ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus,
-    ReviewerApplication, ReviewerApplicationsProvider,
+    ReviewPublicationKey, ReviewPublishingProvider, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
+    ReviewTarget, ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
 };
 
 use crate::state::{FakeProvider, FakeReviewPublication, missing};
@@ -336,7 +336,7 @@ impl ReviewPublishingProvider for FakeProvider {
         repository: &Repository,
         number: ChangeRequestNumber,
         reviewer: &ReviewerApplication,
-        submission: &interprex::ReviewSubmission,
+        submission: &ReviewSubmission,
     ) -> Result<ReviewId> {
         let publication_key = (
             repository.clone(),
@@ -345,7 +345,7 @@ impl ReviewPublishingProvider for FakeProvider {
         );
         let mut state = self.state.write().await;
         if let Some(existing) = state.review_publications.get(&publication_key) {
-            if existing.reviewer == *reviewer && existing.submission == *submission {
+            if existing.reviewer.same_identity_as(reviewer) && existing.submission == *submission {
                 return Ok(existing.review_id.clone());
             }
             return Err(ProviderError::InvalidInput {
@@ -361,78 +361,18 @@ impl ReviewPublishingProvider for FakeProvider {
             .change_requests
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
-        let submitted_at = change_request
-            .reviews
-            .iter()
-            .filter_map(|review| match review.state {
-                ReviewState::Draft => None,
-                ReviewState::Submitted { submitted_at, .. } => Some(submitted_at),
-            })
-            .chain([change_request.updated_at])
-            .max()
-            .expect("the observed change supplies one timestamp")
-            + std::time::Duration::from_micros(1);
-        let review_id = ReviewId::new(format!(
-            "fake-review:{}:{}:{}:{}:{}:{}:{}",
-            repository.owner().len(),
-            repository.owner(),
-            repository.name().len(),
-            repository.name(),
-            number.get(),
-            submission.publication_key().as_str().len(),
-            submission.publication_key().as_str(),
-        ))
-        .expect("fake review identity is nonempty");
-        let findings = submission
-            .findings()
-            .iter()
-            .enumerate()
-            .map(|(index, finding)| {
-                let line_range = ReviewLineRange {
-                    start: None,
-                    end: finding.line(),
-                };
-                let identity = format!("{}:{}", review_id.as_str(), index + 1);
-                ReviewFinding {
-                    thread: ReviewThread {
-                        id: ReviewThreadId::new(format!("fake-thread:{identity}"))
-                            .expect("fake thread identity is nonempty"),
-                        location: ReviewLocation {
-                            path: finding.path().to_owned(),
-                            anchor: ReviewAnchor::Lines {
-                                side: finding.side().clone(),
-                                original: line_range.clone(),
-                                current: Some(line_range),
-                            },
-                        },
-                        outdated: false,
-                        status: ReviewThreadStatus::Open,
-                        comment: interprex::ReviewComment {
-                            id: ReviewCommentId::new(format!("fake-comment:{identity}"))
-                                .expect("fake comment identity is nonempty"),
-                            author: reviewer.bot().clone(),
-                            body: finding.body().to_owned(),
-                            created_at: submitted_at,
-                            updated_at: None,
-                        },
-                        replies: Vec::new(),
-                    },
-                    resolution: None,
-                }
-            })
-            .collect();
-        change_request.reviews.push(interprex::Review {
-            id: review_id.clone(),
-            author: ReviewAuthor::Other(reviewer.bot().clone()),
-            via_app: Some(reviewer.app().clone()),
-            revision: submission.revision().clone(),
-            state: ReviewState::Submitted {
+        let submitted_at = next_review_timestamp(change_request);
+        let review_id = fake_review_id(repository, number, submission.publication_key());
+        change_request.reviews.push(fake_review(
+            reviewer,
+            submission,
+            review_id.clone(),
+            ReviewState::Submitted {
                 disposition: submission.disposition().into(),
                 submitted_at,
             },
-            summary: Some(submission.summary().to_owned()),
-            findings,
-        });
+            submitted_at,
+        ));
         change_request.updated_at = submitted_at;
         state.review_publications.insert(
             publication_key,
@@ -443,6 +383,241 @@ impl ReviewPublishingProvider for FakeProvider {
             },
         );
         Ok(review_id)
+    }
+
+    async fn resume_review_publication(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        key: &ReviewPublicationKey,
+    ) -> Result<Option<ReviewId>> {
+        let publication_key = (repository.clone(), number, key.clone());
+        let mut state = self.state.write().await;
+        if !state
+            .change_requests
+            .contains_key(&(repository.clone(), number))
+        {
+            return Err(missing(format!(
+                "change request {number:?} in {repository}"
+            )));
+        }
+        let Some(publication) = state.review_publications.get(&publication_key).cloned() else {
+            return Ok(None);
+        };
+        if !publication.reviewer.same_identity_as(reviewer) {
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: format!(
+                    "review publication key {:?} belongs to another reviewer",
+                    key.as_str()
+                ),
+            });
+        }
+
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let submitted_at = next_review_timestamp(change_request);
+        let review = change_request
+            .reviews
+            .iter_mut()
+            .find(|review| review.id == publication.review_id)
+            .ok_or_else(|| unreconciled_publication("recorded review is absent"))?;
+        if !complete_review_matches(review, &publication.reviewer, &publication.submission) {
+            return Err(unreconciled_publication(
+                "recorded review no longer matches its submission digest",
+            ));
+        }
+        match &review.state {
+            ReviewState::Draft => {
+                review.state = ReviewState::Submitted {
+                    disposition: publication.submission.disposition().into(),
+                    submitted_at,
+                };
+                change_request.updated_at = submitted_at;
+            }
+            ReviewState::Submitted { disposition, .. }
+                if *disposition != publication.submission.disposition().into() =>
+            {
+                return Err(unreconciled_publication(
+                    "submitted review has a different disposition",
+                ));
+            }
+            ReviewState::Submitted { .. } => {}
+        }
+        Ok(Some(publication.review_id))
+    }
+}
+
+impl FakeProvider {
+    /// Seeds the state left after a provider created one complete draft but the
+    /// caller lost the publication response before final submission.
+    pub async fn seed_pending_review_publication(
+        &self,
+        repository: Repository,
+        number: ChangeRequestNumber,
+        reviewer: ReviewerApplication,
+        submission: ReviewSubmission,
+    ) -> Result<ReviewId> {
+        let publication_key = (
+            repository.clone(),
+            number,
+            submission.publication_key().clone(),
+        );
+        let mut state = self.state.write().await;
+        if state.review_publications.contains_key(&publication_key) {
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: format!(
+                    "review publication key {:?} is already seeded",
+                    submission.publication_key().as_str()
+                ),
+            });
+        }
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let created_at = next_review_timestamp(change_request);
+        let review_id = fake_review_id(&repository, number, submission.publication_key());
+        change_request.reviews.push(fake_review(
+            &reviewer,
+            &submission,
+            review_id.clone(),
+            ReviewState::Draft,
+            created_at,
+        ));
+        change_request.updated_at = created_at;
+        state.review_publications.insert(
+            publication_key,
+            FakeReviewPublication {
+                reviewer,
+                submission,
+                review_id: review_id.clone(),
+            },
+        );
+        Ok(review_id)
+    }
+}
+
+fn fake_review_id(
+    repository: &Repository,
+    number: ChangeRequestNumber,
+    key: &ReviewPublicationKey,
+) -> ReviewId {
+    ReviewId::new(format!(
+        "fake-review:{}:{}:{}:{}:{}:{}:{}",
+        repository.owner().len(),
+        repository.owner(),
+        repository.name().len(),
+        repository.name(),
+        number.get(),
+        key.as_str().len(),
+        key.as_str(),
+    ))
+    .expect("fake review identity is nonempty")
+}
+
+fn next_review_timestamp(change_request: &ChangeRequest) -> chrono::DateTime<chrono::Utc> {
+    change_request
+        .reviews
+        .iter()
+        .filter_map(|review| match review.state {
+            ReviewState::Draft => None,
+            ReviewState::Submitted { submitted_at, .. } => Some(submitted_at),
+        })
+        .chain([change_request.updated_at])
+        .max()
+        .expect("the observed change supplies one timestamp")
+        + std::time::Duration::from_micros(1)
+}
+
+fn fake_review(
+    reviewer: &ReviewerApplication,
+    submission: &ReviewSubmission,
+    review_id: ReviewId,
+    state: ReviewState,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> interprex::Review {
+    let findings = submission
+        .findings()
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let line_range = ReviewLineRange {
+                start: None,
+                end: finding.line(),
+            };
+            let identity = format!("{}:{}", review_id.as_str(), index + 1);
+            ReviewFinding {
+                thread: ReviewThread {
+                    id: ReviewThreadId::new(format!("fake-thread:{identity}"))
+                        .expect("fake thread identity is nonempty"),
+                    location: ReviewLocation {
+                        path: finding.path().to_owned(),
+                        anchor: ReviewAnchor::Lines {
+                            side: finding.side().clone(),
+                            original: line_range.clone(),
+                            current: Some(line_range),
+                        },
+                    },
+                    outdated: false,
+                    status: ReviewThreadStatus::Open,
+                    comment: ReviewComment {
+                        id: ReviewCommentId::new(format!("fake-comment:{identity}"))
+                            .expect("fake comment identity is nonempty"),
+                        author: reviewer.bot().clone(),
+                        body: finding.body().to_owned(),
+                        created_at,
+                        updated_at: None,
+                    },
+                    replies: Vec::new(),
+                },
+                resolution: None,
+            }
+        })
+        .collect();
+    interprex::Review {
+        id: review_id,
+        author: ReviewAuthor::Other(reviewer.bot().clone()),
+        via_app: Some(reviewer.app().clone()),
+        revision: submission.revision().clone(),
+        state,
+        summary: Some(submission.summary().to_owned()),
+        findings,
+    }
+}
+
+fn complete_review_matches(
+    review: &interprex::Review,
+    reviewer: &ReviewerApplication,
+    submission: &ReviewSubmission,
+) -> bool {
+    let created_at = review
+        .findings
+        .first()
+        .map(|finding| finding.comment.created_at)
+        .unwrap_or_else(|| {
+            "1970-01-01T00:00:00Z"
+                .parse()
+                .expect("valid comparison timestamp")
+        });
+    fake_review(
+        reviewer,
+        submission,
+        review.id.clone(),
+        review.state.clone(),
+        created_at,
+    ) == *review
+}
+
+fn unreconciled_publication(message: impl Into<String>) -> ProviderError {
+    ProviderError::External {
+        provider: "fake",
+        operation: "resume review publication",
+        message: message.into(),
     }
 }
 

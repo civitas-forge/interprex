@@ -16,7 +16,7 @@ macro_rules! platform_number {
             PartialOrd,
             serde::Serialize,
         )]
-        #[serde(transparent)]
+        #[serde(try_from = "u64", into = "u64")]
         pub struct $name(u64);
 
         impl $name {
@@ -29,6 +29,20 @@ macro_rules! platform_number {
             #[must_use]
             pub const fn get(self) -> u64 {
                 self.0
+            }
+        }
+
+        impl TryFrom<u64> for $name {
+            type Error = crate::ModelError;
+
+            fn try_from(value: u64) -> std::result::Result<Self, Self::Error> {
+                Self::new(value)
+            }
+        }
+
+        impl From<$name> for u64 {
+            fn from(value: $name) -> Self {
+                value.0
             }
         }
     };
