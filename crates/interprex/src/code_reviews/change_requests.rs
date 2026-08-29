@@ -82,7 +82,10 @@ pub struct ChangeRequest {
     pub reviews: Vec<Review>,
     /// Inline threads that did not originate in a review.
     pub standalone_threads: Vec<ReviewThread>,
-    /// Comments with no source location, in chronological order.
+    /// Comments with no source location in stable, total provider order from
+    /// earliest to latest. The provider resolves equal creation times using its
+    /// native ordering value; consumers preserve this order instead of sorting
+    /// opaque comment identifiers.
     pub unanchored_comments: Vec<ReviewComment>,
     /// The currently outstanding reviewer requests.
     pub outstanding_requests: Vec<ReviewRequest>,

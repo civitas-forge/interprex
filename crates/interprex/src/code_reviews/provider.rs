@@ -11,6 +11,12 @@ use crate::{Repository, Result};
 #[async_trait]
 pub trait CodeReviewsProvider: Send + Sync {
     /// Reads one complete observation of the change request.
+    ///
+    /// Each collection of [`super::ReviewComment`] values follows one stable,
+    /// total provider order from earliest to latest, including when the
+    /// provider returned several pages. A caller resolving competing comments
+    /// chooses the first valid comment in this order. It does not compare
+    /// [`ReviewCommentId`] values, whose representation has no ordering meaning.
     async fn change_request(
         &self,
         repository: &Repository,

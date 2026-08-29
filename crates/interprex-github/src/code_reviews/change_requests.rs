@@ -76,6 +76,7 @@ pub(super) struct GithubReview {
 
 #[derive(Deserialize, PartialEq)]
 pub(super) struct GithubUnanchoredComment {
+    id: u64,
     node_id: String,
     user: Option<GithubUser>,
     body: String,
@@ -303,15 +304,16 @@ pub(super) fn normalize_change_request(
         .into_iter()
         .map(|request| normalize_review_request(request, &request_times))
         .collect::<Result<Vec<_>>>()?;
-    let mut unanchored_comments = unanchored_comments
-        .into_iter()
-        .map(normalize_unanchored_comment)
-        .collect::<Result<Vec<_>>>()?;
+    let mut unanchored_comments = unanchored_comments;
     unanchored_comments.sort_by(|left, right| {
         left.created_at
             .cmp(&right.created_at)
             .then_with(|| left.id.cmp(&right.id))
     });
+    let unanchored_comments = unanchored_comments
+        .into_iter()
+        .map(normalize_unanchored_comment)
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(ChangeRequest {
         number: ChangeRequestNumber::new(value.number).map_err(|error| {

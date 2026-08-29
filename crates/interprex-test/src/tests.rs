@@ -142,6 +142,46 @@ async fn consumer_creates_then_observes_unanchored_comments_in_order() {
 }
 
 #[tokio::test]
+async fn consumer_declares_fake_comment_order_without_orderable_ids() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    let mut seeded = change_request(
+        number,
+        "Platform records",
+        head(&repository, "refs/heads/platform-records"),
+    );
+    let created_at = "2026-08-29T10:00:00Z".parse().expect("timestamp");
+    seeded.unanchored_comments = ["Z_opaque_first", "A_opaque_second"]
+        .into_iter()
+        .map(|id| ReviewComment {
+            id: ReviewCommentId::new(id).expect("comment id"),
+            author: seeded.author.clone(),
+            body: id.to_owned(),
+            created_at,
+            updated_at: None,
+        })
+        .collect();
+    provider
+        .seed_change_request(repository.clone(), seeded)
+        .await;
+
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("observe comments");
+
+    assert_eq!(
+        observed
+            .unanchored_comments
+            .iter()
+            .map(|comment| comment.id.as_str())
+            .collect::<Vec<_>>(),
+        ["Z_opaque_first", "A_opaque_second"]
+    );
+}
+
+#[tokio::test]
 async fn consumer_observes_changes_through_the_same_contract() {
     let provider = FakeProvider::new();
     let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
