@@ -226,13 +226,14 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// Publishes `submission` as `reviewer` and returns the provider's review
     /// identifier.
     ///
-    /// The publication key is scoped to `repository` and `number`. Repeating a
-    /// key with the same reviewer and submission returns the original
-    /// [`ReviewId`](super::ReviewId) without creating another review. Reviewer
-    /// identity is the pair of provider application ID and bot actor ID;
-    /// application names and slugs and bot logins do not affect identity.
-    /// Reusing a key with a different reviewer identity or submission returns
-    /// [`crate::ProviderError::InvalidInput`].
+    /// The publication key is scoped to `repository`, `number`, and reviewer
+    /// identity. Repeating a key with the same reviewer and submission returns
+    /// the original [`ReviewId`](super::ReviewId) without creating another
+    /// review. Reviewer identity is the pair of provider application ID and
+    /// bot actor ID; application names and slugs and bot logins do not affect
+    /// identity. Another reviewer identity can use the same key independently.
+    /// Reusing a key with a different submission under the same reviewer
+    /// identity returns [`crate::ProviderError::InvalidInput`].
     ///
     /// The provider publishes against the supplied revision exactly. It does
     /// not replace that commit with the change request's current head. An
@@ -256,7 +257,7 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// application ID. Returns [`crate::ProviderError::NotFound`] when the
     /// change request or exact revision does not exist,
     /// [`crate::ProviderError::InvalidInput`] when the publication key already
-    /// identifies a different reviewer or submission, and
+    /// identifies a different submission for the same reviewer, and
     /// [`crate::ProviderError::External`] when transport or provider behavior
     /// prevents publication or leaves a result the adapter cannot reconcile.
     async fn publish_review(
@@ -269,13 +270,19 @@ pub trait ReviewPublishingProvider: Send + Sync {
 
     /// Recovers a complete review publication using only its retained key.
     ///
-    /// When the matching provider review is pending, the adapter verifies its
-    /// hidden key and submission digest, reads the intended disposition from
-    /// that record, and submits it. When it is already submitted, the adapter
-    /// adopts it and returns its identifier. When no provider record carries
-    /// `key` for this change request, the method returns `None`. A record under
-    /// another reviewer identity is conflicting input, not an absent record.
-    /// The method never recreates a lost [`ReviewSubmission`].
+    /// The adapter considers only records whose provider application ID and bot
+    /// actor ID match `reviewer`; records from other reviewers are ignored.
+    /// For an exact-identity record, the adapter validates the record version,
+    /// key, retained submission digest, and intended disposition. It trusts
+    /// those fields because the provider created the review summary, hidden
+    /// record, and every inline finding atomically. It does not fetch inline
+    /// comments to reconstruct a lost [`ReviewSubmission`] or recompute its
+    /// digest.
+    ///
+    /// When the matching provider review is pending, the adapter submits it
+    /// with the retained disposition. When it is already submitted, the
+    /// adapter adopts it and returns its identifier. When no exact-identity
+    /// record carries `key` for this change request, the method returns `None`.
     ///
     /// Reviewer identity is the provider application ID and bot actor ID pair,
     /// independent of mutable application names, slugs, and bot logins.
@@ -286,11 +293,11 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// is available for `reviewer`, and [`crate::ProviderError::Configuration`]
     /// when the selected credential belongs to a different provider
     /// application ID. Returns [`crate::ProviderError::NotFound`] when the
-    /// change request does not exist, [`crate::ProviderError::InvalidInput`]
-    /// when `key` belongs to another reviewer identity, and
-    /// [`crate::ProviderError::External`] when transport fails or when missing,
-    /// duplicate, incomplete, or contradictory provider data prevents the
-    /// adapter from reconciling a recorded publication.
+    /// change request does not exist, and [`crate::ProviderError::External`]
+    /// when transport fails or when duplicate, malformed, incomplete, or
+    /// contradictory exact-identity records prevent reconciliation. A review
+    /// from the exact identity with a missing record is also external when it
+    /// could be the result of an accepted publication request.
     async fn resume_review_publication(
         &self,
         repository: &Repository,

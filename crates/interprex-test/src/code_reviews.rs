@@ -11,7 +11,7 @@ use interprex::{
     ReviewThreadId, ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
 };
 
-use crate::state::{FakeProvider, FakeReviewPublication, missing};
+use crate::state::{FakeProvider, FakeReviewPublication, FakeReviewPublicationKey, missing};
 
 #[async_trait]
 impl CodeReviewsProvider for FakeProvider {
@@ -338,14 +338,11 @@ impl ReviewPublishingProvider for FakeProvider {
         reviewer: &ReviewerApplication,
         submission: &ReviewSubmission,
     ) -> Result<ReviewId> {
-        let publication_key = (
-            repository.clone(),
-            number,
-            submission.publication_key().clone(),
-        );
+        let publication_key =
+            fake_publication_key(repository, number, reviewer, submission.publication_key());
         let mut state = self.state.write().await;
         if let Some(existing) = state.review_publications.get(&publication_key) {
-            if existing.reviewer.same_identity_as(reviewer) && existing.submission == *submission {
+            if existing.submission == *submission {
                 return Ok(existing.review_id.clone());
             }
             return Err(ProviderError::InvalidInput {
@@ -362,7 +359,7 @@ impl ReviewPublishingProvider for FakeProvider {
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
         let submitted_at = next_review_timestamp(change_request);
-        let review_id = fake_review_id(repository, number, submission.publication_key());
+        let review_id = fake_review_id(repository, number, reviewer, submission.publication_key());
         change_request.reviews.push(fake_review(
             reviewer,
             submission,
@@ -377,7 +374,6 @@ impl ReviewPublishingProvider for FakeProvider {
         state.review_publications.insert(
             publication_key,
             FakeReviewPublication {
-                reviewer: reviewer.clone(),
                 submission: submission.clone(),
                 review_id: review_id.clone(),
             },
@@ -392,7 +388,7 @@ impl ReviewPublishingProvider for FakeProvider {
         reviewer: &ReviewerApplication,
         key: &ReviewPublicationKey,
     ) -> Result<Option<ReviewId>> {
-        let publication_key = (repository.clone(), number, key.clone());
+        let publication_key = fake_publication_key(repository, number, reviewer, key);
         let mut state = self.state.write().await;
         if !state
             .change_requests
@@ -405,16 +401,6 @@ impl ReviewPublishingProvider for FakeProvider {
         let Some(publication) = state.review_publications.get(&publication_key).cloned() else {
             return Ok(None);
         };
-        if !publication.reviewer.same_identity_as(reviewer) {
-            return Err(ProviderError::InvalidInput {
-                provider: "fake",
-                fact: format!(
-                    "review publication key {:?} belongs to another reviewer",
-                    key.as_str()
-                ),
-            });
-        }
-
         let change_request = state
             .change_requests
             .get_mut(&(repository.clone(), number))
@@ -425,11 +411,6 @@ impl ReviewPublishingProvider for FakeProvider {
             .iter_mut()
             .find(|review| review.id == publication.review_id)
             .ok_or_else(|| unreconciled_publication("recorded review is absent"))?;
-        if !complete_review_matches(review, &publication.reviewer, &publication.submission) {
-            return Err(unreconciled_publication(
-                "recorded review no longer matches its submission digest",
-            ));
-        }
         match &review.state {
             ReviewState::Draft => {
                 review.state = ReviewState::Submitted {
@@ -461,11 +442,8 @@ impl FakeProvider {
         reviewer: ReviewerApplication,
         submission: ReviewSubmission,
     ) -> Result<ReviewId> {
-        let publication_key = (
-            repository.clone(),
-            number,
-            submission.publication_key().clone(),
-        );
+        let publication_key =
+            fake_publication_key(&repository, number, &reviewer, submission.publication_key());
         let mut state = self.state.write().await;
         if state.review_publications.contains_key(&publication_key) {
             return Err(ProviderError::InvalidInput {
@@ -481,7 +459,8 @@ impl FakeProvider {
             .get_mut(&(repository.clone(), number))
             .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
         let created_at = next_review_timestamp(change_request);
-        let review_id = fake_review_id(&repository, number, submission.publication_key());
+        let review_id =
+            fake_review_id(&repository, number, &reviewer, submission.publication_key());
         change_request.reviews.push(fake_review(
             &reviewer,
             &submission,
@@ -493,7 +472,6 @@ impl FakeProvider {
         state.review_publications.insert(
             publication_key,
             FakeReviewPublication {
-                reviewer,
                 submission,
                 review_id: review_id.clone(),
             },
@@ -505,19 +483,39 @@ impl FakeProvider {
 fn fake_review_id(
     repository: &Repository,
     number: ChangeRequestNumber,
+    reviewer: &ReviewerApplication,
     key: &ReviewPublicationKey,
 ) -> ReviewId {
     ReviewId::new(format!(
-        "fake-review:{}:{}:{}:{}:{}:{}:{}",
+        "fake-review:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
         repository.owner().len(),
         repository.owner(),
         repository.name().len(),
         repository.name(),
         number.get(),
+        reviewer.app().id.as_str().len(),
+        reviewer.app().id.as_str(),
+        reviewer.bot().id.as_str().len(),
+        reviewer.bot().id.as_str(),
         key.as_str().len(),
         key.as_str(),
     ))
     .expect("fake review identity is nonempty")
+}
+
+fn fake_publication_key(
+    repository: &Repository,
+    number: ChangeRequestNumber,
+    reviewer: &ReviewerApplication,
+    key: &ReviewPublicationKey,
+) -> FakeReviewPublicationKey {
+    (
+        repository.clone(),
+        number,
+        reviewer.app().id.clone(),
+        reviewer.bot().id.clone(),
+        key.clone(),
+    )
 }
 
 fn next_review_timestamp(change_request: &ChangeRequest) -> chrono::DateTime<chrono::Utc> {
@@ -588,29 +586,6 @@ fn fake_review(
         summary: Some(submission.summary().to_owned()),
         findings,
     }
-}
-
-fn complete_review_matches(
-    review: &interprex::Review,
-    reviewer: &ReviewerApplication,
-    submission: &ReviewSubmission,
-) -> bool {
-    let created_at = review
-        .findings
-        .first()
-        .map(|finding| finding.comment.created_at)
-        .unwrap_or_else(|| {
-            "1970-01-01T00:00:00Z"
-                .parse()
-                .expect("valid comparison timestamp")
-        });
-    fake_review(
-        reviewer,
-        submission,
-        review.id.clone(),
-        review.state.clone(),
-        created_at,
-    ) == *review
 }
 
 fn unreconciled_publication(message: impl Into<String>) -> ProviderError {

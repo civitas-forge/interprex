@@ -448,28 +448,32 @@ async fn consumer_publishes_then_observes_a_complete_review() {
             .expect("repeat after mutable names changed"),
         review_id
     );
+    let mut other_review_ids = Vec::new();
     for different_reviewer in [
         reviewer_application("different-app", reviewer.bot().id.as_str()),
         reviewer_application(reviewer.app().id.as_str(), "different-bot"),
     ] {
-        assert!(matches!(
+        other_review_ids.push(
             provider
                 .publish_review(&repository, number, &different_reviewer, &submission)
-                .await,
-            Err(ProviderError::InvalidInput {
-                provider: "fake",
-                ..
-            })
-        ));
+                .await
+                .expect("same key under another reviewer identity"),
+        );
     }
     let observed = provider
         .change_request(&repository, number)
         .await
         .expect("observe review");
-    let review = observed.reviews.last().expect("published review");
+    let review = observed
+        .reviews
+        .iter()
+        .find(|review| review.id == review_id)
+        .expect("published review");
 
     assert_eq!(repeated_id, review_id);
-    assert_eq!(observed.reviews.len(), 1);
+    assert_eq!(observed.reviews.len(), 3);
+    assert!(other_review_ids.iter().all(|id| id != &review_id));
+    assert_ne!(other_review_ids[0], other_review_ids[1]);
     assert_eq!(review.id, review_id);
     assert_eq!(review.author, ReviewAuthor::Other(reviewer.bot().clone()));
     assert_eq!(review.via_app.as_ref(), Some(reviewer.app()));
@@ -528,7 +532,7 @@ async fn consumer_publishes_then_observes_a_complete_review() {
             .expect("review after rejected reuse")
             .reviews
             .len(),
-        1
+        3
     );
 }
 
@@ -564,29 +568,48 @@ async fn consumer_resumes_a_complete_pending_review_using_only_its_key() {
     assert_eq!(pending.reviews[0].summary.as_deref(), Some("One finding."));
     assert_eq!(pending.reviews[0].findings.len(), 1);
 
-    assert!(matches!(
+    let other_reviewer = reviewer_application("different-app", reviewer.bot().id.as_str());
+    assert_eq!(
         provider
-            .resume_review_publication(
-                &repository,
-                number,
-                &reviewer_application("different-app", reviewer.bot().id.as_str()),
-                &key,
-            )
+            .resume_review_publication(&repository, number, &other_reviewer, &key)
             .await,
-        Err(ProviderError::InvalidInput {
-            provider: "fake",
-            ..
-        })
-    ));
+        Ok(None)
+    );
     assert_eq!(
         provider
             .change_request(&repository, number)
             .await
-            .expect("pending review after rejected reviewer")
+            .expect("pending review after unrelated reviewer lookup")
             .reviews[0]
             .state,
         ReviewState::Draft
     );
+    let other_pending_id = provider
+        .seed_pending_review_publication(
+            repository.clone(),
+            number,
+            other_reviewer.clone(),
+            review_submission("round-2:codex", "Another reviewer finding."),
+        )
+        .await
+        .expect("other reviewer pending publication");
+    assert_eq!(
+        provider
+            .resume_review_publication(&repository, number, &other_reviewer, &key)
+            .await
+            .expect("resume other reviewer"),
+        Some(other_pending_id)
+    );
+    let before_original_resume = provider
+        .change_request(&repository, number)
+        .await
+        .expect("reviewer-scoped recovery");
+    assert_eq!(before_original_resume.reviews.len(), 2);
+    assert_eq!(before_original_resume.reviews[0].state, ReviewState::Draft);
+    assert!(matches!(
+        before_original_resume.reviews[1].state,
+        ReviewState::Submitted { .. }
+    ));
 
     assert_eq!(
         provider
@@ -635,7 +658,7 @@ async fn consumer_resumes_a_complete_pending_review_using_only_its_key() {
 }
 
 #[tokio::test]
-async fn consumer_refuses_a_pending_review_that_no_longer_matches_its_record() {
+async fn consumer_trusts_the_exact_identity_record_without_reconstructing_the_review() {
     let provider = FakeProvider::new();
     let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
     let number = ChangeRequestNumber::new(3).expect("number");
@@ -665,25 +688,27 @@ async fn consumer_refuses_a_pending_review_that_no_longer_matches_its_record() {
         .seed_change_request(repository.clone(), changed)
         .await;
 
-    assert!(matches!(
-        provider
-            .resume_review_publication(&repository, number, &reviewer, &key)
-            .await,
-        Err(ProviderError::External {
-            provider: "fake",
-            operation: "resume review publication",
-            ..
-        })
-    ));
+    let review_id = provider
+        .resume_review_publication(&repository, number, &reviewer, &key)
+        .await
+        .expect("recover from retained record")
+        .expect("matching record");
+    let recovered = provider
+        .change_request(&repository, number)
+        .await
+        .expect("recovered review");
+    assert_eq!(recovered.reviews[0].id, review_id);
     assert_eq!(
-        provider
-            .change_request(&repository, number)
-            .await
-            .expect("unreconciled review")
-            .reviews[0]
-            .state,
-        ReviewState::Draft
+        recovered.reviews[0].summary.as_deref(),
+        Some("Changed after creation.")
     );
+    assert!(matches!(
+        recovered.reviews[0].state,
+        ReviewState::Submitted {
+            disposition: ReviewDisposition::ChangesRequested,
+            ..
+        }
+    ));
 }
 
 #[tokio::test]
