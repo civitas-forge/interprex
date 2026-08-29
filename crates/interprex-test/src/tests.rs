@@ -1,16 +1,17 @@
 use bytes::Bytes;
 use futures_util::{TryStreamExt, stream};
 use interprex::{
-    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestHead, ChangeRequestNumber,
-    ChangeRequestState, CheckConclusion, CheckRun, CheckStatus, CodeHostingProvider,
-    CodeReviewsProvider, CommitRange, FindingResolution, FindingResolutionReason,
-    FindingResolutionRecord, FindingResolutionReply, FindingSeverity, Mergeability, ProviderApp,
-    ProviderAppId, ProviderTextRecord, Release, ReleaseId, ReleasesProvider, Repository,
-    RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId, ReviewActorKind,
-    ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide, ReviewDisposition,
-    ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation, ReviewRequestTarget,
-    ReviewRequestTargetInspection, ReviewState, ReviewTarget, ReviewTargetsProvider, ReviewThread,
-    ReviewThreadId, ReviewThreadStatus, ReviewedRevision, TextRecordsProvider,
+    AssetStreamError, AssetUpload, ChangeRequest, ChangeRequestCommentsProvider, ChangeRequestHead,
+    ChangeRequestNumber, ChangeRequestState, CheckConclusion, CheckRun, CheckStatus,
+    CodeHostingProvider, CodeReviewsProvider, CommitRange, FindingResolution,
+    FindingResolutionReason, FindingResolutionRecord, FindingResolutionReply, FindingSeverity,
+    Mergeability, ProviderApp, ProviderAppId, ProviderTextRecord, Release, ReleaseId,
+    ReleasesProvider, Repository, RepositoryFacts, RepositorySettings, Review, ReviewActor,
+    ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId,
+    ReviewDiffSide, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine, ReviewLineRange,
+    ReviewLocation, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewTarget,
+    ReviewTargetsProvider, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision,
+    TextRecordsProvider,
 };
 
 use crate::FakeProvider;
@@ -50,6 +51,55 @@ fn change_request(
         unanchored_comments: Vec::new(),
         outstanding_requests: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn consumer_creates_then_observes_unanchored_comments_in_order() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    provider
+        .seed_change_request(
+            repository.clone(),
+            change_request(
+                number,
+                "Platform records",
+                head(&repository, "refs/heads/platform-records"),
+            ),
+        )
+        .await;
+
+    let first_body = "First visible summary.\n\n<!-- comitia:loop-event\n{\"version\":1}\n-->";
+    let first_id = provider
+        .create_unanchored_comment(&repository, number, first_body)
+        .await
+        .expect("create first comment");
+    let second_id = provider
+        .create_unanchored_comment(&repository, number, "Second visible summary.")
+        .await
+        .expect("create second comment");
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("observe comments");
+
+    assert_eq!(
+        observed
+            .unanchored_comments
+            .iter()
+            .map(|comment| (comment.id.as_str(), comment.body.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (first_id.as_str(), first_body),
+            (second_id.as_str(), "Second visible summary."),
+        ]
+    );
+    assert!(
+        observed.unanchored_comments[0].created_at < observed.unanchored_comments[1].created_at
+    );
+    assert!(first_id.as_str().contains("civitas-forge"));
+    assert!(first_id.as_str().contains("sandbox"));
+    assert!(first_id.as_str().contains(":3:"));
 }
 
 #[tokio::test]
