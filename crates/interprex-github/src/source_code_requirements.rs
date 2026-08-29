@@ -57,17 +57,12 @@ struct GithubRequiredCheck {
 struct GithubPullRequestParameters {
     #[serde(default, rename = "allowed_merge_methods")]
     _allowed_merge_methods: Vec<String>,
-    #[serde(default)]
     dismiss_stale_reviews_on_push: bool,
     #[serde(default)]
     dismissal_restriction: Option<GithubRulesetDismissalRestriction>,
-    #[serde(default)]
     require_code_owner_review: bool,
-    #[serde(default)]
     require_last_push_approval: bool,
-    #[serde(default)]
     required_approving_review_count: u32,
-    #[serde(default)]
     required_review_thread_resolution: bool,
     #[serde(default)]
     required_reviewers: Vec<Value>,
@@ -77,7 +72,6 @@ struct GithubPullRequestParameters {
 
 #[derive(Deserialize)]
 struct GithubRulesetDismissalRestriction {
-    #[serde(default)]
     enabled: bool,
 }
 
@@ -711,6 +705,19 @@ mod tests {
         }
     }
 
+    fn complete_pull_request_parameters() -> Value {
+        serde_json::json!({
+            "allowed_merge_methods": ["merge", "squash", "rebase"],
+            "dismiss_stale_reviews_on_push": false,
+            "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+            "require_code_owner_review": false,
+            "require_last_push_approval": false,
+            "required_approving_review_count": 1,
+            "required_review_thread_resolution": false,
+            "required_reviewers": []
+        })
+    }
+
     #[test]
     fn native_answers_use_failure_precedence_and_all_success_conclusions() {
         for conclusion in [
@@ -893,6 +900,67 @@ mod tests {
                 matches!(error, ProviderError::Unrepresentable { .. }),
                 "field {field}"
             );
+        }
+    }
+
+    #[test]
+    fn pull_request_rules_require_every_field_github_promises() {
+        for missing in [
+            "dismiss_stale_reviews_on_push",
+            "require_code_owner_review",
+            "require_last_push_approval",
+            "required_approving_review_count",
+            "required_review_thread_resolution",
+        ] {
+            let mut parameters = complete_pull_request_parameters();
+            parameters
+                .as_object_mut()
+                .expect("parameters object")
+                .remove(missing);
+            let error = normalize_requirements(
+                vec![GithubAppliedRule {
+                    rule_type: "pull_request".to_owned(),
+                    parameters: Some(parameters),
+                }],
+                None,
+            )
+            .expect_err("a promised field must not become a permissive default");
+            assert!(
+                matches!(error, ProviderError::Unrepresentable { .. }),
+                "missing field {missing}"
+            );
+        }
+
+        let mut parameters = complete_pull_request_parameters();
+        parameters["dismissal_restriction"] = serde_json::json!({"allowed_actors": []});
+        assert!(matches!(
+            normalize_requirements(
+                vec![GithubAppliedRule {
+                    rule_type: "pull_request".to_owned(),
+                    parameters: Some(parameters),
+                }],
+                None,
+            ),
+            Err(ProviderError::Unrepresentable { .. })
+        ));
+    }
+
+    #[test]
+    fn required_status_check_rules_do_not_default_required_fields() {
+        for parameters in [
+            serde_json::json!({"required_status_checks": []}),
+            serde_json::json!({"strict_required_status_checks_policy": false}),
+        ] {
+            assert!(matches!(
+                normalize_requirements(
+                    vec![GithubAppliedRule {
+                        rule_type: "required_status_checks".to_owned(),
+                        parameters: Some(parameters),
+                    }],
+                    None,
+                ),
+                Err(ProviderError::Unrepresentable { .. })
+            ));
         }
     }
 

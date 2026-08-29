@@ -92,6 +92,19 @@ fn branch(name: &str, sha: &str) -> String {
     serde_json::json!({"name": name, "commit": {"sha": sha}}).to_string()
 }
 
+fn pull_request_parameters(approvals: u32) -> serde_json::Value {
+    serde_json::json!({
+        "allowed_merge_methods": ["merge", "squash", "rebase"],
+        "dismiss_stale_reviews_on_push": false,
+        "dismissal_restriction": {"enabled": false, "allowed_actors": []},
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": approvals,
+        "required_review_thread_resolution": false,
+        "required_reviewers": []
+    })
+}
+
 fn check_run(
     name: &str,
     status: &str,
@@ -701,12 +714,12 @@ async fn source_configuration_refuses_inherited_and_nonwritable_targets_before_t
 async fn applied_requirements_combine_native_policy_and_exact_head_answers() {
     let rules = serde_json::json!([{
         "type": "pull_request",
-        "parameters": {"required_approving_review_count": 2},
+        "parameters": pull_request_parameters(2),
         "ruleset_source_type": "Repository",
         "ruleset_source": "civitas-forge/interprex-sandbox"
     }, {
         "type": "pull_request",
-        "parameters": {"required_approving_review_count": 3},
+        "parameters": pull_request_parameters(3),
         "ruleset_source_type": "Organization",
         "ruleset_source": "civitas-forge"
     }, {
@@ -1047,6 +1060,14 @@ async fn applied_requirements_never_turn_read_or_shape_errors_into_empty_policy(
                 ScriptedResponse::status("403 Forbidden", r#"{"message":"forbidden"}"#),
             ],
             "external",
+        ),
+        (
+            vec![
+                ScriptedResponse::json(branch("main", BASE_SHA)),
+                ScriptedResponse::json(r#"[{"type":"pull_request","parameters":{}}]"#),
+                no_classic_protection(),
+            ],
+            "unrepresentable",
         ),
         (
             vec![
