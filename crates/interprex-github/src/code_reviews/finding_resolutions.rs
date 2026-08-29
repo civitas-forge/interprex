@@ -1,8 +1,8 @@
 use interprex::{
     FindingResolution, FindingResolutionReason, FindingResolutionRecord, FindingSeverity,
-    ReviewComment,
+    ProviderTextRecord, ReviewComment,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 pub(super) const RESOLVE_THREAD: &str = r#"
 mutation ResolveReviewThread($threadId: ID!) {
@@ -50,13 +50,14 @@ pub(super) struct AddedThreadReply {
     pub(super) id: String,
 }
 
+const FINDING_RESOLUTION_NAMESPACE: &str = "interprex";
+const FINDING_RESOLUTION_NAME: &str = "finding-resolution";
 const FINDING_RESOLUTION_META_START: &str = "<!-- interprex:finding-resolution\n";
 const FINDING_RESOLUTION_META_END: &str = "\n-->";
 const FINDING_RESOLUTION_META_VERSION: u8 = 1;
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize)]
 struct GithubFindingResolution {
-    version: u8,
     resolution_reason: FindingResolutionReason,
     addressing_severity: FindingSeverity,
 }
@@ -86,19 +87,22 @@ pub(super) fn github_resolution_reply(resolution: FindingResolution, reply: &str
     let badge = format!(
         "![Interprex severity: {severity}](https://img.shields.io/badge/severity-{severity}-{color})"
     );
-    let metadata = GithubFindingResolution {
-        version: FINDING_RESOLUTION_META_VERSION,
-        resolution_reason: resolution.reason,
-        addressing_severity: resolution.addressing_severity,
-    };
-    let metadata = serde_json::to_string(&metadata)
-        .expect("the fixed finding-resolution metadata shape serializes");
-    let marker = format!("{FINDING_RESOLUTION_META_START}{metadata}{FINDING_RESOLUTION_META_END}");
-    [visible, badge, reply.to_owned(), marker]
+    let visible = [visible, badge, reply.to_owned()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
-        .join("\n\n")
+        .join("\n\n");
+    let metadata = ProviderTextRecord::new(
+        FINDING_RESOLUTION_NAMESPACE,
+        FINDING_RESOLUTION_NAME,
+        serde_json::json!({
+            "version": FINDING_RESOLUTION_META_VERSION,
+            "resolution_reason": resolution.reason,
+            "addressing_severity": resolution.addressing_severity,
+        }),
+    )
+    .expect("the fixed finding-resolution record is valid");
+    super::text_records::embed_record(&visible, &metadata)
 }
 
 #[derive(Debug, Eq, PartialEq)]

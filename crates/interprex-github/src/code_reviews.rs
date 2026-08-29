@@ -33,6 +33,7 @@ mod finding_resolutions;
 mod review_requests;
 mod review_threads;
 mod target_inspections;
+mod text_records;
 
 use change_requests::{
     GithubPullRequestNumber, head_filter, normalize_change_request, number, observed_head,
