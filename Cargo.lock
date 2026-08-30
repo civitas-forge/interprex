@@ -845,7 +845,7 @@ dependencies = [
 
 [[package]]
 name = "interprex"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "interprex-bucket"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -870,7 +870,7 @@ dependencies = [
 
 [[package]]
 name = "interprex-github"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "interprex-test"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "async-trait",
  "bytes",
