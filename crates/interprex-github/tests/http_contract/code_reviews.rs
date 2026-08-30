@@ -342,6 +342,17 @@ fn publication_body_with(
 }
 
 fn github_review(body: &str, state: &str, submitted_at: Option<&str>) -> serde_json::Value {
+    // GitHub sends `performed_via_github_app: null` while a review is
+    // pending; the field is populated once the review is submitted.
+    let performed_via_github_app = if state == "PENDING" {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!({
+            "id": 4111233,
+            "slug": "adr-codex-review",
+            "name": "ADR Codex Review"
+        })
+    };
     serde_json::json!({
         "id": 91,
         "node_id": "PRR_publication",
@@ -354,11 +365,7 @@ fn github_review(body: &str, state: &str, submitted_at: Option<&str>) -> serde_j
         "state": state,
         "commit_id": "65ab9a843dd3a2114e3528fa6e0d7423fd32307e",
         "submitted_at": submitted_at,
-        "performed_via_github_app": {
-            "id": 4111233,
-            "slug": "adr-codex-review",
-            "name": "ADR Codex Review"
-        }
+        "performed_via_github_app": performed_via_github_app
     })
 }
 
@@ -817,7 +824,11 @@ async fn malformed_publication_record_from_another_reviewer_is_ignored() {
     let body = "Summary.\n\n<!-- interprex:review-publication\nnot-json\n-->";
     let mut foreign = github_review(body, "PENDING", None);
     foreign["user"]["node_id"] = serde_json::json!("BOT_foreign");
-    foreign["performed_via_github_app"]["id"] = serde_json::json!(9876);
+    foreign["performed_via_github_app"] = serde_json::json!({
+        "id": 9876,
+        "slug": "foreign-review",
+        "name": "Foreign Review"
+    });
     let (uri, requests) = scripted_responses(vec![
         installation_token(),
         ScriptedResponse::json(format!("[{foreign}]")),

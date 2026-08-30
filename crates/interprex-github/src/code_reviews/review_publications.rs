@@ -484,14 +484,17 @@ fn owned_publication(
 }
 
 fn same_reviewer(review: &GithubReview, reviewer: &ReviewerApplication) -> bool {
+    // GitHub omits `performed_via_github_app` on pending reviews, so the bot
+    // user is what identifies the application's actor; the app id is checked
+    // only on the responses that carry it.
     review
-        .performed_via_github_app
+        .user
         .as_ref()
-        .is_some_and(|app| app.id.to_string() == reviewer.app().id.as_str())
+        .is_some_and(|user| user.node_id == reviewer.bot().id.as_str())
         && review
-            .user
+            .performed_via_github_app
             .as_ref()
-            .is_some_and(|user| user.node_id == reviewer.bot().id.as_str())
+            .is_none_or(|app| app.id.to_string() == reviewer.app().id.as_str())
 }
 
 fn publication_records(body: &str) -> Result<Vec<PublicationRecord>> {
