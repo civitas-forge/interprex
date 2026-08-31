@@ -2,7 +2,6 @@
 
 ## Unreleased
 
-
 ### Credential errors
 
 - Breaking: `ProviderError::MissingCredential` carries the configuration entry
@@ -34,7 +33,6 @@
   reconciles rather than fails.
 - `interprex-test` applies dismissals to seeded reviews and reports every
   dismissal that withdrew a decision through `FakeProvider::review_dismissals`.
-
 
 ## 5.0.0
 
