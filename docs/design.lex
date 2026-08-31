@@ -92,6 +92,8 @@ Design
 
     `ReviewPublishingProvider` publishes one complete review against the revision the caller supplies. The GitHub provider selects the named app whose configuration key matches the reviewer's app slug and refuses to write when its configured App ID differs from the resolved reviewer. It creates the summary, hidden publication record and inline findings together as a pending review, submits that review, then reads it back through the same app installation. A repeated publication key adopts the matching review or submits its pending review; a failed create response causes a read, never another create request.
 
+    The same interface withdraws the decision one of those reviews carries, recording the caller's message as its visible reason. GitHub numbers a review for the dismissal request while callers hold its node ID, so the provider reads the review before it writes. It refuses a review another reviewer identity published and one that carries no decision, and it answers a review already dismissed with success. After the write it reads the review again: a dismissal GitHub applied before its response was lost reconciles to the same success as an acknowledged one, and every other result keeps the write failure.
+
     `ReviewAuthor` stores the author and the relationship that the provider can establish without allowing contradictory combinations:
 
     change author:

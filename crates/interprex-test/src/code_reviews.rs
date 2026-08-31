@@ -4,15 +4,17 @@ use interprex::{
     ChangeRequestCommentsProvider, ChangeRequestHead, ChangeRequestNumber, ChangeRequestState,
     CheckOutcome, CheckRun, CodeReviewsProvider, FindingResolution, FindingResolutionRecord,
     FindingResolutionReply, ProviderError, Repository, Result, ReviewActor, ReviewActorId,
-    ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewFinding,
-    ReviewId, ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
-    ReviewRequest, ReviewRequestId, ReviewRequestTarget, ReviewRequestTargetInspection,
-    ReviewState, ReviewSubmission, ReviewTarget, ReviewTargetsProvider, ReviewTeam, ReviewTeamId,
-    ReviewTeamKind, ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewerApplication,
-    ReviewerApplicationsProvider,
+    ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId,
+    ReviewDismissalMessage, ReviewDisposition, ReviewFinding, ReviewId, ReviewLineRange,
+    ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider, ReviewRequest, ReviewRequestId,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
+    ReviewTarget, ReviewTargetsProvider, ReviewTeam, ReviewTeamId, ReviewTeamKind, ReviewThread,
+    ReviewThreadId, ReviewThreadStatus, ReviewerApplication, ReviewerApplicationsProvider,
 };
 
-use crate::state::{FakeProvider, FakeReviewPublication, FakeReviewPublicationKey, missing};
+use crate::state::{
+    FakeProvider, FakeReviewDismissal, FakeReviewPublication, FakeReviewPublicationKey, missing,
+};
 
 #[async_trait]
 impl BranchUpdatesProvider for FakeProvider {
@@ -489,6 +491,71 @@ impl ReviewPublishingProvider for FakeProvider {
         }
         Ok(Some(publication.review_id))
     }
+
+    async fn dismiss_review(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        review_id: &ReviewId,
+        message: &ReviewDismissalMessage,
+    ) -> Result<()> {
+        let mut state = self.state.write().await;
+        let change_request = state
+            .change_requests
+            .get_mut(&(repository.clone(), number))
+            .ok_or_else(|| missing(format!("change request {number:?} in {repository}")))?;
+        let review = change_request
+            .reviews
+            .iter_mut()
+            .find(|review| review.id == *review_id)
+            .ok_or_else(|| {
+                missing(format!(
+                    "review {} on change request {number:?} in {repository}",
+                    review_id.as_str()
+                ))
+            })?;
+        if !published_by(review, reviewer) {
+            return Err(ProviderError::InvalidInput {
+                provider: "fake",
+                fact: format!(
+                    "review {} was published by another reviewer identity",
+                    review_id.as_str()
+                ),
+            });
+        }
+        match &review.state {
+            ReviewState::Submitted {
+                disposition: ReviewDisposition::Dismissed,
+                ..
+            } => return Ok(()),
+            ReviewState::Submitted {
+                disposition: ReviewDisposition::Approved | ReviewDisposition::ChangesRequested,
+                submitted_at,
+            } => {
+                review.state = ReviewState::Submitted {
+                    disposition: ReviewDisposition::Dismissed,
+                    submitted_at: *submitted_at,
+                };
+            }
+            ReviewState::Draft | ReviewState::Submitted { .. } => {
+                return Err(ProviderError::InvalidInput {
+                    provider: "fake",
+                    fact: format!(
+                        "review {} carries no decision to withdraw",
+                        review_id.as_str()
+                    ),
+                });
+            }
+        }
+        state.review_dismissals.push(FakeReviewDismissal {
+            repository: repository.clone(),
+            number,
+            review_id: review_id.clone(),
+            message: message.clone(),
+        });
+        Ok(())
+    }
 }
 
 impl FakeProvider {
@@ -537,6 +604,23 @@ impl FakeProvider {
         );
         Ok(review_id)
     }
+}
+
+/// Reports whether `reviewer` published `review`.
+///
+/// The bot actor identifies the reviewer. The provider application is compared
+/// when the review names one, as a provider need not attribute an application
+/// separately from its bot author.
+fn published_by(review: &interprex::Review, reviewer: &ReviewerApplication) -> bool {
+    let authored = match &review.author {
+        ReviewAuthor::Other(actor) | ReviewAuthor::Unknown(actor) => actor.id == reviewer.bot().id,
+        ReviewAuthor::ChangeAuthor => false,
+    };
+    authored
+        && review
+            .via_app
+            .as_ref()
+            .is_none_or(|app| app.id == reviewer.app().id)
 }
 
 fn fake_review_id(

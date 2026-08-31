@@ -11,15 +11,15 @@ use interprex::{
     ProviderAppId, ProviderError, ProviderTextRecord, Release, ReleaseId, ReleasesProvider,
     Repository, RepositoryFacts, RepositorySettings, Review, ReviewActor, ReviewActorId,
     ReviewActorKind, ReviewAnchor, ReviewAuthor, ReviewComment, ReviewCommentId, ReviewDiffSide,
-    ReviewDisposition, ReviewFinding, ReviewId, ReviewLine, ReviewLineRange, ReviewLocation,
-    ReviewPublicationKey, ReviewPublishingProvider, ReviewRequestTarget,
-    ReviewRequestTargetInspection, ReviewState, ReviewSubmission, ReviewSubmissionDisposition,
-    ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider, ReviewThread, ReviewThreadId,
-    ReviewThreadStatus, ReviewedRevision, ReviewerApplication, ReviewerApplicationsProvider,
-    SourceCodeConfigurationProvider, TextRecordsProvider,
+    ReviewDismissalMessage, ReviewDisposition, ReviewFinding, ReviewId, ReviewLine,
+    ReviewLineRange, ReviewLocation, ReviewPublicationKey, ReviewPublishingProvider,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
+    ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider,
+    ReviewThread, ReviewThreadId, ReviewThreadStatus, ReviewedRevision, ReviewerApplication,
+    ReviewerApplicationsProvider, SourceCodeConfigurationProvider, TextRecordsProvider,
 };
 
-use crate::FakeProvider;
+use crate::{FakeProvider, FakeReviewDismissal};
 
 /// One open change request with no review data, for tests that care about a
 /// few fields and not the rest. Adding a `ChangeRequest` field lands here
@@ -777,6 +777,113 @@ async fn consumer_publishes_then_observes_a_complete_review() {
             .len(),
         3
     );
+}
+
+#[tokio::test]
+async fn consumer_dismisses_only_its_own_standing_decision() {
+    let provider = FakeProvider::new();
+    let repository = Repository::new("civitas-forge", "sandbox").expect("repository");
+    let number = ChangeRequestNumber::new(3).expect("number");
+    provider
+        .seed_change_request(
+            repository.clone(),
+            change_request(
+                number,
+                "Dismiss review",
+                head(&repository, "refs/heads/dismiss-review"),
+            ),
+        )
+        .await;
+    let reviewer = reviewer_application("4111233", "BOT_kgDOEZ_BKw");
+    let other_reviewer = reviewer_application("different-app", "BOT_other");
+    let decision = provider
+        .publish_review(
+            &repository,
+            number,
+            &reviewer,
+            &review_submission("round-1:codex", "One finding."),
+        )
+        .await
+        .expect("publish changes-requested review");
+    let commentary = ReviewSubmission::new(
+        ReviewPublicationKey::new("round-1:notes").expect("publication key"),
+        ReviewedRevision {
+            head_sha: "head-2".to_owned(),
+        },
+        ReviewSubmissionDisposition::Commented,
+        "Notes only.",
+        Vec::new(),
+    )
+    .expect("commented submission");
+    let commented = provider
+        .publish_review(&repository, number, &reviewer, &commentary)
+        .await
+        .expect("publish commented review");
+    let message = ReviewDismissalMessage::new("Round 1 concluded; both findings addressed.")
+        .expect("dismissal message");
+
+    provider
+        .dismiss_review(&repository, number, &reviewer, &decision, &message)
+        .await
+        .expect("dismiss the standing decision");
+    provider
+        .dismiss_review(&repository, number, &reviewer, &decision, &message)
+        .await
+        .expect("repeat the dismissal");
+
+    let observed = provider
+        .change_request(&repository, number)
+        .await
+        .expect("observe reviews");
+    let dismissed = observed
+        .reviews
+        .iter()
+        .find(|review| review.id == decision)
+        .expect("dismissed review");
+    assert!(matches!(
+        dismissed.state,
+        ReviewState::Submitted {
+            disposition: ReviewDisposition::Dismissed,
+            ..
+        }
+    ));
+    assert_eq!(dismissed.summary.as_deref(), Some("One finding."));
+    assert_eq!(dismissed.findings.len(), 1);
+    assert_eq!(
+        provider.review_dismissals().await,
+        vec![FakeReviewDismissal {
+            repository: repository.clone(),
+            number,
+            review_id: decision.clone(),
+            message,
+        }]
+    );
+
+    let refusal = ReviewDismissalMessage::new("Not this one.").expect("dismissal message");
+    for (review_id, dismisser) in [(&decision, &other_reviewer), (&commented, &reviewer)] {
+        assert!(matches!(
+            provider
+                .dismiss_review(&repository, number, dismisser, review_id, &refusal)
+                .await,
+            Err(ProviderError::InvalidInput {
+                provider: "fake",
+                ..
+            })
+        ));
+    }
+    assert!(matches!(
+        provider
+            .dismiss_review(
+                &repository,
+                number,
+                &reviewer,
+                &ReviewId::new("fake-review:absent").expect("review id"),
+                &refusal,
+            )
+            .await,
+        Err(ProviderError::NotFound { .. })
+    ));
+    assert_eq!(provider.review_dismissals().await.len(), 1);
 }
 
 #[tokio::test]
