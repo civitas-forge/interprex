@@ -10,7 +10,7 @@ mod releases;
 mod state;
 mod text_records;
 
-pub use state::FakeProvider;
+pub use state::{FakeProvider, FakeReviewDismissal};
 
 #[cfg(test)]
 mod tests;

@@ -5,6 +5,7 @@ mod checks;
 mod findings;
 mod identities;
 mod provider;
+mod review_dismissals;
 mod review_requests;
 mod review_submissions;
 mod review_threads;
@@ -31,6 +32,7 @@ pub use provider::{
     ReviewPublishingProvider, ReviewTargetsProvider, ReviewerApplicationsProvider,
     TextRecordsProvider,
 };
+pub use review_dismissals::ReviewDismissalMessage;
 pub use review_requests::{
     ReviewRequest, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewTarget,
 };

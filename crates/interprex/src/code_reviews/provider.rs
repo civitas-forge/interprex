@@ -3,8 +3,9 @@ use async_trait::async_trait;
 use super::{
     BranchUpdateError, BranchUpdateObservation, ChangeRequest, ChangeRequestHead,
     ChangeRequestNumber, CheckOutcome, CheckRun, FindingResolution, FindingResolutionReply,
-    ProviderTextRecord, ReviewCommentId, ReviewPublicationKey, ReviewRequestTarget,
-    ReviewRequestTargetInspection, ReviewSubmission, ReviewThreadId, ReviewerApplication,
+    ProviderTextRecord, ReviewCommentId, ReviewDismissalMessage, ReviewPublicationKey,
+    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewSubmission, ReviewThreadId,
+    ReviewerApplication,
 };
 use crate::{Repository, Result};
 
@@ -363,4 +364,44 @@ pub trait ReviewPublishingProvider: Send + Sync {
         reviewer: &ReviewerApplication,
         key: &ReviewPublicationKey,
     ) -> Result<Option<super::ReviewId>>;
+
+    /// Withdraws the standing decision of `review_id`, recording `message` as
+    /// the visible reason, as `reviewer`.
+    ///
+    /// The review keeps its summary, its findings and its place in the change
+    /// request; only its disposition becomes
+    /// [`ReviewDisposition::Dismissed`](super::ReviewDisposition::Dismissed),
+    /// so the platform stops counting it among the decisions on the change
+    /// request. Dismissal neither resolves the review's threads nor publishes
+    /// another review, and a caller that wants a new decision publishes one
+    /// through [`Self::publish_review`].
+    ///
+    /// A platform can dismiss only a review that carries a decision, which is a
+    /// submitted approval or changes-requested review. An already dismissed
+    /// review is the requested state, so repeating the call reaches the same
+    /// observable state and returns `Ok`.
+    ///
+    /// The review must be one `reviewer` published. Reviewer identity is the
+    /// pair of provider application ID and bot actor ID, as it is for
+    /// publication; application names, slugs and bot logins do not affect it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ProviderError::MissingCredential`] when no credential
+    /// is available for `reviewer`, and [`crate::ProviderError::Configuration`]
+    /// when the selected credential belongs to a different provider
+    /// application ID. Returns [`crate::ProviderError::NotFound`] when the
+    /// change request or the review does not exist,
+    /// [`crate::ProviderError::InvalidInput`] when the review belongs to
+    /// another reviewer or carries no decision to withdraw, and
+    /// [`crate::ProviderError::External`] when transport or provider behavior
+    /// prevents the dismissal or leaves a result the adapter cannot reconcile.
+    async fn dismiss_review(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        review_id: &super::ReviewId,
+        message: &ReviewDismissalMessage,
+    ) -> Result<()>;
 }
