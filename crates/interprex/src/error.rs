@@ -52,10 +52,16 @@ pub enum ProviderError {
     },
     #[error("{entity} was not found")]
     NotFound { entity: String },
-    #[error("missing {kind} credential for identity {identity}")]
+    /// A credential the operation needs is absent from the configuration the
+    /// provider was built from. `entry` names the declaration that would
+    /// supply it, so the message a stuck caller reads points at the place to
+    /// edit rather than only at what was missing.
+    #[error("missing {kind} credential for identity {identity}: {entry} is absent from {origin}")]
     MissingCredential {
         identity: String,
         kind: &'static str,
+        entry: String,
+        origin: ConfigurationSource,
     },
     #[error("provider configuration from {origin} failed: {reason}")]
     Configuration {

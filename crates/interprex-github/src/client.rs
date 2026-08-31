@@ -15,6 +15,10 @@ pub struct GithubProvider {
     pub(crate) user: Option<Arc<Octocrab>>,
     pub(crate) streaming_user: Option<Arc<Octocrab>>,
     pub(crate) apps: BTreeMap<String, ConfiguredApp>,
+    /// Where the credentials came from. A credential that is present records
+    /// this on its own [`ConfiguredApp`]; the provider keeps it as well so
+    /// that an *absent* credential can still name the file to edit.
+    pub(crate) source: ConfigurationSource,
 }
 
 #[derive(Clone)]
@@ -37,12 +41,7 @@ impl fmt::Debug for GithubProvider {
 
 impl GithubProvider {
     pub(crate) fn user(&self) -> Result<&Octocrab> {
-        self.user
-            .as_deref()
-            .ok_or(ProviderError::MissingCredential {
-                identity: "user".to_owned(),
-                kind: "GH_TOKEN",
-            })
+        self.user.as_deref().ok_or_else(|| self.missing_user())
     }
 
     pub(crate) fn app(&self, name: &str) -> Result<&Octocrab> {
@@ -55,16 +54,24 @@ impl GithubProvider {
             .ok_or_else(|| ProviderError::MissingCredential {
                 identity: name.to_owned(),
                 kind: "named app",
+                entry: format!("[provider.github.apps.{name}]"),
+                origin: self.source.clone(),
             })
     }
 
     pub(crate) fn streaming_user(&self) -> Result<&Octocrab> {
         self.streaming_user
             .as_deref()
-            .ok_or(ProviderError::MissingCredential {
-                identity: "user".to_owned(),
-                kind: "GH_TOKEN",
-            })
+            .ok_or_else(|| self.missing_user())
+    }
+
+    fn missing_user(&self) -> ProviderError {
+        ProviderError::MissingCredential {
+            identity: "user".to_owned(),
+            kind: "GH_TOKEN",
+            entry: "GH_TOKEN in [provider.github]".to_owned(),
+            origin: self.source.clone(),
+        }
     }
 }
 
@@ -126,6 +133,7 @@ fn from_config_with_source(
         user,
         streaming_user,
         apps,
+        source,
     })
 }
 
@@ -376,6 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn user_and_app_identities_remain_distinct() {
+        let source = ConfigurationSource::File("/workspace/project/.interprex.toml".to_owned());
         let app_only = GithubProvider {
             user: None,
             streaming_user: None,
@@ -385,15 +394,18 @@ mod tests {
                     app_id: 12,
                     read: Arc::new(octocrab::Octocrab::default()),
                     write: Arc::new(octocrab::Octocrab::default()),
-                    source: ConfigurationSource::Direct,
+                    source: source.clone(),
                 },
             )]),
+            source: source.clone(),
         };
         assert_eq!(
             app_only.user().expect_err("user is absent"),
             ProviderError::MissingCredential {
                 identity: "user".to_owned(),
-                kind: "GH_TOKEN"
+                kind: "GH_TOKEN",
+                entry: "GH_TOKEN in [provider.github]".to_owned(),
+                origin: source.clone(),
             }
         );
 
@@ -402,6 +414,7 @@ mod tests {
             user: Some(Arc::clone(&user)),
             streaming_user: Some(user),
             apps: BTreeMap::new(),
+            source: source.clone(),
         };
         assert_eq!(
             user_only
@@ -409,8 +422,36 @@ mod tests {
                 .expect_err("named app is absent"),
             ProviderError::MissingCredential {
                 identity: "automation".to_owned(),
-                kind: "named app"
+                kind: "named app",
+                entry: "[provider.github.apps.automation]".to_owned(),
+                origin: source,
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_named_app_names_the_project_file_and_the_table_it_wants() {
+        let project = TempProject::new(Some(
+            r#"
+                [provider.github]
+                GH_TOKEN = "user-secret"
+            "#,
+        ));
+        let provider = from_project(project.path())
+            .await
+            .expect("project provider");
+
+        let message = provider
+            .app("adr-codex-review")
+            .expect_err("named app is absent")
+            .to_string();
+        assert!(
+            message.contains("[provider.github.apps.adr-codex-review]"),
+            "{message}"
+        );
+        assert!(
+            message.contains(&project.path().join(".interprex.toml").display().to_string()),
+            "{message}"
         );
     }
 }

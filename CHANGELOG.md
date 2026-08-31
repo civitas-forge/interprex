@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+
+### Credential errors
+
+- Breaking: `ProviderError::MissingCredential` carries the configuration entry
+  the operation wanted and the source the provider read, so a missing app
+  credential reports `[provider.github.apps.<slug>]` and the `.interprex.toml`
+  path consulted instead of the slug alone. Consumers that construct or
+  exhaustively match the variant supply the new `entry` and `origin` fields.
+
+### Review publication
+
+- `interprex-github` recovers a review publication that a pending review from an
+  earlier round blocks. GitHub accepts one pending review per author per change
+  request, so a review left pending under a publication key no later submission
+  matches rejected every create that followed, until a person deleted it. The
+  provider now deletes that review and creates once more. It deletes no review
+  that is submitted or authored by anyone else, and it reuses, rather than
+  deletes, a pending review carrying the submission's own publication key.
+
 ### Review dismissal
 
 - Added `ReviewPublishingProvider::dismiss_review`, which withdraws the decision
@@ -15,6 +34,7 @@
   reconciles rather than fails.
 - `interprex-test` applies dismissals to seeded reviews and reports every
   dismissal that withdrew a decision through `FakeProvider::review_dismissals`.
+
 
 ## 5.0.0
 
