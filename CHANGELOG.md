@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Credential errors
+
+- Breaking: `ProviderError::MissingCredential` carries the configuration entry
+  the operation wanted and the source the provider read, so a missing app
+  credential reports `[provider.github.apps.<slug>]` and the `.interprex.toml`
+  path consulted instead of the slug alone. Consumers that construct or
+  exhaustively match the variant supply the new `entry` and `origin` fields.
+
 ## 5.0.0
 
 ### Breaking changes

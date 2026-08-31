@@ -669,6 +669,7 @@ mod tests {
                     source: ConfigurationSource::Direct,
                 },
             )]),
+            source: ConfigurationSource::Direct,
         };
         let repository = Repository::new("civitas-forge", "interprex-sandbox").expect("repository");
         provider
