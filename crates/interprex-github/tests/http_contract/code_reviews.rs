@@ -986,6 +986,202 @@ async fn create_server_error_is_not_retried_before_reconciliation() {
     );
 }
 
+/// A review this reviewer app left pending under an earlier round's
+/// publication key: the create that follows cannot match it, and GitHub's
+/// one-pending-review-per-author rule rejects the create while it stands.
+fn orphaned_draft() -> serde_json::Value {
+    let body = publication_body_with(
+        "An earlier round.",
+        "round-1:codex",
+        &format!("sha256:{}", "0".repeat(64)),
+        ReviewSubmissionDisposition::Commented,
+    );
+    let mut orphan = github_review(&body, "PENDING", None);
+    orphan["id"] = serde_json::json!(77);
+    orphan["node_id"] = serde_json::json!("PRR_orphan");
+    orphan
+}
+
+fn pending_review_conflict() -> ScriptedResponse {
+    ScriptedResponse::status(
+        "422 Unprocessable Entity",
+        serde_json::json!({
+            "message": "User can only have one pending review per pull request",
+            "documentation_url": "https://docs.github.test/rest/pulls/reviews"
+        })
+        .to_string(),
+    )
+}
+
+fn delete_requests(requests: &[String]) -> Vec<&String> {
+    requests
+        .iter()
+        .filter(|request| request.starts_with("DELETE "))
+        .collect()
+}
+
+#[tokio::test]
+async fn orphaned_pending_draft_is_deleted_and_the_create_retried() {
+    let submission = review_submission(ReviewSubmissionDisposition::ChangesRequested);
+    let orphan = orphaned_draft();
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None).to_string();
+    let submitted =
+        github_review(&body, "CHANGES_REQUESTED", Some("2026-08-29T10:00:00Z")).to_string();
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{orphan}]")),
+        revision_response(&submission),
+        installation_token(),
+        pending_review_conflict(),
+        ScriptedResponse::json(format!("[{orphan}]")),
+        ScriptedResponse::json(orphan.to_string()),
+        ScriptedResponse::json(pending),
+        ScriptedResponse::json(submitted.clone()),
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("publish review after clearing the orphaned draft");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    let deletes = delete_requests(&requests);
+    assert_eq!(deletes.len(), 1, "{requests:?}");
+    assert!(
+        deletes[0].starts_with("DELETE /repos/civitas-forge/interprex-sandbox/pulls/5/reviews/77 "),
+        "{}",
+        deletes[0]
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request
+                .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews "))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn a_pending_draft_under_the_same_key_is_reused_without_a_delete() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    let body = publication_body(&submission);
+    let pending = github_review(&body, "PENDING", None);
+    let submitted = github_review(&body, "APPROVED", Some("2026-08-29T10:00:00Z")).to_string();
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{pending}]")),
+        revision_response(&submission),
+        installation_token(),
+        ScriptedResponse::json(submitted.clone()),
+        ScriptedResponse::json(format!("[{submitted}]")),
+    ])
+    .await;
+
+    let review_id = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect("reuse the pending draft carrying this key");
+
+    assert_eq!(review_id.as_str(), "PRR_publication");
+    let requests = requests.await.expect("captured requests");
+    assert!(delete_requests(&requests).is_empty(), "{requests:?}");
+    assert!(
+        !requests.iter().any(|request| request
+            .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews ")),
+        "{requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_submitted_review_under_another_key_is_never_deleted() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let mut earlier = orphaned_draft();
+    earlier["state"] = serde_json::json!("COMMENTED");
+    earlier["submitted_at"] = serde_json::json!("2026-08-29T10:00:00Z");
+    earlier["performed_via_github_app"] = serde_json::json!({
+        "id": 4111233,
+        "slug": "adr-codex-review",
+        "name": "ADR Codex Review"
+    });
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{earlier}]")),
+        revision_response(&submission),
+        installation_token(),
+        pending_review_conflict(),
+        ScriptedResponse::json(format!("[{earlier}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect_err("a submitted review is not an orphaned draft");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    let requests = requests.await.expect("captured requests");
+    assert!(delete_requests(&requests).is_empty(), "{requests:?}");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request
+                .starts_with("POST /repos/civitas-forge/interprex-sandbox/pulls/5/reviews "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_pending_draft_from_another_reviewer_app_is_never_deleted() {
+    let submission = review_submission(ReviewSubmissionDisposition::Commented);
+    let mut foreign = orphaned_draft();
+    foreign["user"]["node_id"] = serde_json::json!("BOT_foreign");
+    foreign["user"]["login"] = serde_json::json!("foreign-review[bot]");
+    let (uri, requests) = scripted_responses(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{foreign}]")),
+        revision_response(&submission),
+        installation_token(),
+        pending_review_conflict(),
+        ScriptedResponse::json(format!("[{foreign}]")),
+    ])
+    .await;
+
+    let error = app_provider(uri, 4111233)
+        .publish_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &submission,
+        )
+        .await
+        .expect_err("another application's draft is not this reviewer's to delete");
+
+    assert!(matches!(error, ProviderError::External { .. }));
+    let requests = requests.await.expect("captured requests");
+    assert!(delete_requests(&requests).is_empty(), "{requests:?}");
+}
+
 #[tokio::test]
 async fn structured_create_validation_is_invalid_input_after_reconciliation() {
     let submission = review_submission(ReviewSubmissionDisposition::Commented);

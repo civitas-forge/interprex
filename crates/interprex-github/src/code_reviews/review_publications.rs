@@ -45,6 +45,33 @@ struct Publication<'a> {
     record: PublicationRecord,
 }
 
+/// What one read of a change request's reviews says about a publication: the
+/// review carrying its key, and any other pending draft the same reviewer app
+/// owns. GitHub allows one pending review per author per change request, so
+/// while such a draft stands GitHub refuses every create that follows.
+struct PublicationReadout {
+    publication: Option<OwnedPublication>,
+    orphaned_draft: Option<u64>,
+}
+
+/// The review a create request writes, kept whole so the request can be made
+/// again after an orphaned draft is deleted.
+struct PublicationDraft<'a> {
+    submission: &'a ReviewSubmission,
+    digest: &'a str,
+    body: String,
+    comments: Vec<serde_json::Value>,
+}
+
+/// How a failed create ended once the provider had re-read the change request.
+enum CreateOutcome {
+    /// The re-read found the publication, and it needs nothing further.
+    Published(ReviewId),
+    /// A second create, after an orphaned draft was deleted, produced this
+    /// draft; the caller still submits it.
+    Draft(OwnedPublication),
+}
+
 #[derive(Clone, Copy)]
 struct PublicationScope<'a> {
     app: &'a ConfiguredApp,
@@ -156,17 +183,39 @@ impl GithubProvider {
         &self,
         scope: PublicationScope<'_>,
     ) -> Result<Option<OwnedPublication>> {
+        self.read_publication(scope)
+            .await
+            .map(|readout| readout.publication)
+    }
+
+    async fn read_publication(&self, scope: PublicationScope<'_>) -> Result<PublicationReadout> {
         let reviews = self
             .github_reviews_with(&scope.app.read, scope.repository, scope.number)
             .await?;
-        self.matching_publication(
-            &reviews,
-            scope.reviewer,
-            scope.key,
-            scope.digest,
-            scope.submission,
-        )
-        .map(|publication| publication.map(OwnedPublication::from))
+        let publication = self
+            .matching_publication(
+                &reviews,
+                scope.reviewer,
+                scope.key,
+                scope.digest,
+                scope.submission,
+            )?
+            .map(OwnedPublication::from);
+        let matched = publication
+            .as_ref()
+            .map(|publication| publication.numeric_id);
+        let orphaned_draft = reviews
+            .iter()
+            .find(|review| {
+                review.state == "PENDING"
+                    && same_reviewer(review, scope.reviewer)
+                    && Some(review.id) != matched
+            })
+            .map(|review| review.id);
+        Ok(PublicationReadout {
+            publication,
+            orphaned_draft,
+        })
     }
 
     async fn require_review_revision(
@@ -274,6 +323,103 @@ impl GithubProvider {
             None => Err(create_error),
         }
     }
+
+    async fn create_publication(
+        &self,
+        scope: PublicationScope<'_>,
+        draft: &PublicationDraft<'_>,
+    ) -> Result<OwnedPublication> {
+        let path = format!(
+            "/repos/{}/pulls/{}/reviews",
+            scope.repository,
+            scope.number.get()
+        );
+        let create = tokio::time::timeout(
+            WRITE_TIMEOUT,
+            scope.app.write.post::<_, GithubReview>(
+                path,
+                Some(&json!({
+                    "commit_id": draft.submission.revision().head_sha,
+                    "body": draft.body,
+                    "comments": draft.comments,
+                })),
+            ),
+        )
+        .await;
+        match create {
+            Ok(Ok(review)) => owned_publication(
+                review,
+                scope.reviewer,
+                scope.key,
+                draft.digest,
+                draft.submission,
+            ),
+            Ok(Err(error)) => Err(create_review_error(&error)),
+            Err(_) => Err(reconciliation_error("create review timed out")),
+        }
+    }
+
+    /// Re-reads the change request after a create failed, and clears the one
+    /// condition a retry can resolve.
+    ///
+    /// A create that produced no publication under this key may still have
+    /// been rejected because this reviewer app owns a pending draft from an
+    /// earlier round: GitHub allows one pending review per author per change
+    /// request, and a round that failed to reconcile leaves a draft whose key
+    /// no later submission matches. Deleting that draft is what lets the
+    /// publication proceed without a person removing it by hand. Only a
+    /// PENDING review authored by this same reviewer app is ever deleted, and
+    /// the create is retried exactly once.
+    async fn reconcile_or_replace_create(
+        &self,
+        scope: PublicationScope<'_>,
+        draft: &PublicationDraft<'_>,
+        create_error: ProviderError,
+    ) -> Result<CreateOutcome> {
+        let readout = self.read_publication(scope).await?;
+        if let Some(publication) = readout.publication {
+            return self
+                .finish_publication(scope, publication)
+                .await
+                .map(CreateOutcome::Published);
+        }
+        let Some(orphan) = readout.orphaned_draft else {
+            return Err(create_error);
+        };
+        self.delete_pending_draft(scope, orphan).await?;
+        match self.create_publication(scope, draft).await {
+            Ok(publication) => Ok(CreateOutcome::Draft(publication)),
+            Err(retry_error) => self
+                .reconcile_create(scope, retry_error)
+                .await
+                .map(CreateOutcome::Published),
+        }
+    }
+
+    async fn delete_pending_draft(
+        &self,
+        scope: PublicationScope<'_>,
+        review_id: u64,
+    ) -> Result<()> {
+        let path = format!(
+            "/repos/{}/pulls/{}/reviews/{review_id}",
+            scope.repository,
+            scope.number.get()
+        );
+        let delete = tokio::time::timeout(
+            WRITE_TIMEOUT,
+            scope
+                .app
+                .write
+                .delete::<serde_json::Value, _, ()>(path, None),
+        )
+        .await;
+        match delete {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(error)) => Err(authenticated_external("delete pending review", &error)),
+            Err(_) => Err(reconciliation_error("delete pending review timed out")),
+        }
+    }
 }
 
 #[async_trait]
@@ -331,40 +477,23 @@ impl ReviewPublishingProvider for GithubProvider {
                 })
             })
             .collect::<Vec<_>>();
-        let path = format!("/repos/{repository}/pulls/{}/reviews", number.get());
-        let create = tokio::time::timeout(
-            WRITE_TIMEOUT,
-            app.write.post::<_, GithubReview>(
-                path,
-                Some(&json!({
-                    "commit_id": submission.revision().head_sha,
-                    "body": body,
-                    "comments": comments,
-                })),
-            ),
-        )
-        .await;
+        let draft = PublicationDraft {
+            submission,
+            digest: &digest,
+            body,
+            comments,
+        };
 
-        let created = match create {
-            Ok(Ok(review)) => match owned_publication(
-                review,
-                reviewer,
-                submission.publication_key(),
-                &digest,
-                submission,
-            ) {
-                Ok(publication) => publication,
-                Err(response_error) => {
-                    return self.reconcile_create(scope, response_error).await;
+        let created = match self.create_publication(scope, &draft).await {
+            Ok(publication) => publication,
+            Err(create_error) => {
+                match self
+                    .reconcile_or_replace_create(scope, &draft, create_error)
+                    .await?
+                {
+                    CreateOutcome::Published(review_id) => return Ok(review_id),
+                    CreateOutcome::Draft(publication) => publication,
                 }
-            },
-            Ok(Err(error)) => {
-                let create_error = create_review_error(&error);
-                return self.reconcile_create(scope, create_error).await;
-            }
-            Err(_) => {
-                let create_error = reconciliation_error("create review timed out");
-                return self.reconcile_create(scope, create_error).await;
             }
         };
 

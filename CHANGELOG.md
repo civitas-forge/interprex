@@ -10,6 +10,16 @@
   path consulted instead of the slug alone. Consumers that construct or
   exhaustively match the variant supply the new `entry` and `origin` fields.
 
+### Review publication
+
+- `interprex-github` recovers a review publication that a pending review from an
+  earlier round blocks. GitHub accepts one pending review per author per change
+  request, so a review left pending under a publication key no later submission
+  matches rejected every create that followed, until a person deleted it. The
+  provider now deletes that review and creates once more. It deletes no review
+  that is submitted or authored by anyone else, and it reuses, rather than
+  deletes, a pending review carrying the submission's own publication key.
+
 ## 5.0.0
 
 ### Breaking changes
