@@ -6,10 +6,10 @@ use interprex::{
     CodeReviewsProvider, FindingResolution, FindingResolutionReason, FindingResolutionReply,
     FindingSeverity, Mergeability, ProviderApp, ProviderAppId, ProviderError, ProviderTextRecord,
     Repository, ReviewActor, ReviewActorId, ReviewActorKind, ReviewAnchor, ReviewDiffSide,
-    ReviewDisposition, ReviewLine, ReviewPublicationKey, ReviewPublishingProvider,
-    ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState, ReviewSubmission,
-    ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget, ReviewTargetsProvider,
-    ReviewTeamKind, ReviewThreadId, ReviewedRevision, ReviewerApplication,
+    ReviewDismissalMessage, ReviewDisposition, ReviewId, ReviewLine, ReviewPublicationKey,
+    ReviewPublishingProvider, ReviewRequestTarget, ReviewRequestTargetInspection, ReviewState,
+    ReviewSubmission, ReviewSubmissionDisposition, ReviewSubmissionFinding, ReviewTarget,
+    ReviewTargetsProvider, ReviewTeamKind, ReviewThreadId, ReviewedRevision, ReviewerApplication,
     ReviewerApplicationsProvider, TextRecordsProvider,
 };
 use sha2::{Digest, Sha256};
@@ -22,6 +22,7 @@ use super::http_fixture::{
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+const SUBMITTED_AT: &str = "2026-08-29T10:00:00Z";
 
 fn compare_status(status: &str) -> ScriptedResponse {
     ScriptedResponse::json(serde_json::json!({"status": status}).to_string())
@@ -1389,6 +1390,191 @@ async fn submit_server_error_is_not_retried_before_reconciliation() {
             .count(),
         1
     );
+}
+
+fn dismissal_message() -> ReviewDismissalMessage {
+    ReviewDismissalMessage::new("Round 1 concluded; both findings addressed.")
+        .expect("dismissal message")
+}
+
+async fn dismiss_published_review(
+    responses: Vec<ScriptedResponse>,
+) -> (Result<(), ProviderError>, Vec<String>) {
+    let (uri, requests) = scripted_responses(responses).await;
+    let outcome = app_provider(uri, 4111233)
+        .dismiss_review(
+            &repository(),
+            ChangeRequestNumber::new(5).expect("number"),
+            &reviewer_application(),
+            &ReviewId::new("PRR_publication").expect("review id"),
+            &dismissal_message(),
+        )
+        .await;
+    (outcome, requests.await.expect("captured requests"))
+}
+
+#[tokio::test]
+async fn app_dismissal_sends_the_message_then_verifies_the_withdrawn_decision() {
+    let standing = github_review("Two findings.", "CHANGES_REQUESTED", Some(SUBMITTED_AT));
+    let dismissed = github_review("Two findings.", "DISMISSED", Some(SUBMITTED_AT));
+    let (outcome, requests) = dismiss_published_review(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{standing}]")),
+        installation_token(),
+        ScriptedResponse::json(dismissed.to_string()),
+        ScriptedResponse::json(format!("[{dismissed}]")),
+    ])
+    .await;
+
+    outcome.expect("dismiss review");
+    assert_eq!(requests.len(), 5);
+    assert!(
+        requests[1].starts_with(
+            "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 "
+        ),
+        "{}",
+        requests[1]
+    );
+    assert!(
+        requests[3].starts_with(
+            "PUT /repos/civitas-forge/interprex-sandbox/pulls/5/reviews/91/dismissals "
+        ),
+        "{}",
+        requests[3]
+    );
+    assert!(
+        requests[4].starts_with(
+            "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 "
+        ),
+        "{}",
+        requests[4]
+    );
+    assert!(
+        requests[3]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer app-installation-token"),
+        "{}",
+        requests[3]
+    );
+    let (_, dismissal_body) = requests[3].split_once("\r\n\r\n").expect("dismissal body");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(dismissal_body).expect("JSON dismissal body"),
+        serde_json::json!({"message": "Round 1 concluded; both findings addressed."})
+    );
+}
+
+#[tokio::test]
+async fn dismissing_an_already_dismissed_review_writes_nothing() {
+    let dismissed = github_review("Two findings.", "DISMISSED", Some(SUBMITTED_AT));
+    let (outcome, requests) = dismiss_published_review(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{dismissed}]")),
+    ])
+    .await;
+
+    outcome.expect("repeat dismissal");
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
+async fn dismissing_a_review_without_a_decision_is_invalid_input_without_a_write() {
+    for state in ["COMMENTED", "PENDING"] {
+        let submitted_at = (state != "PENDING").then_some(SUBMITTED_AT);
+        let review = github_review("Two findings.", state, submitted_at);
+        let (outcome, requests) = dismiss_published_review(vec![
+            installation_token(),
+            ScriptedResponse::json(format!("[{review}]")),
+        ])
+        .await;
+
+        assert!(matches!(
+            outcome,
+            Err(ProviderError::InvalidInput {
+                provider: "github",
+                ..
+            })
+        ));
+        assert_eq!(requests.len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn dismissing_another_reviewers_review_is_invalid_input_without_a_write() {
+    let mut foreign = github_review("Two findings.", "CHANGES_REQUESTED", Some(SUBMITTED_AT));
+    foreign["user"]["node_id"] = serde_json::json!("BOT_other");
+    let (outcome, requests) = dismiss_published_review(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{foreign}]")),
+    ])
+    .await;
+
+    assert!(matches!(
+        outcome,
+        Err(ProviderError::InvalidInput {
+            provider: "github",
+            ..
+        })
+    ));
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
+async fn dismissing_an_absent_review_is_not_found_without_a_write() {
+    let (outcome, requests) =
+        dismiss_published_review(vec![installation_token(), ScriptedResponse::json("[]")]).await;
+
+    assert!(matches!(
+        outcome,
+        Err(ProviderError::NotFound { ref entity })
+            if entity == "review PRR_publication on change request 5 in civitas-forge/interprex-sandbox"
+    ));
+    assert_eq!(requests.len(), 2);
+}
+
+#[tokio::test]
+async fn an_ambiguous_dismissal_response_is_reconciled_without_another_write() {
+    let standing = github_review("Two findings.", "CHANGES_REQUESTED", Some(SUBMITTED_AT));
+    let dismissed = github_review("Two findings.", "DISMISSED", Some(SUBMITTED_AT));
+    let (outcome, requests) = dismiss_published_review(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{standing}]")),
+        installation_token(),
+        ScriptedResponse::Close,
+        ScriptedResponse::json(format!("[{dismissed}]")),
+    ])
+    .await;
+
+    outcome.expect("reconcile accepted dismissal");
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.contains("/reviews/91/dismissals "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_refused_dismissal_preserves_the_write_failure() {
+    let standing = github_review("Two findings.", "CHANGES_REQUESTED", Some(SUBMITTED_AT));
+    let (outcome, requests) = dismiss_published_review(vec![
+        installation_token(),
+        ScriptedResponse::json(format!("[{standing}]")),
+        installation_token(),
+        ScriptedResponse::status("422 Unprocessable Entity", r#"{"message":"Unprocessable"}"#),
+        ScriptedResponse::json(format!("[{standing}]")),
+    ])
+    .await;
+
+    assert!(matches!(
+        outcome,
+        Err(ProviderError::External {
+            provider: "github",
+            operation: "dismiss review",
+            ..
+        })
+    ));
+    assert_eq!(requests.len(), 5);
 }
 
 #[tokio::test]

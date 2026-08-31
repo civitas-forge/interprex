@@ -45,6 +45,8 @@ Interprex
 
     The GitHub provider authenticates with the named App entry whose configuration key matches the reviewer's application slug. It creates the complete pending review in one request, then submits it with the requested disposition. A retry with the same key adopts the submitted review or completes its pending review. `resume_review_publication` can do the same after the caller loses its submission, using the hidden record written with the pending review.
 
+    `dismiss_review` withdraws the decision a published review carries, as the reviewer that published it, and records the caller's message as the visible reason for it. The review keeps its summary and its findings; only its disposition becomes dismissed, so the platform stops counting the review among the decisions on the change request. A platform withdraws a decision only from an approval or a changes-requested review, and a review already dismissed is the requested state.
+
     The review author is one of change author, another known actor or an actor whose relationship is unknown. The change-author variant refers to the change request's author instead of storing a second, independently writable copy. Unknown means the provider did not return enough identity information to compare the actors; it does not mean other. Interprex returns this fact and leaves decisions about independent review evidence to the caller.
 
     A thread attached to a review is one of that review's findings, including a self-review finding from the change author. A thread with no originating review is a standalone thread. An unanchored comment has no source location.

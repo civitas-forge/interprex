@@ -3,8 +3,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use interprex::{
     ChangeRequestNumber, ProviderError, ProviderTextRecord, Repository, Result, ReviewDiffSide,
-    ReviewId, ReviewPublicationKey, ReviewPublishingProvider, ReviewSubmission,
-    ReviewSubmissionDisposition, ReviewerApplication,
+    ReviewDismissalMessage, ReviewId, ReviewPublicationKey, ReviewPublishingProvider,
+    ReviewSubmission, ReviewSubmissionDisposition, ReviewerApplication,
 };
 use octocrab::Page;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ const PUBLICATION_VERSION: u64 = 1;
 const PUBLICATION_IDENTIFIER: &str = "interprex:review-publication";
 const PUBLICATION_CARRIER: &str = "<!-- interprex:review-publication";
 const MAX_OBSERVED_PULL_REQUEST_COMMITS: usize = 250;
+const DISMISSED_STATE: &str = "DISMISSED";
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -313,6 +314,67 @@ impl GithubProvider {
         self.submit_publication(scope, &publication).await
     }
 
+    async fn observed_review(
+        &self,
+        app: &ConfiguredApp,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        review_id: &ReviewId,
+    ) -> Result<Option<GithubReview>> {
+        Ok(self
+            .github_reviews_with(&app.read, repository, number)
+            .await?
+            .into_iter()
+            .find(|review| review.node_id == review_id.as_str()))
+    }
+
+    /// Reads the numeric identifier a dismissal request needs, or nothing when
+    /// the review already stands dismissed.
+    ///
+    /// The dismissal endpoint addresses a review by that identifier while
+    /// callers hold the review's node ID, so the review is read before it is
+    /// written whatever the read decides.
+    async fn dismissable_review(
+        &self,
+        app: &ConfiguredApp,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        review_id: &ReviewId,
+    ) -> Result<Option<u64>> {
+        let review = self
+            .observed_review(app, repository, number, review_id)
+            .await?
+            .ok_or_else(|| ProviderError::NotFound {
+                entity: format!(
+                    "review {} on change request {} in {repository}",
+                    review_id.as_str(),
+                    number.get()
+                ),
+            })?;
+        if !same_reviewer(&review, reviewer) {
+            return Err(ProviderError::InvalidInput {
+                provider: "github",
+                fact: format!(
+                    "review {} was published by another reviewer identity",
+                    review_id.as_str()
+                ),
+            });
+        }
+        match review.state.as_str() {
+            DISMISSED_STATE => Ok(None),
+            "APPROVED" | "CHANGES_REQUESTED" if review.id != 0 => Ok(Some(review.id)),
+            "APPROVED" | "CHANGES_REQUESTED" => Err(dismissal_error(format!(
+                "review {} has no GitHub identifier to dismiss",
+                review_id.as_str()
+            ))),
+            state => Err(ProviderError::InvalidInput {
+                provider: "github",
+                fact: format!("GitHub does not dismiss a {state} review"),
+            }),
+        }
+    }
+
     async fn reconcile_create(
         &self,
         scope: PublicationScope<'_>,
@@ -526,6 +588,57 @@ impl ReviewPublishingProvider for GithubProvider {
             return Ok(None);
         };
         self.finish_publication(scope, publication).await.map(Some)
+    }
+
+    async fn dismiss_review(
+        &self,
+        repository: &Repository,
+        number: ChangeRequestNumber,
+        reviewer: &ReviewerApplication,
+        review_id: &ReviewId,
+        message: &ReviewDismissalMessage,
+    ) -> Result<()> {
+        let app = self.reviewer_app(reviewer)?;
+        let Some(numeric_id) = self
+            .dismissable_review(app, repository, number, reviewer, review_id)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        // This client does not retry writes. A dismissal GitHub already
+        // applied is indistinguishable from one it refused once the response
+        // is lost, so the reread below decides which happened.
+        let path = format!(
+            "/repos/{repository}/pulls/{}/reviews/{numeric_id}/dismissals",
+            number.get()
+        );
+        let write = tokio::time::timeout(
+            WRITE_TIMEOUT,
+            app.write.put::<serde_json::Value, _, _>(
+                path,
+                Some(&json!({ "message": message.as_str() })),
+            ),
+        )
+        .await;
+        let write_error = match write {
+            Ok(Ok(_)) => None,
+            Ok(Err(error)) => Some(authenticated_external("dismiss review", &error)),
+            Err(_) => Some(dismissal_error("the dismissal request timed out")),
+        };
+
+        match self
+            .observed_review(app, repository, number, review_id)
+            .await?
+        {
+            Some(review) if review.state == DISMISSED_STATE => Ok(()),
+            Some(_) => Err(write_error.unwrap_or_else(|| {
+                dismissal_error("GitHub accepted the dismissal but reread the review undismissed")
+            })),
+            None => Err(write_error.unwrap_or_else(|| {
+                dismissal_error("GitHub accepted the dismissal but reread found no review")
+            })),
+        }
     }
 }
 
@@ -771,6 +884,14 @@ fn reconciliation_error(message: impl Into<String>) -> ProviderError {
     ProviderError::External {
         provider: "github",
         operation: "reconcile review publication",
+        message: message.into(),
+    }
+}
+
+fn dismissal_error(message: impl Into<String>) -> ProviderError {
+    ProviderError::External {
+        provider: "github",
+        operation: "dismiss review",
         message: message.into(),
     }
 }

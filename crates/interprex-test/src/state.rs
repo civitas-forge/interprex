@@ -8,8 +8,8 @@ use interprex::{
     AppliedSourceRequirements, AssetId, BranchUpdateObservation, ChangeRequest,
     ChangeRequestNumber, CheckOutcome, CheckRun, CommitRange, DispatchInputs, Issue, IssueNumber,
     Label, ProviderAppId, ProviderError, Release, Repository, RepositoryFacts, RepositorySettings,
-    ReviewActorId, ReviewId, ReviewPublicationKey, ReviewRequestTarget, ReviewSubmission,
-    ReviewTarget, ReviewerApplication, RunId, WorkflowRun,
+    ReviewActorId, ReviewDismissalMessage, ReviewId, ReviewPublicationKey, ReviewRequestTarget,
+    ReviewSubmission, ReviewTarget, ReviewerApplication, RunId, WorkflowRun,
 };
 use tokio::sync::RwLock;
 
@@ -33,6 +33,7 @@ pub(crate) struct State {
     pub(crate) review_target_observations: Vec<(Repository, ReviewRequestTarget, ReviewTarget)>,
     pub(crate) reviewer_applications: BTreeMap<(Repository, String), ReviewerApplication>,
     pub(crate) review_publications: BTreeMap<FakeReviewPublicationKey, FakeReviewPublication>,
+    pub(crate) review_dismissals: Vec<FakeReviewDismissal>,
     pub(crate) check_runs: BTreeMap<(Repository, String), Vec<CheckRun>>,
     pub(crate) published_checks: Vec<(Repository, String, CheckOutcome)>,
     pub(crate) dispatches: Vec<(Repository, String, String, DispatchInputs)>,
@@ -53,6 +54,15 @@ pub(crate) type FakeReviewPublicationKey = (
 );
 
 pub(crate) type FakeAppliedRequirementsKey = (Repository, String, String, String);
+
+/// One review dismissal the fake applied.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FakeReviewDismissal {
+    pub repository: Repository,
+    pub number: ChangeRequestNumber,
+    pub review_id: ReviewId,
+    pub message: ReviewDismissalMessage,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct FakeReviewPublication {
@@ -228,6 +238,14 @@ impl FakeProvider {
 
     pub async fn published_checks(&self) -> Vec<(Repository, String, CheckOutcome)> {
         self.state.read().await.published_checks.clone()
+    }
+
+    /// Returns the dismissals that withdrew a review decision, in call order.
+    ///
+    /// Dismissing an already dismissed review changes nothing and adds no
+    /// entry, so a repeated call leaves this collection as the first one did.
+    pub async fn review_dismissals(&self) -> Vec<FakeReviewDismissal> {
+        self.state.read().await.review_dismissals.clone()
     }
 
     /// Returns accepted exact-head branch-update requests in call order.

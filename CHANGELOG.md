@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+
 ### Credential errors
 
 - Breaking: `ProviderError::MissingCredential` carries the configuration entry
@@ -19,6 +20,21 @@
   provider now deletes that review and creates once more. It deletes no review
   that is submitted or authored by anyone else, and it reuses, rather than
   deletes, a pending review carrying the submission's own publication key.
+
+### Review dismissal
+
+- Added `ReviewPublishingProvider::dismiss_review`, which withdraws the decision
+  a published review carries and records a `ReviewDismissalMessage` as the
+  visible reason for it. The review keeps its summary and findings; only its
+  disposition becomes dismissed.
+- The GitHub provider dismisses through the reviewer's named App credential. It
+  reads the review before writing, refuses one another reviewer identity
+  published and one carrying no decision, answers an already dismissed review
+  with success, and reads the review back so a lost dismissal response
+  reconciles rather than fails.
+- `interprex-test` applies dismissals to seeded reviews and reports every
+  dismissal that withdrew a decision through `FakeProvider::review_dismissals`.
+
 
 ## 5.0.0
 
