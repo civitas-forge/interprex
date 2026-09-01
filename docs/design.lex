@@ -10,6 +10,10 @@ Design
 
     `interprex-bucket` is independent from the development-platform crates. It provides create-only records over an injected `ObjectStore`; its guaranteed behavior is [./contracts/records.lex].
 
+    Civitas Forge binaries and libraries share the cross-process propagation,
+    emission, and deterministic re-export rules in
+    [./contracts/tracing.lex].
+
     A consumer links the crates it needs and constructs providers at its composition root. Interprex owns no process, schedule, command line or orchestration policy. Git operations such as commits, refs, branches and pushes remain Git operations rather than Interprex domains.
 
 2. Domains

@@ -59,6 +59,11 @@ fn normalize_run(value: GithubRun) -> Result<WorkflowRun> {
 
 #[async_trait]
 impl JobsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.jobs.dispatch",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn dispatch(
         &self,
         repository: &Repository,
@@ -78,6 +83,11 @@ impl JobsProvider for GithubProvider {
         Ok(())
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.jobs.run",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn run(&self, repository: &Repository, run_id: RunId) -> Result<WorkflowRun> {
         let response: GithubRun = self
             .user()?
@@ -96,6 +106,11 @@ impl JobsProvider for GithubProvider {
         normalize_run(response)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.jobs.cancel_run",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn cancel_run(&self, repository: &Repository, run_id: RunId) -> Result<()> {
         self.user()?
             .actions()

@@ -6,10 +6,20 @@ const CARRIER_START: &str = "<!-- ";
 const CARRIER_END: &str = "\n-->";
 
 impl TextRecordsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.embed_record",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     fn embed_record(&self, text: &str, record: &ProviderTextRecord) -> String {
         embed_record(text, record)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.extract_records",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     fn extract_records(&self, text: &str) -> Vec<ProviderTextRecord> {
         extract_records(text)
     }

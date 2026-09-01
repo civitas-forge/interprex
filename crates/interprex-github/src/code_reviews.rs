@@ -91,6 +91,11 @@ fn continuation_cursor(
 
 #[async_trait]
 impl CodeReviewsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.change_request",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn change_request(
         &self,
         repository: &Repository,
@@ -127,6 +132,11 @@ impl CodeReviewsProvider for GithubProvider {
         )
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.open_change_requests",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn open_change_requests(
         &self,
         repository: &Repository,
@@ -173,6 +183,11 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(numbers)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.resolve_thread",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn resolve_thread(
         &self,
         _repository: &Repository,
@@ -204,6 +219,11 @@ impl CodeReviewsProvider for GithubProvider {
         }
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.resolve_finding",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn resolve_finding(
         &self,
         repository: &Repository,
@@ -275,6 +295,11 @@ impl CodeReviewsProvider for GithubProvider {
         }
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.request_reviewers",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn request_reviewers(
         &self,
         repository: &Repository,
@@ -312,6 +337,11 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(())
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.mark_ready",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn mark_ready(&self, repository: &Repository, number: ChangeRequestNumber) -> Result<()> {
         let pull_request = self.github_pull_request(repository, number).await?;
         let _: serde_json::Value = self
@@ -325,6 +355,11 @@ impl CodeReviewsProvider for GithubProvider {
         Ok(())
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.checks",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn checks(&self, repository: &Repository, head_sha: &str) -> Result<Vec<CheckRun>> {
         self.github_check_runs(repository, head_sha)
             .await?
@@ -333,6 +368,11 @@ impl CodeReviewsProvider for GithubProvider {
             .collect()
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.publish_check",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn publish_check(
         &self,
         repository: &Repository,
@@ -359,6 +399,11 @@ impl CodeReviewsProvider for GithubProvider {
 
 #[async_trait]
 impl ChangeRequestCommentsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.create_unanchored_comment",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn create_unanchored_comment(
         &self,
         repository: &Repository,
@@ -382,6 +427,11 @@ impl ChangeRequestCommentsProvider for GithubProvider {
 
 #[async_trait]
 impl ReviewTargetsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.inspect_review_request_target",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn inspect_review_request_target(
         &self,
         repository: &Repository,
@@ -393,6 +443,11 @@ impl ReviewTargetsProvider for GithubProvider {
 
 #[async_trait]
 impl ReviewerApplicationsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.resolve_reviewer_application",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn resolve_reviewer_application(
         &self,
         repository: &Repository,

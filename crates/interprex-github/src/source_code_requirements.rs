@@ -156,6 +156,11 @@ struct Requirements {
 
 #[async_trait]
 impl AppliedSourceRequirementsProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.source_code_requirements.applied_requirements",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn applied_requirements(
         &self,
         repository: &Repository,
