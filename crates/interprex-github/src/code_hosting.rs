@@ -88,6 +88,11 @@ impl TryFrom<GithubRepository> for (RepositoryFacts, RepositorySettings) {
 
 #[async_trait]
 impl CodeHostingProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_hosting.repository",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn repository(&self, repository: &Repository) -> Result<RepositoryFacts> {
         let response: GithubRepository = self
             .user()?
@@ -97,6 +102,11 @@ impl CodeHostingProvider for GithubProvider {
         response.try_into().map(|(facts, _)| facts)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_hosting.settings",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn settings(&self, repository: &Repository) -> Result<RepositorySettings> {
         let response: GithubRepository = self
             .user()?
@@ -108,6 +118,11 @@ impl CodeHostingProvider for GithubProvider {
         response.try_into().map(|(_, settings)| settings)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_hosting.apply_settings",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn apply_settings(
         &self,
         repository: &Repository,
@@ -122,6 +137,11 @@ impl CodeHostingProvider for GithubProvider {
         response.try_into().map(|(_, settings)| settings)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_hosting.put_secret",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn put_secret(
         &self,
         repository: &Repository,

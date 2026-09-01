@@ -42,6 +42,11 @@ fn stale_head(expected: &str, observed: &str) -> BranchUpdateError {
 
 #[async_trait]
 impl BranchUpdatesProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.branch_update",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn branch_update(
         &self,
         repository: &Repository,
@@ -78,6 +83,11 @@ impl BranchUpdatesProvider for GithubProvider {
         })
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.update_change_request_branch",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn update_change_request_branch(
         &self,
         repository: &Repository,

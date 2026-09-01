@@ -486,6 +486,11 @@ impl GithubProvider {
 
 #[async_trait]
 impl ReviewPublishingProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.publish_review",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn publish_review(
         &self,
         repository: &Repository,
@@ -567,6 +572,11 @@ impl ReviewPublishingProvider for GithubProvider {
         self.submit_publication(scope, &created).await
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.resume_review_publication",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn resume_review_publication(
         &self,
         repository: &Repository,
@@ -590,6 +600,11 @@ impl ReviewPublishingProvider for GithubProvider {
         self.finish_publication(scope, publication).await.map(Some)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.code_reviews.dismiss_review",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn dismiss_review(
         &self,
         repository: &Repository,

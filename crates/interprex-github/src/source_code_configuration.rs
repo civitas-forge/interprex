@@ -247,6 +247,11 @@ impl SourceCodeConfigurationProvider for GithubProvider {
     /// Returns rulesets ordered by source type, source identity, and numeric
     /// GitHub ruleset ID. This order makes repeated inventory reads stable; it
     /// does not describe GitHub's ruleset evaluation priority.
+    #[tracing::instrument(
+        name = "interprex.provider.source_code_configuration.read_rulesets",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn read_rulesets(&self, repository: &Repository) -> Result<Vec<Self::Ruleset>> {
         let page: Page<Value> = self
             .user()?
@@ -294,6 +299,11 @@ impl SourceCodeConfigurationProvider for GithubProvider {
         Ok(rulesets)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.source_code_configuration.apply_ruleset",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn apply_ruleset(
         &self,
         repository: &Repository,

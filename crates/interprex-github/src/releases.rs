@@ -80,6 +80,11 @@ fn normalize_release(value: GithubRelease) -> Result<Release> {
 
 #[async_trait]
 impl ReleasesProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.releases.release_by_tag",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn release_by_tag(&self, repository: &Repository, tag: &str) -> Result<Release> {
         let response: GithubRelease = self
             .user()?
@@ -98,6 +103,11 @@ impl ReleasesProvider for GithubProvider {
         normalize_release(response)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.releases.create_release",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn create_release(
         &self,
         repository: &Repository,
@@ -121,6 +131,11 @@ impl ReleasesProvider for GithubProvider {
         normalize_release(response)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.releases.upload_asset",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn upload_asset(
         &self,
         repository: &Repository,
@@ -167,6 +182,11 @@ impl ReleasesProvider for GithubProvider {
         normalize_asset(response)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.releases.download_asset",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn download_asset(
         &self,
         repository: &Repository,

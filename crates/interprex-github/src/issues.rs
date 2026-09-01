@@ -75,6 +75,11 @@ fn normalize_issue(value: GithubIssue) -> Result<Issue> {
 
 #[async_trait]
 impl IssuesProvider for GithubProvider {
+    #[tracing::instrument(
+        name = "interprex.provider.issues.issue",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn issue(&self, repository: &Repository, number: IssueNumber) -> Result<Issue> {
         let response: GithubIssue = self
             .user()?
@@ -93,6 +98,11 @@ impl IssuesProvider for GithubProvider {
         normalize_issue(response)
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.issues.labels",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn labels(&self, repository: &Repository) -> Result<Vec<Label>> {
         let page: Page<GithubLabel> = self
             .user()?
@@ -110,6 +120,11 @@ impl IssuesProvider for GithubProvider {
         Ok(response.into_iter().map(Into::into).collect())
     }
 
+    #[tracing::instrument(
+        name = "interprex.provider.issues.upsert_label",
+        skip_all,
+        fields(interprex.provider.name = "github")
+    )]
     async fn upsert_label(&self, repository: &Repository, label: &Label) -> Result<Label> {
         let existing = self.labels(repository).await?;
         let response: GithubLabel = if existing.iter().any(|existing| existing.name == label.name) {
