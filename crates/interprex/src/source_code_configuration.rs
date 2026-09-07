@@ -316,6 +316,8 @@ pub trait AppliedSourceRequirementsProvider: Send + Sync {
     /// Returns [`crate::ProviderError::InvalidInput`] for an empty branch or
     /// revision, [`crate::ProviderError::NotFound`] when the repository,
     /// branch, or either revision is absent,
+    /// [`crate::ProviderError::BranchRevisionChanged`] when the target branch
+    /// has moved from the requested base revision,
     /// [`crate::ProviderError::MissingCredential`] when the operation lacks
     /// credentials, [`crate::ProviderError::Unrepresentable`] when an
     /// applicable native requirement or answer cannot be represented,

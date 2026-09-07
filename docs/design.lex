@@ -60,7 +60,7 @@ Design
 
     A review carries only the reviewed head commit because GitHub does not retain the historical base commit for each review. Interprex does not pair a historical head with the current base and present it as a historical range.
 
-    `ChangeRequest::mergeability` carries the platform's answer for the current source and target: mergeable, conflicted, or unknown. GitHub starts computing the merge when a read arrives and reports `null` until that computation finishes, so unknown is an observed platform state rather than a read that failed or a value Interprex chose in place of one.
+    `ChangeRequest::mergeability` carries the platform's answer for the current source and target: mergeable, conflicted, or unknown. Unknown means no merge answer is available for the observed source and target. GitHub may still be computing the merge, or its answer may describe an older target revision that Interprex replaced with the current branch tip. A transport failure remains an error.
 
     GitHub's `mergeable_state` string is absent from the model because it combines mergeability, checks, approvals, branch freshness and the draft flag into one provider verdict. Interprex returns those facts separately instead of claiming they reconstruct that verdict.
 

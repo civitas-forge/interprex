@@ -50,14 +50,15 @@ Releases
 
 ## 3. Source Configuration and Code Review Data
 
-A change request carries its current base and head commits, the branch it
+A change request carries its observed base and head commits, the branch it
 targets, the head it proposes and every review record returned by the provider.
 Branches are named rather than left to be inferred from a commit sha, because
 branches share tips and advance between observations. The head is absent when
 the provider no longer identifies the repository holding the branch, as GitHub
 reports once a fork is deleted. Its state is open, closed without merging, or
-merged with the merge time the platform recorded. Reviews remain distinct when
-the same actor reviews the same revision more than once.
+merged with the merge time the platform recorded. Open requests use the current
+target branch; closed and merged requests retain their historical base. Reviews
+remain distinct when the same actor reviews the same revision more than once.
 
 A caller working from a git checkout reads the numbers of the open change
 requests that propose the branch it is on, then reads the observation for
@@ -74,10 +75,10 @@ git would refuse to create is refused here rather than sent as a query no change
 request could answer.
 
 A change request also carries its mergeability: mergeable, conflicted, or
-unknown while the platform has not finished computing the merge. Mergeability
-reports that merge computation alone. Required checks, approvals and branch
-rules are separate facts, so a mergeable change request can still be one the
-platform refuses to merge.
+unknown when no answer is available for the observed source and target.
+Mergeability reports that merge computation alone. Required checks, approvals
+and branch rules are separate facts, so a mergeable change request can still be
+one the platform refuses to merge.
 
 `SourceCodeConfigurationProvider` reads and applies complete provider-native
 rulesets. The GitHub provider follows every page of repository ruleset summaries
@@ -235,6 +236,12 @@ root to `from_project` to read `.interprex.toml`. The file form uses
 app's `APP_ID`, `INSTALLATION_ID` and `PRIVATE_KEY`. Missing credentials are
 reported when an operation first needs them, and credential values do not appear
 in debug output or errors.
+
+For private repositories, open change-request observations require the user
+credential to have both Pull requests read and Contents read permissions.
+Interprex reads the current target through GitHub's
+[Get a branch endpoint](https://docs.github.com/en/rest/branches/branches#get-a-branch),
+which requires Contents read. A denied branch read fails the observation.
 
 `ProviderSelections::from_lookup` reads independent provider names from
 `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`,

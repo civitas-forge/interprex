@@ -122,6 +122,13 @@ impl CodeReviewsProvider for GithubProvider {
             Vec::new()
         };
         let unanchored_comments = self.github_unanchored_comments(repository, number).await?;
+        let mut pull_request = pull_request;
+        if pull_request.is_open() {
+            let target = self
+                .target_branch_revision(repository, &pull_request.base.branch)
+                .await?;
+            pull_request.observe_target(target);
+        }
         normalize_change_request(
             pull_request,
             reviews,

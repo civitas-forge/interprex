@@ -1228,7 +1228,43 @@ async fn applied_requirements_reject_invalid_or_changed_exact_scope() {
                 },
             )
             .await,
-        Err(ProviderError::NotFound { .. })
+        Err(ProviderError::BranchRevisionChanged { .. })
     ));
     assert_eq!(requests.await.expect("captured requests").len(), 6);
+}
+
+#[tokio::test]
+async fn a_moved_target_is_distinct_from_a_missing_branch() {
+    let moved = "cccccccccccccccccccccccccccccccccccccccc";
+    let range = CommitRange {
+        base_sha: BASE_SHA.to_owned(),
+        head_sha: HEAD_SHA.to_owned(),
+    };
+    let (uri, requests) =
+        scripted_responses(vec![ScriptedResponse::json(branch("main", moved))]).await;
+    let error = provider(uri)
+        .applied_requirements(&repository(), "main", &range)
+        .await
+        .expect_err("moved target");
+    assert_eq!(
+        error,
+        ProviderError::BranchRevisionChanged {
+            repository: Box::new(repository()),
+            branch: "main".to_owned(),
+            expected_sha: BASE_SHA.to_owned(),
+            observed_sha: moved.to_owned(),
+        }
+    );
+    assert_eq!(requests.await.expect("requests").len(), 1);
+    let (uri, _) = scripted_responses(vec![ScriptedResponse::status(
+        "404 Not Found",
+        r#"{"message":"Not Found"}"#,
+    )])
+    .await;
+    assert!(matches!(
+        provider(uri)
+            .applied_requirements(&repository(), "main", &range)
+            .await,
+        Err(ProviderError::NotFound { .. })
+    ));
 }

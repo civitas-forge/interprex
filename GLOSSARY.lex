@@ -25,8 +25,8 @@ Glossary
         an observed change request reports, so the two agree.
     mergeability:
         Whether the platform found a conflict between a change request's source
-        and its target: mergeable, conflicted, or unknown while the platform
-        has not finished computing the merge. It reports that conflict
+        and its target: mergeable, conflicted, or unknown when no answer is
+        available for the observed revisions. It reports that conflict
         computation alone. A mergeable change request can still be one the
         platform refuses to merge over required checks, approvals or branch
         rules.

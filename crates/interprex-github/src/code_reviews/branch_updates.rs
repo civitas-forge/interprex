@@ -52,7 +52,13 @@ impl BranchUpdatesProvider for GithubProvider {
         repository: &Repository,
         number: ChangeRequestNumber,
     ) -> Result<BranchUpdateObservation> {
-        let pull_request = self.github_pull_request(repository, number).await?;
+        let mut pull_request = self.github_pull_request(repository, number).await?;
+        if pull_request.is_open() {
+            let target = self
+                .target_branch_revision(repository, &pull_request.base.branch)
+                .await?;
+            pull_request.observe_target(target);
+        }
         let comparison: GithubComparison = self
             .user()?
             .get(

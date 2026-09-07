@@ -40,6 +40,19 @@ pub(super) struct GithubPullRequest {
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl GithubPullRequest {
+    pub(super) fn observe_target(&mut self, revision: String) {
+        if self.base.sha != revision {
+            self.mergeable = None;
+            self.base.sha = revision;
+        }
+    }
+
+    pub(super) fn is_open(&self) -> bool {
+        self.state == "open" && !self.merged
+    }
+}
+
 #[derive(Deserialize)]
 pub(super) struct GitRef {
     /// The branch name, which GitHub returns unqualified.
