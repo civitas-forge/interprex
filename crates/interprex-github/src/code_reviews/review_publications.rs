@@ -170,7 +170,8 @@ impl GithubProvider {
             });
         }
         if let Some(submission) = expected_submission
-            && (publication.review.commit_id != submission.revision().head_sha
+            && ((publication.review.state == "PENDING"
+                && publication.review.commit_id != submission.revision().head_sha)
                 || publication.record.disposition != submission.disposition())
         {
             return Err(reconciliation_error(

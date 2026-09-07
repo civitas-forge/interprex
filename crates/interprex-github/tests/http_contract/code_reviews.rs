@@ -719,6 +719,37 @@ async fn pending_recovery_on_a_later_page_submits_the_retained_disposition() {
 }
 
 #[tokio::test]
+async fn a_submitted_publication_can_be_retried_after_its_native_head_changes() {
+    let submission = review_submission(ReviewSubmissionDisposition::Approved);
+    for (state, submitted_at) in [("APPROVED", Some(SUBMITTED_AT)), ("PENDING", None)] {
+        let mut existing = github_review(&publication_body(&submission), state, submitted_at);
+        existing["commit_id"] = serde_json::json!("cccccccccccccccccccccccccccccccccccccccc");
+        let (uri, requests) = scripted_responses(vec![
+            installation_token(),
+            ScriptedResponse::json(format!("[{existing}]")),
+        ])
+        .await;
+        let result = app_provider(uri, 4111233)
+            .publish_review(
+                &repository(),
+                ChangeRequestNumber::new(5).expect("number"),
+                &reviewer_application(),
+                &submission,
+            )
+            .await;
+        if state == "APPROVED" {
+            assert_eq!(
+                result.expect("existing publication").as_str(),
+                "PRR_publication"
+            );
+        } else {
+            assert!(matches!(result, Err(ProviderError::External { .. })));
+        }
+        assert_eq!(requests.await.expect("requests").len(), 2);
+    }
+}
+
+#[tokio::test]
 async fn same_reviewer_key_with_another_digest_is_invalid_without_a_write() {
     let submission = review_submission(ReviewSubmissionDisposition::Commented);
     let body = publication_body_with(
@@ -727,7 +758,8 @@ async fn same_reviewer_key_with_another_digest_is_invalid_without_a_write() {
         &format!("sha256:{}", "0".repeat(64)),
         submission.disposition(),
     );
-    let existing = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    let mut existing = github_review(&body, "COMMENTED", Some("2026-08-29T10:00:00Z"));
+    existing["commit_id"] = serde_json::json!("cccccccccccccccccccccccccccccccccccccccc");
     let (uri, requests) = scripted_responses(vec![
         installation_token(),
         ScriptedResponse::json(format!("[{existing}]")),

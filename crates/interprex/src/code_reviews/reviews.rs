@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{ProviderApp, ReviewActor, ReviewFinding, ReviewId};
 
-/// The exact code revision attached to a review.
+/// The code revision the provider currently attaches to a review.
 ///
-/// Some providers, including GitHub, retain the reviewed head commit but not
-/// the base commit as it existed when a historical review was submitted.
+/// Providers can retarget submitted reviews after branch updates, so this is
+/// not immutable evidence of the revision originally reviewed. GitHub also
+/// omits the base commit as it existed when the review was submitted.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ReviewedRevision {
     pub head_sha: String,

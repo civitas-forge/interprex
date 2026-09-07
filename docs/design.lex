@@ -58,7 +58,7 @@ Design
 
     The change request carries its current base and head commits, names the branch it targets and carries the head it proposes. Branches are named because a sha cannot identify one: branches share tips and advance between observations. Two open change requests proposing the same head differ by the branch each targets, so the choice `open_change_requests` leaves to the caller is one the observation can answer, and a change request read by number reports the same head that would have found it. A head is absent when the provider no longer identifies the repository holding the branch, as GitHub reports once a fork is deleted; a branch name without its repository is not a head, so it is not paired with the targeted repository instead.
 
-    A review carries only the reviewed head commit because GitHub does not retain the historical base commit for each review. Interprex does not pair a historical head with the current base and present it as a historical range.
+    A review carries the head commit the provider currently attaches to it. GitHub can retarget a submitted review after a branch update and does not retain the historical base commit. Interprex reports those provider facts without presenting them as an immutable reviewed range.
 
     `ChangeRequest::mergeability` carries the platform's answer for the current source and target: mergeable, conflicted, or unknown. Unknown means no merge answer is available for the observed source and target. GitHub may still be computing the merge, or its answer may describe an older target revision that Interprex replaced with the current branch tip. A transport failure remains an error.
 

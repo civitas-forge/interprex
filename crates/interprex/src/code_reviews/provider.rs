@@ -301,7 +301,11 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// in one provider request. A hidden record written with the draft retains
     /// the publication key, a digest of the complete submission, and the
     /// intended final disposition; the provider preserves that record when it
-    /// submits the review. The caller neither creates an empty draft nor adds
+    /// submits the review. A submitted publication is recognized by its
+    /// reviewer identity, key, full-submission digest and intended disposition
+    /// even if the provider later retargets its attached head. A pending review
+    /// still requires the requested head.
+    /// The caller neither creates an empty draft nor adds
     /// individual findings to one.
     ///
     /// Two concurrent calls using a previously unseen key need not collapse

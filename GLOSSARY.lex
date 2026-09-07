@@ -37,7 +37,7 @@ Glossary
         the checks on a commit and published check results.
     review:
         One provider review record acting on a change request: its author,
-        the provider application that produced it when known, reviewed head
+        the provider application that produced it when known, the currently attached head
         commit, summary and findings. Its state distinguishes a draft from a
         submitted review.
     finding:
