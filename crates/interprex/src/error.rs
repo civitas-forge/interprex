@@ -52,6 +52,13 @@ pub enum ProviderError {
     },
     #[error("{entity} was not found")]
     NotFound { entity: String },
+    #[error("branch {branch} in {repository} moved from {expected_sha} to {observed_sha}")]
+    BranchRevisionChanged {
+        repository: crate::Repository,
+        branch: String,
+        expected_sha: String,
+        observed_sha: String,
+    },
     /// A credential the operation needs is absent from the configuration the
     /// provider was built from. `entry` names the declaration that would
     /// supply it, so the message a stuck caller reads points at the place to

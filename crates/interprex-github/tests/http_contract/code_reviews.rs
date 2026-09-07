@@ -22,6 +22,8 @@ use super::http_fixture::{
 };
 
 const NOT_FOUND: &str = r#"{"message":"Not Found","documentation_url":"https://docs.github.test"}"#;
+const CURRENT_BRANCH: &str =
+    r#"{"name":"main","commit":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}"#;
 const SUBMITTED_AT: &str = "2026-08-29T10:00:00Z";
 
 fn compare_status(status: &str) -> ScriptedResponse {
@@ -38,6 +40,7 @@ async fn branch_update_observation_reports_freshness_for_exact_commits() {
     ] {
         let (uri, requests) = scripted_responses(vec![
             ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+            ScriptedResponse::json(CURRENT_BRANCH),
             compare_status(status),
         ])
         .await;
@@ -57,10 +60,10 @@ async fn branch_update_observation_reports_freshness_for_exact_commits() {
             "GET /repos/civitas-forge/interprex-sandbox/pulls/5 ",
         );
         assert_user_request(
-            &requests[1],
+            &requests[2],
             "GET /repos/civitas-forge/interprex-sandbox/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
         );
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 3);
     }
 }
 
@@ -68,6 +71,7 @@ async fn branch_update_observation_reports_freshness_for_exact_commits() {
 async fn branch_update_observation_rejects_an_unknown_comparison() {
     let (uri, _) = scripted_responses(vec![
         ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json(CURRENT_BRANCH),
         compare_status("sideways"),
     ])
     .await;
@@ -1712,6 +1716,7 @@ async fn published_review_round_trips_through_change_request_observation() {
         ScriptedResponse::json(threads),
         ScriptedResponse::json(no_requests),
         ScriptedResponse::json("[]"),
+        ScriptedResponse::json(CURRENT_BRANCH),
     ])
     .await;
     let provider = app_provider(uri, 4111233);
@@ -1772,7 +1777,7 @@ async fn published_review_round_trips_through_change_request_observation() {
                 && summary.contains("<!-- interprex:review-publication"))
     );
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 12);
+    assert_eq!(requests.len(), 13);
     for request in &requests[7..] {
         assert!(
             request
@@ -2301,6 +2306,7 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
         include_str!("../fixtures/review_requests_response.json").to_owned(),
         include_str!("../fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("../fixtures/unanchored_comments.json").to_owned(),
+        CURRENT_BRANCH.to_owned(),
         r#"{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"PRRC_resolution"}}}}"#
             .to_owned(),
         r#"{"data":{"resolveReviewThread":{"thread":{"id":"PRRT_kwDOSCkZoc6LuYFt","isResolved":true}}}}"#
@@ -2325,10 +2331,10 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
         .expect("resolve finding");
 
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 8);
-    assert_user_request(&requests[6], "POST /graphql ");
+    assert_eq!(requests.len(), 9);
     assert_user_request(&requests[7], "POST /graphql ");
-    let (_, reply_body) = requests[6]
+    assert_user_request(&requests[8], "POST /graphql ");
+    let (_, reply_body) = requests[7]
         .split_once("\r\n\r\n")
         .expect("reply request body");
     let reply_body: serde_json::Value =
@@ -2349,7 +2355,7 @@ async fn code_review_domain_records_a_finding_resolution_before_resolving_the_th
     assert!(posted.contains("\"resolution_reason\":\"INVALID\""));
     assert!(posted.contains("\"addressing_severity\":\"minor\""));
 
-    let (_, resolve_body) = requests[7]
+    let (_, resolve_body) = requests[8]
         .split_once("\r\n\r\n")
         .expect("resolve request body");
     let resolve_body: serde_json::Value =
@@ -2370,6 +2376,7 @@ async fn code_review_domain_reads_one_complete_observation() {
         include_str!("../fixtures/review_request_timeline_first_page.json"),
         include_str!("../fixtures/review_request_timeline_second_page.json"),
         include_str!("../fixtures/unanchored_comments.json"),
+        CURRENT_BRANCH,
     ])
     .await;
     let change_request = provider(uri)
@@ -2519,6 +2526,7 @@ async fn code_review_domain_reads_no_timeline_without_an_outstanding_request() {
         include_str!("../fixtures/review_threads_response.json").to_owned(),
         serde_json::to_string(&review_requests).expect("review request response"),
         include_str!("../fixtures/unanchored_comments.json").to_owned(),
+        CURRENT_BRANCH.to_owned(),
     ])
     .await;
 
@@ -2529,7 +2537,7 @@ async fn code_review_domain_reads_no_timeline_without_an_outstanding_request() {
 
     assert!(change_request.outstanding_requests.is_empty());
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 6);
     assert_user_request(
         &requests[4],
         "GET /repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100 ",
@@ -2582,6 +2590,7 @@ async fn change_request_comments_keep_github_order_across_rest_pages() {
             "link: <{base}/repos/civitas-forge/interprex-sandbox/issues/5/comments?per_page=100&page=2>; rel=\"next\"\r\n",
         ),
         (second_page, ""),
+        (CURRENT_BRANCH.to_owned(), ""),
     ])
     .await;
 
@@ -2624,6 +2633,7 @@ async fn code_review_domain_preserves_a_standalone_thread() {
         include_str!("../fixtures/review_requests_response.json").to_owned(),
         include_str!("../fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("../fixtures/unanchored_comments.json").to_owned(),
+        CURRENT_BRANCH.to_owned(),
     ])
     .await;
 
@@ -2662,6 +2672,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
         include_str!("../fixtures/review_requests_response.json").to_owned(),
         include_str!("../fixtures/review_request_timeline_second_page.json").to_owned(),
         include_str!("../fixtures/unanchored_comments.json").to_owned(),
+        CURRENT_BRANCH.to_owned(),
     ])
     .await;
 
@@ -2673,7 +2684,7 @@ async fn code_review_domain_recovers_when_reviews_temporarily_lag_threads() {
     assert_eq!(change_request.reviews.len(), 11);
     assert_eq!(change_request.reviews[0].findings.len(), 1);
     let requests = requests.await.expect("captured requests");
-    assert_eq!(requests.len(), 8);
+    assert_eq!(requests.len(), 9);
     assert_user_request(
         &requests[3],
         "GET /repos/civitas-forge/interprex-sandbox/pulls/5/reviews?per_page=100 ",
@@ -2789,5 +2800,74 @@ async fn code_review_domain_stops_reading_check_runs_at_the_reported_total() {
             .expect("captured requests")
             .len(),
         1
+    );
+}
+
+#[tokio::test]
+async fn moved_target_replaces_the_pr_base_without_changing_review_revisions() {
+    let moved = "cccccccccccccccccccccccccccccccccccccccc";
+    let (uri, requests) = json_responses(vec![
+        include_str!("../fixtures/pull_request.json").to_owned(),
+        include_str!("../fixtures/code_review_reviews.json").to_owned(),
+        include_str!("../fixtures/review_threads_response.json").to_owned(),
+        include_str!("../fixtures/review_requests_response.json").to_owned(),
+        include_str!("../fixtures/review_request_timeline_second_page.json").to_owned(),
+        include_str!("../fixtures/unanchored_comments.json").to_owned(),
+        CURRENT_BRANCH.replace("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", moved),
+    ])
+    .await;
+    let observed = provider(uri)
+        .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("moved target");
+    assert_eq!(observed.commit_range.base_sha, moved);
+    assert_eq!(observed.mergeability, Mergeability::Unknown);
+    assert_eq!(
+        observed.commit_range.head_sha,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    let originals: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("../fixtures/code_review_reviews.json"))
+            .expect("reviews");
+    for review in &observed.reviews {
+        let original = originals
+            .iter()
+            .find(|value| value["node_id"] == review.id.as_str())
+            .expect("original review");
+        assert_eq!(
+            review.revision.head_sha,
+            original["commit_id"].as_str().expect("commit")
+        );
+    }
+    let requests = requests.await.expect("requests");
+    assert_user_request(
+        requests.last().expect("target read"),
+        "GET /repos/civitas-forge/interprex-sandbox/branches/main ",
+    );
+}
+
+#[tokio::test]
+async fn branch_freshness_compares_the_current_target_instead_of_the_pr_base() {
+    let moved = "cccccccccccccccccccccccccccccccccccccccc";
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json(
+            CURRENT_BRANCH.replace("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", moved),
+        ),
+        compare_status("diverged"),
+    ])
+    .await;
+    let observed = provider(uri)
+        .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+        .await
+        .expect("freshness");
+    assert_eq!(observed.commit_range.base_sha, moved);
+    assert_eq!(observed.freshness, BranchFreshness::Behind);
+    let requests = requests.await.expect("requests");
+    assert_user_request(
+        &requests[2],
+        &format!(
+            "GET /repos/civitas-forge/interprex-sandbox/compare/{moved}...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+        ),
     );
 }

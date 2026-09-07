@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.0.0
+
+- Open GitHub change requests and branch-freshness observations read the target
+  branch directly, so a stale base SHA in the pull-request response does not
+  break review loops after another pull request merges. Historical review
+  revisions remain unchanged. A mergeability answer for the old base becomes
+  unknown until GitHub reports the current base.
+- Breaking: `ProviderError::BranchRevisionChanged` distinguishes a moved target
+  from a missing branch and includes the repository, branch, expected SHA and
+  observed SHA. Consumers with exhaustive error matches must handle it.
+
 ## Unreleased
 
 ### Credential errors

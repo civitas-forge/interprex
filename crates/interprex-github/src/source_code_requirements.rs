@@ -228,6 +228,23 @@ impl GithubProvider {
         branch: &str,
         expected_sha: &str,
     ) -> Result<()> {
+        let observed_sha = self.target_branch_revision(repository, branch).await?;
+        if observed_sha != expected_sha {
+            return Err(ProviderError::BranchRevisionChanged {
+                repository: repository.clone(),
+                branch: branch.to_owned(),
+                expected_sha: expected_sha.to_owned(),
+                observed_sha,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn target_branch_revision(
+        &self,
+        repository: &Repository,
+        branch: &str,
+    ) -> Result<String> {
         let segment = utf8_percent_encode(branch, NON_ALPHANUMERIC);
         let observed: GithubBranch = self
             .user()?
@@ -243,12 +260,22 @@ impl GithubProvider {
                     error,
                 )
             })?;
-        if observed.name != branch || observed.commit.sha != expected_sha {
-            return Err(ProviderError::NotFound {
-                entity: format!("branch {branch} at revision {expected_sha} in {repository}"),
+        if observed.name != branch
+            || !(observed.commit.sha.len() == 40
+                && observed
+                    .commit
+                    .sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(ProviderError::Unrepresentable {
+                provider: "github",
+                fact: format!(
+                    "target branch response does not identify {branch} with a full commit SHA"
+                ),
             });
         }
-        Ok(())
+        Ok(observed.commit.sha)
     }
 
     async fn applied_branch_rules(
