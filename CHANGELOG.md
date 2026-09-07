@@ -1,5 +1,7 @@
 # Changelog
 
+## Unreleased
+
 ## 7.0.0
 
 - Breaking: open change-request observations on private GitHub repositories
@@ -9,16 +11,17 @@
   source and target, including an answer discarded because it described an older
   target revision.
 
-- Open GitHub change requests and branch-freshness observations read the target
-  branch directly, so a stale base SHA in the pull-request response does not
-  break review loops after another pull request merges. Historical review
+- Open GitHub change requests and their branch-freshness observations read the
+  target branch directly, so a stale base SHA in the pull-request response does
+  not break review loops after another pull request merges. Historical review
   revisions remain unchanged. A mergeability answer for the old base becomes
-  unknown until GitHub reports the current base.
+  unknown until GitHub reports the current base. Closed and merged requests
+  retain their historical base for both observations.
 - Breaking: `ProviderError::BranchRevisionChanged` distinguishes a moved target
   from a missing branch and includes the repository, branch, expected SHA and
   observed SHA. Consumers with exhaustive error matches must handle it.
 
-## Unreleased
+## 6.1.0
 
 ### Credential errors
 

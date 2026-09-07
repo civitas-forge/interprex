@@ -17,10 +17,12 @@ use crate::{Repository, Result};
 /// both.
 #[async_trait]
 pub trait BranchUpdatesProvider: Send + Sync {
-    /// Reads current branch freshness for the change request's exact revisions.
+    /// Reads branch freshness for the change request's observed revisions.
     ///
     /// The returned revisions are the exact endpoints used for the freshness
-    /// result. The applied source configuration and mergeability are separate
+    /// result. Open requests use the current target branch; closed and merged
+    /// requests retain their historical base.
+    /// The applied source configuration and mergeability are separate
     /// facts. This operation does not decide whether an update should occur.
     ///
     /// # Errors
