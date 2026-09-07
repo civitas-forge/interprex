@@ -2,6 +2,13 @@
 
 ## 7.0.0
 
+- Breaking: open change-request observations on private GitHub repositories
+  require Contents read permission in addition to Pull requests read, because
+  they now read the current target branch directly.
+- `Mergeability::Unknown` now means no answer is available for the observed
+  source and target, including an answer discarded because it described an older
+  target revision.
+
 - Open GitHub change requests and branch-freshness observations read the target
   branch directly, so a stale base SHA in the pull-request response does not
   break review loops after another pull request merges. Historical review

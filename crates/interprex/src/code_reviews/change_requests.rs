@@ -41,9 +41,9 @@ pub enum Mergeability {
     Mergeable,
     /// The platform reports a conflict that a person must resolve.
     Conflicted,
-    /// The platform published no answer. GitHub computes the merge after the
-    /// read arrives and reports nothing until that finishes, so this is an
-    /// observed platform state rather than a failure to read the fact.
+    /// No merge answer is available for the observed source and target.
+    /// The platform may still be computing it, or its answer may describe an
+    /// older target revision and therefore cannot be used for this range.
     Unknown,
 }
 
@@ -59,8 +59,8 @@ pub struct ChangeRequest {
     pub state: ChangeRequestState,
     pub draft: bool,
     pub commit_range: CommitRange,
-    /// The branch this change request targets, whose tip at observation time
-    /// is `commit_range.base_sha`.
+    /// The branch this change request targets. For an open request its observed
+    /// tip is `commit_range.base_sha`; closed requests retain their historical base.
     ///
     /// The branch is named because a sha cannot identify it: branches share
     /// tips and advance between observations. Two open change requests

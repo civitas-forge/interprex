@@ -80,6 +80,8 @@ Interprex
 
     Construct the GitHub provider directly with `from_config`, or pass a project root to `from_project` to read `.interprex.toml`. The file form uses `[provider.github]` for `GH_TOKEN` and `[provider.github.apps.<name>]` for an app's `APP_ID`, `INSTALLATION_ID` and `PRIVATE_KEY`. Missing credentials are reported when an operation first needs them, and credential values do not appear in debug output or errors.
 
+    For private repositories, open change-request observations require the user credential to have both Pull requests read and Contents read permissions. Interprex reads the current target through GitHub's Get a branch endpoint [https://docs.github.com/en/rest/branches/branches#get-a-branch], which requires Contents read. A denied branch read fails the observation.
+
     `ProviderSelections::from_lookup` reads independent provider names from `INTERPREX_CODE_HOSTING_PROVIDER`, `INTERPREX_TRACKER_PROVIDER`, `INTERPREX_CODE_REVIEWS_PROVIDER`, `INTERPREX_JOBS_PROVIDER` and `INTERPREX_RELEASES_PROVIDER`. An unset or blank value selects `github`.
 
 6. Documentation

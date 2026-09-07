@@ -2906,3 +2906,37 @@ async fn closed_request_freshness_uses_its_retained_base_without_reading_the_bra
         );
     }
 }
+
+#[tokio::test]
+async fn an_open_request_refuses_a_target_read_denied_by_contents_permissions() {
+    let (uri, requests) = scripted_responses(vec![
+        ScriptedResponse::json(include_str!("../fixtures/pull_request.json")),
+        ScriptedResponse::json(include_str!("../fixtures/code_review_reviews.json")),
+        ScriptedResponse::json(include_str!("../fixtures/review_threads_response.json")),
+        ScriptedResponse::json(include_str!("../fixtures/review_requests_response.json")),
+        ScriptedResponse::json(include_str!(
+            "../fixtures/review_request_timeline_second_page.json"
+        )),
+        ScriptedResponse::json(include_str!("../fixtures/unanchored_comments.json")),
+        ScriptedResponse::status(
+            "403 Forbidden",
+            r#"{"message":"Resource not accessible by personal access token"}"#,
+        ),
+    ])
+    .await;
+    assert!(matches!(
+        provider(uri)
+            .change_request(&repository(), ChangeRequestNumber::new(5).expect("number"))
+            .await,
+        Err(ProviderError::External {
+            operation: "read target branch revision",
+            ..
+        })
+    ));
+    let requests = requests.await.expect("requests");
+    assert_eq!(requests.len(), 7);
+    assert_user_request(
+        &requests[6],
+        "GET /repos/civitas-forge/interprex-sandbox/branches/main ",
+    );
+}
