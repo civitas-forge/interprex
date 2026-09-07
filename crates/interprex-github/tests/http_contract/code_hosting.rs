@@ -1249,7 +1249,7 @@ async fn a_moved_target_is_distinct_from_a_missing_branch() {
     assert_eq!(
         error,
         ProviderError::BranchRevisionChanged {
-            repository: repository(),
+            repository: Box::new(repository()),
             branch: "main".to_owned(),
             expected_sha: BASE_SHA.to_owned(),
             observed_sha: moved.to_owned(),

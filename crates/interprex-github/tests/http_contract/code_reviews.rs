@@ -2871,3 +2871,38 @@ async fn branch_freshness_compares_the_current_target_instead_of_the_pr_base() {
         ),
     );
 }
+
+#[tokio::test]
+async fn closed_request_freshness_uses_its_retained_base_without_reading_the_branch() {
+    for merged in [false, true] {
+        let mut pr: serde_json::Value =
+            serde_json::from_str(include_str!("../fixtures/pull_request.json"))
+                .expect("pull request");
+        pr["state"] = serde_json::json!("closed");
+        pr["merged"] = serde_json::json!(merged);
+        pr["merged_at"] = if merged {
+            serde_json::json!(SUBMITTED_AT)
+        } else {
+            serde_json::Value::Null
+        };
+        let (uri, requests) = scripted_responses(vec![
+            ScriptedResponse::json(pr.to_string()),
+            compare_status("ahead"),
+        ])
+        .await;
+        let observed = provider(uri)
+            .branch_update(&repository(), ChangeRequestNumber::new(5).expect("number"))
+            .await
+            .expect("retained base");
+        assert_eq!(
+            observed.commit_range.base_sha,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        let requests = requests.await.expect("requests");
+        assert_eq!(requests.len(), 2);
+        assert_user_request(
+            &requests[1],
+            "GET /repos/civitas-forge/interprex-sandbox/compare/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",
+        );
+    }
+}

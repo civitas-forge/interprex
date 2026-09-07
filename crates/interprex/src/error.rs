@@ -54,7 +54,7 @@ pub enum ProviderError {
     NotFound { entity: String },
     #[error("branch {branch} in {repository} moved from {expected_sha} to {observed_sha}")]
     BranchRevisionChanged {
-        repository: crate::Repository,
+        repository: Box<crate::Repository>,
         branch: String,
         expected_sha: String,
         observed_sha: String,

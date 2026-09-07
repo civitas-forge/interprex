@@ -231,7 +231,7 @@ impl GithubProvider {
         let observed_sha = self.target_branch_revision(repository, branch).await?;
         if observed_sha != expected_sha {
             return Err(ProviderError::BranchRevisionChanged {
-                repository: repository.clone(),
+                repository: Box::new(repository.clone()),
                 branch: branch.to_owned(),
                 expected_sha: expected_sha.to_owned(),
                 observed_sha,
