@@ -170,7 +170,8 @@ impl GithubProvider {
             });
         }
         if let Some(submission) = expected_submission
-            && (publication.review.commit_id != submission.revision().head_sha
+            && ((publication.review.state == "PENDING"
+                && publication.review.commit_id != submission.revision().head_sha)
                 || publication.record.disposition != submission.disposition())
         {
             return Err(reconciliation_error(
@@ -799,15 +800,20 @@ fn validate_review_record(review: &GithubReview, record: &PublicationRecord) -> 
             "publication review has an invalid identifier or revision",
         ));
     }
+    let matching_submitted_state = review.state == github_state(record.disposition)
+        || (review.state == "DISMISSED"
+            && matches!(
+                record.disposition,
+                ReviewSubmissionDisposition::Approved
+                    | ReviewSubmissionDisposition::ChangesRequested
+            ));
     match review.state.as_str() {
         "PENDING" if review.submitted_at.is_none() => Ok(()),
         "PENDING" => Err(reconciliation_error(
             "pending publication review has a submission time",
         )),
-        state if state == github_state(record.disposition) && review.submitted_at.is_some() => {
-            Ok(())
-        }
-        state if state == github_state(record.disposition) => Err(reconciliation_error(
+        _ if matching_submitted_state && review.submitted_at.is_some() => Ok(()),
+        _ if matching_submitted_state => Err(reconciliation_error(
             "submitted publication review has no submission time",
         )),
         state => Err(reconciliation_error(format!(

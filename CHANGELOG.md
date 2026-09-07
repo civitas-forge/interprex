@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 7.0.1
+
+- Repeating a submitted GitHub review publication recognizes its reviewer,
+  publication key, full-submission digest and disposition after GitHub retargets
+  the attached head or dismisses its decision. A retry leaves a dismissed
+  decision withdrawn. New and pending publications still require the requested
+  revision.
+- Corrected the review-revision documentation: the observed attached head can
+  change after submission and does not establish an immutable reviewed range.
+
 ## 7.0.0
 
 - Breaking: open change-request observations on private GitHub repositories

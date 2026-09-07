@@ -115,9 +115,11 @@ combines requirement and freshness and decides whether and when to request the
 update.
 
 Each review records its author, the provider application that produced it when
-known, the reviewed head commit, its summary and its inline findings. Its state
-distinguishes a draft from a submitted review; a submitted review also carries
-its disposition and submission time.
+known, the currently attached head commit, its summary and its inline findings.
+The provider can retarget a submitted review after a branch update, so the
+attached head is not immutable reviewed provenance. Its state distinguishes a
+draft from a submitted review; a submitted review also carries its disposition
+and submission time.
 
 `ReviewPublishingProvider` publishes one complete review against the revision
 the caller supplies. A submission carries a caller-assigned publication key,

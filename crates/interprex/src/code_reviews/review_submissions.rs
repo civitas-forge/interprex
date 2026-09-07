@@ -214,6 +214,7 @@ impl ReviewSubmission {
         &self.publication_key
     }
 
+    /// The exact commit the caller reviewed and requests publication against.
     #[must_use]
     pub const fn revision(&self) -> &ReviewedRevision {
         &self.revision

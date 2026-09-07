@@ -39,7 +39,7 @@ Interprex
 
     `BranchUpdatesProvider` reports whether the observed head contains the observed target-branch tip. Its observation retains the exact base and head revisions used for that answer. An update applies only to that observed head; if the head changes first, the provider reports a stale observation. The application combines requirement and freshness and decides whether and when to request the update.
 
-    Each review records its author, the provider application that produced it when known, the reviewed head commit, its summary and its inline findings. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
+    Each review records its author, the provider application that produced it when known, the currently attached head commit, its summary and its inline findings. The provider can retarget a submitted review after a branch update, so the attached head is not immutable reviewed provenance. Its state distinguishes a draft from a submitted review; a submitted review also carries its disposition and submission time.
 
     `ReviewPublishingProvider` publishes one complete review against the revision the caller supplies. A submission carries a caller-assigned publication key, summary, final disposition and inline findings in caller order. The key identifies one publication within one repository, change request and reviewer identity. That identity is the provider application ID and bot actor ID, so renamed applications and bot logins still identify the same reviewer while a different reviewer may reuse the same key.
 

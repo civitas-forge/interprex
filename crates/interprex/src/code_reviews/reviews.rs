@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{ProviderApp, ReviewActor, ReviewFinding, ReviewId};
 
-/// The exact code revision attached to a review.
+/// A head commit associated with a review observation or submission.
 ///
-/// Some providers, including GitHub, retain the reviewed head commit but not
-/// the base commit as it existed when a historical review was submitted.
+/// The enclosing value determines whether this is an observed attachment or
+/// the exact revision requested for publication.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ReviewedRevision {
     pub head_sha: String,
@@ -81,6 +81,8 @@ pub struct Review {
     pub id: ReviewId,
     pub author: ReviewAuthor,
     pub via_app: Option<ProviderApp>,
+    /// The provider's current attachment, which can change after submission.
+    /// It does not establish the original reviewed head or historical base.
     pub revision: ReviewedRevision,
     pub state: ReviewState,
     pub summary: Option<String>,
