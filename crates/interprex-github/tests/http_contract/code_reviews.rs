@@ -721,7 +721,11 @@ async fn pending_recovery_on_a_later_page_submits_the_retained_disposition() {
 #[tokio::test]
 async fn a_submitted_publication_can_be_retried_after_its_native_head_changes() {
     let submission = review_submission(ReviewSubmissionDisposition::Approved);
-    for (state, submitted_at) in [("APPROVED", Some(SUBMITTED_AT)), ("PENDING", None)] {
+    for (state, submitted_at) in [
+        ("APPROVED", Some(SUBMITTED_AT)),
+        ("DISMISSED", Some(SUBMITTED_AT)),
+        ("PENDING", None),
+    ] {
         let mut existing = github_review(&publication_body(&submission), state, submitted_at);
         existing["commit_id"] = serde_json::json!("cccccccccccccccccccccccccccccccccccccccc");
         let (uri, requests) = scripted_responses(vec![
@@ -737,7 +741,7 @@ async fn a_submitted_publication_can_be_retried_after_its_native_head_changes() 
                 &submission,
             )
             .await;
-        if state == "APPROVED" {
+        if state != "PENDING" {
             assert_eq!(
                 result.expect("existing publication").as_str(),
                 "PRR_publication"

@@ -303,7 +303,8 @@ pub trait ReviewPublishingProvider: Send + Sync {
     /// intended final disposition; the provider preserves that record when it
     /// submits the review. A submitted publication is recognized by its
     /// reviewer identity, key, full-submission digest and intended disposition
-    /// even if the provider later retargets its attached head. A pending review
+    /// even if the provider later retargets its attached head. Dismissal changes
+    /// its current decision without changing its publication identity. A pending review
     /// still requires the requested head.
     /// The caller neither creates an empty draft nor adds
     /// individual findings to one.
