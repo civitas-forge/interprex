@@ -180,14 +180,17 @@ fn normalize_diff_side(value: GithubDiffSide) -> ReviewDiffSide {
     }
 }
 
+/// A range GitHub reports without an end line places nothing.
+///
+/// GitHub keeps a multi-line thread's `startLine` and drops its `line` once a
+/// commit deletes the lines the thread ended at — the ordinary outcome of
+/// acting on a finding by removing the code it named. The surviving start
+/// names where the range began in a file that no longer has those lines, and
+/// [`ReviewLineRange`] has no shape for a range with no end, so the thread
+/// reads as one this side of the diff does not place. That is what a null
+/// start and end already report for the same thread one commit later.
 fn normalize_line_range(end: Option<u64>, start: Option<u64>) -> Result<Option<ReviewLineRange>> {
     let Some(end) = end else {
-        if start.is_some() {
-            return Err(ProviderError::Unrepresentable {
-                provider: "github",
-                fact: "review range has a start line without an end line".to_owned(),
-            });
-        }
         return Ok(None);
     };
     Ok(Some(ReviewLineRange {
@@ -307,5 +310,59 @@ impl GithubProvider {
             };
             cursor = Some(next_cursor);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use interprex::{ReviewAnchor, ReviewLineRange};
+
+    use super::super::change_requests::{
+        GithubPullRequest, GithubReview, normalize_change_request,
+    };
+    use super::*;
+
+    #[test]
+    fn a_range_whose_end_a_commit_deleted_places_the_thread_nowhere() {
+        let mut threads = review_threads();
+        threads[0].line = None;
+
+        let change_request = normalize_change_request(
+            pull_request(),
+            reviews(),
+            threads,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("a thread GitHub cannot place is still a thread");
+
+        assert!(matches!(
+            &change_request.reviews[0].findings[0].thread.location.anchor,
+            ReviewAnchor::Lines {
+                original: ReviewLineRange { start: Some(_), .. },
+                current: None,
+                ..
+            }
+        ));
+    }
+
+    fn pull_request() -> GithubPullRequest {
+        serde_json::from_str(include_str!("../../tests/fixtures/pull_request.json"))
+            .expect("pull request fixture")
+    }
+
+    fn reviews() -> Vec<GithubReview> {
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/code_review_reviews.json"
+        ))
+        .expect("review fixture")
+    }
+
+    fn review_threads() -> Vec<ThreadNode> {
+        let threads: ThreadsData =
+            serde_json::from_str(include_str!("../../tests/fixtures/review_threads.json"))
+                .expect("thread fixture");
+        threads.repository.pull_request.review_threads.nodes
     }
 }

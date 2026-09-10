@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A GitHub review thread whose end line a commit deleted is read as a thread
+  with no current position instead of failing the whole observation. GitHub
+  reports such a thread with a null `line` and the `startLine` it began at,
+  which happens whenever a finding is acted on by deleting the code it named;
+  one of them previously made every read of the change request return
+  `unrepresentable github data: review range has a start line without an end line`.
+
 ## 7.0.1
 
 - Repeating a submitted GitHub review publication recognizes its reviewer,
