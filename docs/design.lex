@@ -110,7 +110,7 @@ Design
 
     A caller may decide that only `other` reviews count as independent evidence. Interprex does not make that policy decision, and `unknown` never becomes `other` merely because unavailable actors receive distinct placeholder identifiers.
 
-    `ReviewThread` retains the facts shared by inline threads: its initial comment, ordered replies, open or resolved platform status and outdated status. `ReviewFinding` combines those facts with an optional finding resolution. `ReviewLocation` stores the file path once and an anchor. A line anchor retains its original range, diff side and current mapped range when GitHub supplies one. A file anchor does not invent line data.
+    `ReviewThread` retains the facts shared by inline threads: its initial comment, ordered replies, open or resolved platform status and outdated status. `ReviewFinding` combines those facts with an optional finding resolution. `ReviewLocation` stores the file path once and an anchor. A line anchor retains its original range, diff side and current mapped range when GitHub supplies one. GitHub supplies no current range for a thread whose end line a commit deleted: it reports the end as null and keeps the start it began at. Such a thread carries no current position, the same as one GitHub reports with neither. A file anchor does not invent line data.
 
     A thread whose initial comment names a review is nested under that review as a finding. This includes a change author's self-review and a draft review. A thread with no originating review remains a standalone thread. Replies do not move a thread or create another review. Unanchored comments remain separate because they have no source location.
 
